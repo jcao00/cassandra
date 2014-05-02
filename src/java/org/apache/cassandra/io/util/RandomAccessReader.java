@@ -19,8 +19,11 @@ package org.apache.cassandra.io.util;
 
 import java.io.*;
 import java.nio.ByteBuffer;
+import java.nio.channels.AsynchronousFileChannel;
 import java.nio.channels.FileChannel;
+import java.nio.channels.WritableByteChannel;
 import java.nio.file.StandardOpenOption;
+import java.util.concurrent.ExecutionException;
 
 import com.google.common.annotations.VisibleForTesting;
 
@@ -45,7 +48,8 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     protected long bufferOffset, markedPointer;
 
     // channel linked with the file, used to retrieve data and force updates.
-    protected final FileChannel channel;
+//    protected final FileChannel channel;
+    protected final ChannelWrapper channel;
 
     private final long fileLength;
 
@@ -59,7 +63,14 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
 
         try
         {
-            channel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
+            if (true)
+            {
+                channel = new FileChannelWrapper(file);
+            }
+            else
+            {
+                channel = new AsyncFileChannelWrapper(file);
+            }
         }
         catch (IOException e)
         {
@@ -115,12 +126,6 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     static RandomAccessReader open(SequentialWriter writer)
     {
         return open(new File(writer.getPath()), DEFAULT_BUFFER_SIZE, null);
-    }
-
-    // channel extends FileChannel, impl SeekableByteChannel.  Safe to cast.
-    public FileChannel getChannel()
-    {
-        return channel;
     }
 
     /**
@@ -254,6 +259,11 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         return getClass().getSimpleName() + "(" + "filePath='" + filePath + "')";
     }
 
+    public long transferTo(long l, int toTransfer, WritableByteChannel writableByteChannel) throws IOException
+    {
+        return channel.transferTo(l , toTransfer, writableByteChannel);
+    }
+
     /**
      * Class to hold a mark to the position of the file
      */
@@ -379,5 +389,113 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     public long getPositionLimit()
     {
         return length();
+    }
+
+    protected static interface ChannelWrapper
+    {
+        long size() throws IOException;
+
+        void close() throws IOException;
+
+        void position(long bufferOffset) throws IOException;
+
+        long transferTo(long l, int toTransfer, WritableByteChannel channel) throws IOException;
+
+        int read(ByteBuffer buffer) throws IOException;
+
+        long position() throws IOException;
+    }
+
+    private static class FileChannelWrapper implements  ChannelWrapper
+    {
+        private final FileChannel fileChannel;
+
+        private FileChannelWrapper(File file) throws IOException
+        {
+            this.fileChannel = FileChannel.open(file.toPath(), StandardOpenOption.READ);;
+        }
+
+        public long size() throws IOException
+        {
+            return fileChannel.size();
+        }
+
+        public void close() throws IOException
+        {
+            fileChannel.close();
+        }
+
+        public void position(long bufferOffset) throws IOException
+        {
+            if (fileChannel.position() != bufferOffset)
+                fileChannel.position(bufferOffset);
+        }
+
+        public long transferTo(long l, int toTransfer, WritableByteChannel channel) throws IOException
+        {
+            return fileChannel.transferTo(l, toTransfer, channel);
+        }
+
+        public int read(ByteBuffer buffer) throws IOException
+        {
+            return fileChannel.read(buffer);
+        }
+
+        public long position() throws IOException
+        {
+            return fileChannel.position();
+        }
+    }
+
+    private static class AsyncFileChannelWrapper implements  ChannelWrapper
+    {
+        private final AsynchronousFileChannel asyncFileChannel;
+        private long offset;
+
+        private AsyncFileChannelWrapper(File file) throws IOException
+        {
+            this.asyncFileChannel = AsynchronousFileChannel.open(file.toPath(), StandardOpenOption.READ);;
+        }
+
+        public long size() throws IOException
+        {
+            return asyncFileChannel.size();
+        }
+
+        public void close() throws IOException
+        {
+            asyncFileChannel.close();
+        }
+
+        public void position(long bufferOffset)
+        {
+            offset = bufferOffset;
+        }
+
+        public long transferTo(long l, int toTransfer, WritableByteChannel channel) throws IOException
+        {
+            //TODO: actually impl this!
+            return 0;
+        }
+
+        public int read(ByteBuffer buffer) throws IOException
+        {
+            try
+            {
+                int cnt = asyncFileChannel.read(buffer, offset).get();
+                offset += cnt;
+                return cnt;
+            }
+            catch (InterruptedException | ExecutionException e)
+            {
+                throw new IOException("error while reading file asynchronously", e);
+            }
+        }
+
+        public long position()
+        {
+            //TODO: hope like hell this works ...
+            return offset;
+        }
     }
 }

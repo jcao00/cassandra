@@ -18,7 +18,6 @@
 package org.apache.cassandra.streaming.compress;
 
 import java.io.IOException;
-import java.nio.channels.FileChannel;
 import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -53,7 +52,6 @@ public class CompressedStreamWriter extends StreamWriter
     {
         long totalSize = totalSize();
         RandomAccessReader file = sstable.openDataReader();
-        FileChannel fc = file.getChannel();
 
         long progress = 0L;
         // calculate chunks to transfer. we want to send continuous chunks altogether.
@@ -71,7 +69,7 @@ public class CompressedStreamWriter extends StreamWriter
                 {
                     int toTransfer = (int) Math.min(CHUNK_SIZE, length - bytesTransferred);
                     limiter.acquire(toTransfer);
-                    long lastWrite = fc.transferTo(section.left + bytesTransferred, toTransfer, channel);
+                    long lastWrite = file.transferTo(section.left + bytesTransferred, toTransfer, channel);
                     bytesTransferred += lastWrite;
                     progress += lastWrite;
                     session.progress(sstable.descriptor, ProgressInfo.Direction.OUT, progress, totalSize);

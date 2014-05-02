@@ -95,8 +95,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
 
             CompressionMetadata.Chunk chunk = metadata.chunkFor(position);
 
-            if (channel.position() != chunk.offset)
-                channel.position(chunk.offset);
+            channel.position(chunk.offset);
 
             if (compressed.capacity() < chunk.length)
                 compressed = ByteBuffer.wrap(new byte[chunk.length]);
