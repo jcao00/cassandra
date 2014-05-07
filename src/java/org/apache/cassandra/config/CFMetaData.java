@@ -94,6 +94,7 @@ import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.LZ4Compressor;
 import org.apache.cassandra.io.sstable.Descriptor;
+import org.apache.cassandra.io.util.FileWrapper;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.thrift.CfDef;
 import org.apache.cassandra.thrift.CqlResult;
@@ -103,6 +104,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.UUIDGen;
 
+import static org.apache.cassandra.io.util.FileWrapper.IO_STYLE;
 import static org.apache.cassandra.utils.FBUtilities.fromJsonList;
 import static org.apache.cassandra.utils.FBUtilities.fromJsonMap;
 import static org.apache.cassandra.utils.FBUtilities.json;
@@ -125,6 +127,7 @@ public final class CFMetaData
     public final static SpeculativeRetry DEFAULT_SPECULATIVE_RETRY = new SpeculativeRetry(SpeculativeRetry.RetryType.PERCENTILE, 0.99);
     public final static int DEFAULT_MIN_INDEX_INTERVAL = 128;
     public final static int DEFAULT_MAX_INDEX_INTERVAL = 2048;
+    public final static IO_STYLE DEFAULT_IO_STYLE = IO_STYLE.NORMAL;
 
     // Note that this is the default only for user created tables
     public final static String DEFAULT_COMPRESSOR = LZ4Compressor.class.getCanonicalName();
@@ -183,6 +186,7 @@ public final class CFMetaData
                                                                     + "max_index_interval int,"
                                                                     + "dropped_columns map<text, bigint>,"
                                                                     + "rows_per_partition_to_cache text,"
+                                                                    + "io_style text,"
                                                                     + "PRIMARY KEY (keyspace_name, columnfamily_name)"
                                                                     + ") WITH COMMENT='ColumnFamily definitions' AND gc_grace_seconds=8640");
 
@@ -435,6 +439,7 @@ public final class CFMetaData
     private volatile SpeculativeRetry speculativeRetry = DEFAULT_SPECULATIVE_RETRY;
     private volatile Map<ColumnIdentifier, Long> droppedColumns = new HashMap<>();
     private volatile Map<String, TriggerDefinition> triggers = new HashMap<>();
+    private volatile IO_STYLE ioStyle = DEFAULT_IO_STYLE;
     private volatile boolean isPurged = false;
     /*
      * All CQL3 columns definition are stored in the columnMetadata map.
@@ -480,6 +485,7 @@ public final class CFMetaData
     public CFMetaData speculativeRetry(SpeculativeRetry prop) {speculativeRetry = prop; return this;}
     public CFMetaData droppedColumns(Map<ColumnIdentifier, Long> cols) {droppedColumns = cols; return this;}
     public CFMetaData triggers(Map<String, TriggerDefinition> prop) {triggers = prop; return this;}
+    public CFMetaData ioStyle(IO_STYLE ioStyle) {this.ioStyle = ioStyle; return this;}
 
     /**
      * Create new ColumnFamily metadata with generated random ID.
@@ -657,6 +663,7 @@ public final class CFMetaData
                       .memtableFlushPeriod(oldCFMD.memtableFlushPeriod)
                       .droppedColumns(new HashMap<>(oldCFMD.droppedColumns))
                       .triggers(new HashMap<>(oldCFMD.triggers))
+                      .ioStyle(oldCFMD.ioStyle)
                       .rebuild();
     }
 
@@ -832,6 +839,11 @@ public final class CFMetaData
         return caching;
     }
 
+    public IO_STYLE getIoStyle()
+    {
+        return ioStyle;
+    }
+
     public int getMinIndexInterval()
     {
         return minIndexInterval;
@@ -898,7 +910,8 @@ public final class CFMetaData
             && Objects.equal(maxIndexInterval, other.maxIndexInterval)
             && Objects.equal(speculativeRetry, other.speculativeRetry)
             && Objects.equal(droppedColumns, other.droppedColumns)
-            && Objects.equal(triggers, other.triggers);
+            && Objects.equal(triggers, other.triggers)
+            && Objects.equal(ioStyle, other.ioStyle);
     }
 
     @Override
@@ -931,6 +944,7 @@ public final class CFMetaData
             .append(speculativeRetry)
             .append(droppedColumns)
             .append(triggers)
+            .append(ioStyle)
             .toHashCode();
     }
 
@@ -1192,6 +1206,7 @@ public final class CFMetaData
         compressionParameters = cfm.compressionParameters;
 
         triggers = cfm.triggers;
+        ioStyle = cfm.ioStyle;
 
         rebuild();
         logger.debug("application result is {}", this);
@@ -1699,6 +1714,7 @@ public final class CFMetaData
         adder.add("max_index_interval", maxIndexInterval);
         adder.add("index_interval", null);
         adder.add("speculative_retry", speculativeRetry.toString());
+        adder.add("io_style", ioStyle.toString());
 
         for (Map.Entry<ColumnIdentifier, Long> entry : droppedColumns.entrySet())
             adder.addMapEntry("dropped_columns", entry.getKey().toString(), entry.getValue());
@@ -1787,6 +1803,9 @@ public final class CFMetaData
 
             for (ColumnDefinition cd : columnDefs)
                 cfm.addOrReplaceColumnDefinition(cd);
+
+            if (result.has("io_style"))
+                cfm.ioStyle = IO_STYLE.valueOf(result.getString("io_style"));
 
             return cfm.rebuild();
         }
@@ -2234,6 +2253,7 @@ public final class CFMetaData
             .append("speculativeRetry", speculativeRetry)
             .append("droppedColumns", droppedColumns)
             .append("triggers", triggers)
+            .append("ioStyle", ioStyle)
             .toString();
     }
 }

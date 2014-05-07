@@ -29,6 +29,7 @@ import org.apache.cassandra.db.compaction.AbstractCompactionStrategy;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.io.compress.CompressionParameters;
+import org.apache.cassandra.io.util.FileWrapper;
 
 public class CFPropDefs extends PropertyDefinitions
 {
@@ -47,6 +48,7 @@ public class CFPropDefs extends PropertyDefinitions
     public static final String KW_POPULATE_IO_CACHE_ON_FLUSH = "populate_io_cache_on_flush";
     public static final String KW_BF_FP_CHANCE = "bloom_filter_fp_chance";
     public static final String KW_MEMTABLE_FLUSH_PERIOD = "memtable_flush_period_in_ms";
+    public static final String KW_IO_STYLE = "io_style";
 
     public static final String KW_COMPACTION = "compaction";
     public static final String KW_COMPRESSION = "compression";
@@ -73,6 +75,7 @@ public class CFPropDefs extends PropertyDefinitions
         keywords.add(KW_COMPACTION);
         keywords.add(KW_COMPRESSION);
         keywords.add(KW_MEMTABLE_FLUSH_PERIOD);
+        keywords.add(KW_IO_STYLE);
 
         obsoleteKeywords.add("index_interval");
         obsoleteKeywords.add("replicate_on_write");
@@ -187,6 +190,7 @@ public class CFPropDefs extends PropertyDefinitions
         cfm.memtableFlushPeriod(getInt(KW_MEMTABLE_FLUSH_PERIOD, cfm.getMemtableFlushPeriod()));
         cfm.minIndexInterval(getInt(KW_MIN_INDEX_INTERVAL, cfm.getMinIndexInterval()));
         cfm.maxIndexInterval(getInt(KW_MAX_INDEX_INTERVAL, cfm.getMaxIndexInterval()));
+        cfm.ioStyle(FileWrapper.IO_STYLE.valueOf(getString(KW_IO_STYLE, CFMetaData.DEFAULT_IO_STYLE.toString())));
 
         if (compactionStrategyClass != null)
         {
