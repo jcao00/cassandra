@@ -19,20 +19,14 @@ package org.apache.cassandra.io.util;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.nio.channels.AsynchronousFileChannel;
-import java.nio.channels.FileChannel;
 import java.nio.channels.WritableByteChannel;
-import java.nio.file.StandardOpenOption;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ForkJoinPool;
 
 import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.utils.ByteBufferUtil;
+
+import static org.apache.cassandra.io.util.FileWrapper.IoStyle;
 
 public class RandomAccessReader extends AbstractDataInput implements FileDataInput
 {
@@ -67,7 +61,9 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         try
         {
             //TODO: get CFS/CFMD passed in
-            channel = FileWrapper.Factory.get(FileWrapper.IO_STYLE.ASYNC, file, false);
+            String io = System.getProperty("cassandra.io_style", IoStyle.normal.toString());
+            IoStyle style = IoStyle.valueOf(io);
+            channel = FileWrapper.Factory.get(style, file, false);
         }
         catch (IOException e)
         {

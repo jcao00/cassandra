@@ -15,7 +15,7 @@ import java.util.concurrent.ForkJoinPool;
 
 public interface FileWrapper
 {
-    public enum IO_STYLE {NORMAL, ASYNC};
+    public enum IoStyle {normal, async};
 
     long size() throws IOException;
 
@@ -31,9 +31,9 @@ public interface FileWrapper
 
     public static class Factory
     {
-        public static FileWrapper get(IO_STYLE ioStyle, File file, boolean write) throws IOException
+        public static FileWrapper get(IoStyle ioStyle, File file, boolean write) throws IOException
         {
-            if (ioStyle == IO_STYLE.NORMAL)
+            if (ioStyle == IoStyle.normal)
             {
                 return new FileChannelWrapper(file, write);
             }

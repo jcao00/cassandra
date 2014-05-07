@@ -61,7 +61,7 @@ public class VersionedValue implements Comparable<VersionedValue>
 
     // values for ApplicationState.STATUS
     public final static String STATUS_BOOTSTRAPPING = "BOOT";
-    public final static String STATUS_NORMAL = "NORMAL";
+    public final static String STATUS_NORMAL = "normal";
     public final static String STATUS_LEAVING = "LEAVING";
     public final static String STATUS_LEFT = "LEFT";
     public final static String STATUS_MOVING = "MOVING";

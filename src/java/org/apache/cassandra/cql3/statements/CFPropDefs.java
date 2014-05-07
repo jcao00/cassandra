@@ -190,7 +190,7 @@ public class CFPropDefs extends PropertyDefinitions
         cfm.memtableFlushPeriod(getInt(KW_MEMTABLE_FLUSH_PERIOD, cfm.getMemtableFlushPeriod()));
         cfm.minIndexInterval(getInt(KW_MIN_INDEX_INTERVAL, cfm.getMinIndexInterval()));
         cfm.maxIndexInterval(getInt(KW_MAX_INDEX_INTERVAL, cfm.getMaxIndexInterval()));
-        cfm.ioStyle(FileWrapper.IO_STYLE.valueOf(getString(KW_IO_STYLE, CFMetaData.DEFAULT_IO_STYLE.toString())));
+        cfm.ioStyle(FileWrapper.IoStyle.valueOf(getString(KW_IO_STYLE, CFMetaData.DEFAULT_IO_STYLE.toString())));
 
         if (compactionStrategyClass != null)
         {

@@ -104,7 +104,6 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.UUIDGen;
 
-import static org.apache.cassandra.io.util.FileWrapper.IO_STYLE;
 import static org.apache.cassandra.utils.FBUtilities.fromJsonList;
 import static org.apache.cassandra.utils.FBUtilities.fromJsonMap;
 import static org.apache.cassandra.utils.FBUtilities.json;
@@ -127,7 +126,7 @@ public final class CFMetaData
     public final static SpeculativeRetry DEFAULT_SPECULATIVE_RETRY = new SpeculativeRetry(SpeculativeRetry.RetryType.PERCENTILE, 0.99);
     public final static int DEFAULT_MIN_INDEX_INTERVAL = 128;
     public final static int DEFAULT_MAX_INDEX_INTERVAL = 2048;
-    public final static IO_STYLE DEFAULT_IO_STYLE = IO_STYLE.NORMAL;
+    public final static FileWrapper.IoStyle DEFAULT_IO_STYLE = FileWrapper.IoStyle.normal;
 
     // Note that this is the default only for user created tables
     public final static String DEFAULT_COMPRESSOR = LZ4Compressor.class.getCanonicalName();
@@ -439,7 +438,7 @@ public final class CFMetaData
     private volatile SpeculativeRetry speculativeRetry = DEFAULT_SPECULATIVE_RETRY;
     private volatile Map<ColumnIdentifier, Long> droppedColumns = new HashMap<>();
     private volatile Map<String, TriggerDefinition> triggers = new HashMap<>();
-    private volatile IO_STYLE ioStyle = DEFAULT_IO_STYLE;
+    private volatile FileWrapper.IoStyle ioStyle = DEFAULT_IO_STYLE;
     private volatile boolean isPurged = false;
     /*
      * All CQL3 columns definition are stored in the columnMetadata map.
@@ -485,7 +484,7 @@ public final class CFMetaData
     public CFMetaData speculativeRetry(SpeculativeRetry prop) {speculativeRetry = prop; return this;}
     public CFMetaData droppedColumns(Map<ColumnIdentifier, Long> cols) {droppedColumns = cols; return this;}
     public CFMetaData triggers(Map<String, TriggerDefinition> prop) {triggers = prop; return this;}
-    public CFMetaData ioStyle(IO_STYLE ioStyle) {this.ioStyle = ioStyle; return this;}
+    public CFMetaData ioStyle(FileWrapper.IoStyle ioStyle) {this.ioStyle = ioStyle; return this;}
 
     /**
      * Create new ColumnFamily metadata with generated random ID.
@@ -839,7 +838,7 @@ public final class CFMetaData
         return caching;
     }
 
-    public IO_STYLE getIoStyle()
+    public FileWrapper.IoStyle getIoStyle()
     {
         return ioStyle;
     }
@@ -1805,7 +1804,7 @@ public final class CFMetaData
                 cfm.addOrReplaceColumnDefinition(cd);
 
             if (result.has("io_style"))
-                cfm.ioStyle = IO_STYLE.valueOf(result.getString("io_style"));
+                cfm.ioStyle = FileWrapper.IoStyle.valueOf(result.getString("io_style"));
 
             return cfm.rebuild();
         }
