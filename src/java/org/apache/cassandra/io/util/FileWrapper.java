@@ -7,6 +7,8 @@ import java.nio.channels.AsynchronousFileChannel;
 import java.nio.channels.FileChannel;
 import java.nio.channels.WritableByteChannel;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -111,7 +113,7 @@ public interface FileWrapper
             {
                 opts.add(StandardOpenOption.READ);
             }
-            this.asyncFileChannel = AsynchronousFileChannel.open(file.toPath(), opts, executor, null);
+            this.asyncFileChannel = AsynchronousFileChannel.open(file.toPath(), opts, executor, new FileAttribute[0]);
         }
 
         public long size() throws IOException
