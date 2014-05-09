@@ -21,6 +21,13 @@ public class JasonsAsyncFileChannel extends AsynchronousFileChannel
 {
     private static final Logger logger = LoggerFactory.getLogger(JasonsAsyncFileChannel.class);
 
+    /**
+     * This definition needs to match Version.h on the native sources.
+     * <p/>
+     * Or else the native module won't be loaded because of version mismatches
+     */
+    private static final int EXPECTED_NATIVE_VERSION = 1;
+
     static
     {
         final String[] libraries = new String[]{ "CassandraAIO64", "CassandraAIO32" };
@@ -65,13 +72,6 @@ public class JasonsAsyncFileChannel extends AsynchronousFileChannel
             return false;
         }
     }
-
-    /**
-     * This definition needs to match Version.h on the native sources.
-     * <p/>
-     * Or else the native module won't be loaded because of version mismatches
-     */
-    private static final int EXPECTED_NATIVE_VERSION = 52;
 
     private final String fileName;
     private final Semaphore maxIOSemaphore;
@@ -121,7 +121,7 @@ public class JasonsAsyncFileChannel extends AsynchronousFileChannel
 
         try
         {
-            init(this.getClass(), fileName, maxIO, logger);
+            handler = init(this.getClass(), fileName, maxIO, logger);
         }
         catch (JasonsAsyncException e)
         {
