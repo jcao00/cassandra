@@ -69,14 +69,14 @@ public class CompressedRandomAccessReader extends RandomAccessReader
     private final Checksum checksum;
 
     // raw checksum bytes
-    private final ByteBuffer checksumBytes = ByteBuffer.wrap(new byte[4]);
+    private final ByteBuffer checksumBytes = channel.allocateBuffer(4);//ByteBuffer.wrap(new byte[4]);
 
     protected CompressedRandomAccessReader(String dataFilePath, CompressionMetadata metadata, PoolingSegmentedFile owner) throws FileNotFoundException
     {
         super(new File(dataFilePath), metadata.chunkLength(), owner);
         this.metadata = metadata;
         checksum = metadata.hasPostCompressionAdlerChecksums ? new Adler32() : new CRC32();
-        compressed = ByteBuffer.wrap(new byte[metadata.compressor().initialCompressedBufferLength(metadata.chunkLength())]);
+        compressed = channel.allocateBuffer(metadata.compressor().initialCompressedBufferLength(metadata.chunkLength()));
     }
 
     protected ByteBuffer allocateBuffer(int bufferSize)
@@ -98,7 +98,10 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             channel.position(chunk.offset);
 
             if (compressed.capacity() < chunk.length)
-                compressed = ByteBuffer.wrap(new byte[chunk.length]);
+            {
+                channel.destroyByteBuffer(compressed);
+                compressed = channel.allocateBuffer(chunk.length);
+            }
             else
                 compressed.clear();
             compressed.limit(chunk.length);
@@ -178,5 +181,14 @@ public class CompressedRandomAccessReader extends RandomAccessReader
     public String toString()
     {
         return String.format("%s - chunk length %d, data length %d.", getPath(), metadata.chunkLength(), metadata.dataLength);
+    }
+
+    public void deallocate()
+    {
+        if (checksumBytes != null)
+            channel.destroyByteBuffer(checksumBytes);
+        if (compressed != null)
+            channel.destroyByteBuffer(compressed);
+        super.deallocate();
     }
 }

@@ -24,36 +24,35 @@ public abstract class FileWrapper
 
     protected FileWrapper(BufferProvider bufferProvider)
     {
-
         this.bufferProvider = bufferProvider;
     }
 
-    long size() throws IOException;
+    public abstract long size() throws IOException;
 
-    void close() throws IOException;
+    public abstract void close() throws IOException;
 
-    void position(long bufferOffset) throws IOException;
+    public abstract void position(long bufferOffset) throws IOException;
 
-    long transferTo(long l, int toTransfer, WritableByteChannel channel) throws IOException;
+    public abstract long transferTo(long l, int toTransfer, WritableByteChannel channel) throws IOException;
 
-    ByteBuffer allocateBuffer(int size)
+    public abstract int read(ByteBuffer buffer) throws IOException;
+
+    public abstract long position() throws IOException;
+
+    public ByteBuffer allocateBuffer(int size)
     {
         return bufferProvider.allocateBuffer(size);
     }
 
-    void resetByteBuffer(ByteBuffer buffer)
+    public void resetByteBuffer(ByteBuffer buffer)
     {
         bufferProvider.resetByteBuffer(buffer);
     }
 
-    void destroyByteBuffer(ByteBuffer buffer)
+    public void destroyByteBuffer(ByteBuffer buffer)
     {
         bufferProvider.destroyByteBuffer(buffer);
     }
-
-    int read(ByteBuffer buffer) throws IOException;
-
-    long position() throws IOException;
 
     public static class Factory
     {
