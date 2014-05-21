@@ -1,5 +1,7 @@
 package org.apache.cassandra.io.util;
 
+import org.apache.cassandra.io.aio.Native;
+
 import java.nio.ByteBuffer;
 
 public interface BufferProvider
@@ -34,17 +36,17 @@ public interface BufferProvider
 
         public ByteBuffer allocateBuffer(int bufferSize)
         {
-            return ByteBuffer.allocate(bufferSize);
+            return Native.newNativeBuffer(bufferSize);
         }
 
         public void resetByteBuffer(ByteBuffer buffer)
         {
-            buffer.clear();
+            Native.resetBuffer(buffer, buffer.capacity());
         }
 
         public void destroyByteBuffer(ByteBuffer buffer)
         {
-            //nop
+            Native.destroyBuffer(buffer);
         }
     }
 }
