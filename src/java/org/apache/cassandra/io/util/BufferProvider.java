@@ -11,7 +11,9 @@ public interface BufferProvider
     static final Logger logger = LoggerFactory.getLogger(BufferProvider.class);
 
     ByteBuffer allocateBuffer(int size);
+    void clearByteBuffer(ByteBuffer buffer);
     void destroyByteBuffer(ByteBuffer buffer);
+
 
     public class NioBufferProvider implements BufferProvider
     {
@@ -20,6 +22,11 @@ public interface BufferProvider
         public ByteBuffer allocateBuffer(int bufferSize)
         {
             return ByteBuffer.allocate(bufferSize);
+        }
+
+        public void clearByteBuffer(ByteBuffer buffer)
+        {
+            buffer.clear();
         }
 
         public void destroyByteBuffer(ByteBuffer buffer)
@@ -31,18 +38,25 @@ public interface BufferProvider
     public class NativeBufferProvider implements BufferProvider
     {
         private static final int ALIGNMENT = 512;
-        public static final NativeBufferProvider INSTANCE = new NativeBufferProvider();
+        private int requestedSize;
 
         public ByteBuffer allocateBuffer(int bufferSize)
         {
+            requestedSize = bufferSize;
             final int offset = bufferSize % ALIGNMENT;
             if (offset != 0)
             {
                 bufferSize += ALIGNMENT - offset;
             }
-            logger.info("new buffer size = " + bufferSize);
-
             return Native.newNativeBuffer(bufferSize);
+        }
+
+        public void clearByteBuffer(ByteBuffer buffer)
+        {
+            buffer.clear();
+            // need to set the limit as BB.clear() will set limit = capacity. however, capacity
+            //has been set to a memaligned size, and will almost always be larger than the intended size
+            buffer.limit(requestedSize);
         }
 
         public void destroyByteBuffer(ByteBuffer buffer)

@@ -19,12 +19,26 @@ import static org.apache.cassandra.io.util.BufferProvider.*;
 public abstract class FileWrapper
 {
     public enum IoStyle {normal, async, custom};
+    protected final BufferProvider bufferProvider;
 
-    private final BufferProvider bufferProvider;
-
-    protected FileWrapper(BufferProvider bufferProvider)
+    public FileWrapper(BufferProvider bufferProvider)
     {
         this.bufferProvider = bufferProvider;
+    }
+
+    public ByteBuffer allocateBuffer(int size)
+    {
+        return bufferProvider.allocateBuffer(size);
+    }
+
+    public void clearByteBuffer(ByteBuffer buffer)
+    {
+        bufferProvider.clearByteBuffer(buffer);
+    }
+
+    public void destroyByteBuffer(ByteBuffer buffer)
+    {
+        bufferProvider.destroyByteBuffer(buffer);
     }
 
     public abstract long size() throws IOException;
@@ -38,16 +52,6 @@ public abstract class FileWrapper
     public abstract int read(ByteBuffer buffer) throws IOException;
 
     public abstract long position() throws IOException;
-
-    public ByteBuffer allocateBuffer(int size)
-    {
-        return bufferProvider.allocateBuffer(size);
-    }
-
-    public void destroyByteBuffer(ByteBuffer buffer)
-    {
-        bufferProvider.destroyByteBuffer(buffer);
-    }
 
     public static class Factory
     {
@@ -64,6 +68,7 @@ public abstract class FileWrapper
         }
     }
 
+    /** wrapper for nio-style files */
     static class FileChannelWrapper extends FileWrapper
     {
         private final FileChannel fileChannel;
@@ -80,6 +85,7 @@ public abstract class FileWrapper
                 this.fileChannel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
             }
         }
+
 
         public long size() throws IOException
         {
@@ -113,6 +119,7 @@ public abstract class FileWrapper
         }
     }
 
+    /** wrapper for nio2 & aio-style files */
     static class AsyncFileChannelWrapper extends FileWrapper
     {
         private final AsynchronousFileChannel asyncFileChannel;
@@ -121,7 +128,7 @@ public abstract class FileWrapper
 
         private AsyncFileChannelWrapper(File file, boolean write, IoStyle ioStyle) throws IOException
         {
-            super(ioStyle == IoStyle.async ? NioBufferProvider.INSTANCE : NativeBufferProvider.INSTANCE);
+            super(ioStyle == IoStyle.async ? NioBufferProvider.INSTANCE : new NativeBufferProvider());
             executor = new ForkJoinPool();
             Set<StandardOpenOption> opts = new HashSet<>();
             if (write)
@@ -170,8 +177,13 @@ public abstract class FileWrapper
                 if (handler.ioe != null)
                     throw handler.ioe;
 
-                offset += handler.cnt;
-                return handler.cnt;
+                final int cnt = handler.cnt;
+                if (cnt >= 0)
+                {
+                    buffer.position(cnt);
+                    offset += cnt;
+                }
+                return cnt;
             }
             catch (InterruptedException e)
             {
@@ -197,7 +209,6 @@ public abstract class FileWrapper
                 attachment.countDown();
             }
         }
-
 
         public long position()
         {

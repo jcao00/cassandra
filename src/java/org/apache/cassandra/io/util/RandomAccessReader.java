@@ -55,6 +55,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     protected RandomAccessReader(File file, int bufferSize, PoolingSegmentedFile owner) throws FileNotFoundException
     {
         this.owner = owner;
+
         filePath = file.getAbsolutePath();
 
         try
@@ -82,13 +83,13 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         {
             throw new FSReadError(e, filePath);
         }
-        buffer = allocBuffer((int) Math.min(fileLength, bufferSize));
+        buffer = allocateBuffer(bufferSize);
         buffer.limit(0);
     }
 
-    protected ByteBuffer allocBuffer(int size)
+    protected ByteBuffer allocateBuffer(int bufferSize)
     {
-        return channel.allocateBuffer(size);
+        return channel.allocateBuffer((int) Math.min(fileLength, bufferSize));
     }
 
     public static RandomAccessReader open(File file, PoolingSegmentedFile owner)
@@ -126,17 +127,20 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     protected void reBuffer()
     {
         bufferOffset += buffer.position();
-        buffer.clear();
+        channel.clearByteBuffer(buffer);
         assert bufferOffset < fileLength;
 
         try
         {
             channel.position(bufferOffset); // setting channel position
+            int i = 0;
             while (buffer.hasRemaining())
             {
                 int n = channel.read(buffer);
                 if (n < 0)
                     break;
+                if (++i == 16)
+                    throw new RuntimeException("too many iterations!!!");
             }
             buffer.flip();
         }
@@ -384,5 +388,4 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     {
         return length();
     }
-
 }

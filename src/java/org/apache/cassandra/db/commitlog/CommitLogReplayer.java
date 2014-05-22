@@ -437,7 +437,7 @@ public class CommitLogReplayer
         }
         finally
         {
-            FileUtils.closeQuietly(reader);
+                FileUtils.closeQuietly(reader);
             logger.info("Finished reading {}", file);
         }
     }

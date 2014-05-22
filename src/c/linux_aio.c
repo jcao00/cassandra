@@ -162,7 +162,7 @@ Java_org_apache_cassandra_io_aio_Native_pollAioEvents(JNIEnv *env, jobject class
                 struct iocb_refs *refs = (struct iocb_refs *)iocb->data;
 
                 //TODO: callback the java code!!!!!
-                int f = ev.res; //this should be the size of data returned
+                int f = ev.res; //return value of read or write (this should be the size of data returned if read)
                 (*env)->CallVoidMethod(env, refs->callback_obj, callback_method_id, refs->id, ev.res);
 
                 (*env)->DeleteGlobalRef(env, refs->callback_obj);

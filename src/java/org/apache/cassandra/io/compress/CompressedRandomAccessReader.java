@@ -70,7 +70,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
     private final Checksum checksum;
 
     // raw checksum bytes
-    private final ByteBuffer checksumBytes = channel.allocateBuffer(4);//ByteBuffer.wrap(new byte[4]);
+    private final ByteBuffer checksumBytes = channel.allocateBuffer(4);
 
     protected CompressedRandomAccessReader(String dataFilePath, CompressionMetadata metadata, PoolingSegmentedFile owner) throws FileNotFoundException
     {
@@ -80,17 +80,17 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         compressed = channel.allocateBuffer(metadata.compressor().initialCompressedBufferLength(metadata.chunkLength()));
     }
 
-    protected ByteBuffer allocBuffer(int size)
-    {
-        //this is a friggin' hack ... make lovely later
-        //  super.buffer is used for the uncompressed data, which, for simplicity, can remain on-heap
-        return BufferProvider.NioBufferProvider.INSTANCE.allocateBuffer(size);
-    }
+//    protected ByteBuffer allocateBuffer1(int size)
+//    {
+//        //this is a friggin' hack ... make lovely later
+//        //  super.buffer is used for the uncompressed data, which, for simplicity, can remain on-heap
+//        return BufferProvider.NioBufferProvider.INSTANCE.allocateBuffer(size);
+//    }
 
     protected ByteBuffer allocateBuffer(int bufferSize)
     {
         assert Integer.bitCount(bufferSize) == 1;
-        return ByteBuffer.allocate(bufferSize);
+        return BufferProvider.NioBufferProvider.INSTANCE.allocateBuffer(bufferSize);
     }
 
     @Override
@@ -112,7 +112,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
                 compressed = channel.allocateBuffer(chunk.length);
             }
             else
-                compressed.clear();
+                channel.clearByteBuffer(compressed);
             compressed.limit(chunk.length);
 
             if (channel.read(compressed) != chunk.length)
@@ -126,6 +126,8 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             try
             {
                 // need this on heap as DirectBB doesn't support array()
+                // interestingly, nio impl (FileChannel.read()) does more or less the same thing - create a tmp direct buffer
+                // for the data from the file, then copy into an on-heap buffer for app use.
                 byte[] onHeapCompressed = getBytes(compressed, chunk.length);
                 decompressedBytes = metadata.compressor().uncompress(onHeapCompressed, 0, chunk.length, buffer.array(), 0);
                 buffer.limit(decompressedBytes);
@@ -178,6 +180,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             buffer.position(0);
             byte[] b = new byte[length];
             buffer.get(b);
+            return b;
         }
         return buffer.array();
     }
@@ -185,8 +188,15 @@ public class CompressedRandomAccessReader extends RandomAccessReader
     private int checksum(CompressionMetadata.Chunk chunk) throws IOException
     {
         assert channel.position() == chunk.offset + chunk.length;
+
+        //TODO: fix this broken hack - basically, it would be cool to use channel.clearByteBuffer(),
+        // but it kept the requestedSze for the compressed buffer, and when we force that as the limit
+        // for checksumBytes, it throws and exception
+        //channel.clearByteBuffer(checksumBytes);
         checksumBytes.clear();
-        if (channel.read(checksumBytes) != checksumBytes.capacity())
+        checksumBytes.limit(4);
+
+        if (channel.read(checksumBytes) != checksumBytes.limit())
             throw new CorruptBlockException(getPath(), chunk);
         return checksumBytes.getInt(0);
     }
