@@ -43,7 +43,6 @@ public class AioFileChannel extends AsynchronousFileChannel
 
         this.fileName = path.toFile().getAbsolutePath();
         fd = Native.open0(fileName);
-        System.out.println("opened file " + fileName + ", fd = " + fd);
         if (fd < 0)
             throw new AsyncFileException("Unable to open file " + fileName);
 
@@ -92,7 +91,7 @@ public class AioFileChannel extends AsynchronousFileChannel
         {
             submitted.put(id, new CompletionWrapper<CountDownLatch>((CountDownLatch)attachment,
                     (CompletionHandler<Integer, CountDownLatch>)handler));
-            int cnt = Native.read0(aioContext, this, id, dst, dst.capacity(), fd, filePosition);
+            int cnt = Native.read0(aioContext, this, id, dst, dst.remaining(), fd, filePosition);
             if (cnt != 1)
             {
                 submitted.remove(id);
@@ -112,7 +111,6 @@ public class AioFileChannel extends AsynchronousFileChannel
 
     public void callback(long eventId, int status)
     {
-        System.out.println(String.format("Holy shit! we got a callback! id: %d, status: %d", eventId, status));
         CompletionWrapper<CountDownLatch> callback = submitted.remove(eventId);
         if (callback == null)
         {

@@ -3,7 +3,6 @@ package org.apache.cassandra.io.aio;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Constructor;
 import java.net.URI;
 import java.nio.channels.AsynchronousFileChannel;
 import java.nio.channels.FileChannel;
@@ -26,8 +25,6 @@ import java.util.concurrent.ExecutorService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-//import sun.nio.fs.DefaultFileSystemProvider;
 
 
 /**
@@ -54,13 +51,11 @@ public class DelegateFileSystemProvider extends FileSystemProvider
 
     public DelegateFileSystemProvider()
     {
-        logger.info("nop ctor");
         delegate = null;
     }
 
     public DelegateFileSystemProvider(FileSystemProvider delegate)
     {
-        logger.info("FSP ctor");
         this.delegate = delegate;
     }
 
@@ -87,6 +82,15 @@ public class DelegateFileSystemProvider extends FileSystemProvider
         }
     }
 
+    protected Path convertToDelegatePath(Path path)
+    {
+        if (path instanceof DelegatePath)
+        {
+            path = delegate.getPath(path.toUri());
+        }
+        return path;
+    }
+
     public Path getPath(URI uri)
     {
         return delegate.getPath(uri);
@@ -94,21 +98,25 @@ public class DelegateFileSystemProvider extends FileSystemProvider
 
     public FileSystem newFileSystem(Path path, Map<String, ?> env) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.newFileSystem(path, env);
     }
 
     public InputStream newInputStream(Path path, OpenOption... options) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.newInputStream(path, options);
     }
 
     public OutputStream newOutputStream(Path path, OpenOption... options) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.newOutputStream(path, options);
     }
 
     public FileChannel newFileChannel(Path path, Set<? extends OpenOption> options, FileAttribute<?>... attrs) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.newFileChannel(path, options, attrs);
     }
 
@@ -119,91 +127,111 @@ public class DelegateFileSystemProvider extends FileSystemProvider
 
     public SeekableByteChannel newByteChannel(Path path, Set<? extends OpenOption> options, FileAttribute<?>... attrs) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.newByteChannel(path, options, attrs);
     }
 
     public DirectoryStream<Path> newDirectoryStream(Path dir, DirectoryStream.Filter<? super Path> filter) throws IOException
     {
+        dir = convertToDelegatePath(dir);
         return delegate.newDirectoryStream(dir, filter);
     }
 
     public void createDirectory(Path dir, FileAttribute<?>... attrs) throws IOException
     {
+        dir = convertToDelegatePath(dir);
         delegate.createDirectory(dir, attrs);
     }
 
     public void createSymbolicLink(Path link, Path target, FileAttribute<?>... attrs) throws IOException
     {
+        link = convertToDelegatePath(link);
         delegate.createSymbolicLink(link, target, attrs);
     }
 
     public void createLink(Path link, Path existing) throws IOException
     {
+        link = convertToDelegatePath(link);
         delegate.createLink(link, existing);
     }
 
     public void delete(Path path) throws IOException
     {
+        path = convertToDelegatePath(path);
         delegate.delete(path);
     }
 
     public boolean deleteIfExists(Path path) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.deleteIfExists(path);
     }
 
     public Path readSymbolicLink(Path link) throws IOException
     {
+        link = convertToDelegatePath(link);
         return delegate.readSymbolicLink(link);
     }
 
     public void copy(Path source, Path target, CopyOption... options) throws IOException
     {
+        source = convertToDelegatePath(source);
+        target = convertToDelegatePath(target);
         delegate.copy(source, target, options);
     }
 
     public void move(Path source, Path target, CopyOption... options) throws IOException
     {
+        source = convertToDelegatePath(source);
+        target = convertToDelegatePath(target);
         delegate.move(source, target, options);
     }
 
     public boolean isSameFile(Path path, Path path2) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.isSameFile(path, path2);
     }
 
     public boolean isHidden(Path path) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.isHidden(path);
     }
 
     public FileStore getFileStore(Path path) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.getFileStore(path);
     }
 
     public void checkAccess(Path path, AccessMode... modes) throws IOException
     {
+        path = convertToDelegatePath(path);
         delegate.checkAccess(path, modes);
     }
 
     public <V extends FileAttributeView> V getFileAttributeView(Path path, Class<V> type, LinkOption... options)
     {
+        path = convertToDelegatePath(path);
         return delegate.getFileAttributeView(path, type, options);
     }
 
     public <A extends BasicFileAttributes> A readAttributes(Path path, Class<A> type, LinkOption... options) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.readAttributes(path, type, options);
     }
 
     public Map<String, Object> readAttributes(Path path, String attributes, LinkOption... options) throws IOException
     {
+        path = convertToDelegatePath(path);
         return delegate.readAttributes(path, attributes, options);
     }
 
     public void setAttribute(Path path, String attribute, Object value, LinkOption... options) throws IOException
     {
+        path = convertToDelegatePath(path);
         delegate.setAttribute(path,attribute, value, options);
     }
 }

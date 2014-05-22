@@ -1,13 +1,16 @@
 package org.apache.cassandra.io.util;
 
 import org.apache.cassandra.io.aio.Native;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 
 public interface BufferProvider
 {
+    static final Logger logger = LoggerFactory.getLogger(BufferProvider.class);
+
     ByteBuffer allocateBuffer(int size);
-    void resetByteBuffer(ByteBuffer buffer);
     void destroyByteBuffer(ByteBuffer buffer);
 
     public class NioBufferProvider implements BufferProvider
@@ -19,11 +22,6 @@ public interface BufferProvider
             return ByteBuffer.allocate(bufferSize);
         }
 
-        public void resetByteBuffer(ByteBuffer buffer)
-        {
-            buffer.clear();
-        }
-
         public void destroyByteBuffer(ByteBuffer buffer)
         {
             //nop
@@ -32,16 +30,19 @@ public interface BufferProvider
 
     public class NativeBufferProvider implements BufferProvider
     {
+        private static final int ALIGNMENT = 512;
         public static final NativeBufferProvider INSTANCE = new NativeBufferProvider();
 
         public ByteBuffer allocateBuffer(int bufferSize)
         {
-            return Native.newNativeBuffer(bufferSize);
-        }
+            final int offset = bufferSize % ALIGNMENT;
+            if (offset != 0)
+            {
+                bufferSize += ALIGNMENT - offset;
+            }
+            logger.info("new buffer size = " + bufferSize);
 
-        public void resetByteBuffer(ByteBuffer buffer)
-        {
-            Native.resetBuffer(buffer, buffer.capacity());
+            return Native.newNativeBuffer(bufferSize);
         }
 
         public void destroyByteBuffer(ByteBuffer buffer)

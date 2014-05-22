@@ -82,8 +82,13 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         {
             throw new FSReadError(e, filePath);
         }
-        buffer = channel.allocateBuffer((int) Math.min(fileLength, bufferSize));
+        buffer = allocBuffer((int) Math.min(fileLength, bufferSize));
         buffer.limit(0);
+    }
+
+    protected ByteBuffer allocBuffer(int size)
+    {
+        return channel.allocateBuffer(size);
     }
 
     public static RandomAccessReader open(File file, PoolingSegmentedFile owner)
@@ -121,7 +126,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     protected void reBuffer()
     {
         bufferOffset += buffer.position();
-        channel.resetByteBuffer(buffer);
+        buffer.clear();
         assert bufferOffset < fileLength;
 
         try

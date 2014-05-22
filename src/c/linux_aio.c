@@ -28,7 +28,7 @@ JNI_OnLoad(JavaVM *vm, void *reserved)
     {
         return JNI_ERR;
     }
-    jclass cls = (*env)->FindClass(env, "org/apache/cassandra/aio/AioFileChannel");
+    jclass cls = (*env)->FindClass(env, "org/apache/cassandra/io/aio/AioFileChannel");
     callback_method_id = (*env)->GetMethodID(env, cls, "callback", "(JI)V");
     if (callback_method_id == NULL)
     {

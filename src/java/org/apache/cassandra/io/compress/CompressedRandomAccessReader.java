@@ -25,6 +25,7 @@ import java.util.zip.Checksum;
 
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
+import org.apache.cassandra.io.util.BufferProvider;
 import org.apache.cassandra.io.util.CompressedPoolingSegmentedFile;
 import org.apache.cassandra.io.util.PoolingSegmentedFile;
 import org.apache.cassandra.io.util.RandomAccessReader;
@@ -79,6 +80,13 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         compressed = channel.allocateBuffer(metadata.compressor().initialCompressedBufferLength(metadata.chunkLength()));
     }
 
+    protected ByteBuffer allocBuffer(int size)
+    {
+        //this is a friggin' hack ... make lovely later
+        //  super.buffer is used for the uncompressed data, which, for simplicity, can remain on-heap
+        return BufferProvider.NioBufferProvider.INSTANCE.allocateBuffer(size);
+    }
+
     protected ByteBuffer allocateBuffer(int bufferSize)
     {
         assert Integer.bitCount(bufferSize) == 1;
@@ -95,7 +103,8 @@ public class CompressedRandomAccessReader extends RandomAccessReader
 
             CompressionMetadata.Chunk chunk = metadata.chunkFor(position);
 
-            channel.position(chunk.offset);
+            if (channel.position() != chunk.offset)
+                channel.position(chunk.offset);
 
             if (compressed.capacity() < chunk.length)
             {
@@ -116,7 +125,9 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             int decompressedBytes;
             try
             {
-                decompressedBytes = metadata.compressor().uncompress(compressed.array(), 0, chunk.length, buffer.array(), 0);
+                // need this on heap as DirectBB doesn't support array()
+                byte[] onHeapCompressed = getBytes(compressed, chunk.length);
+                decompressedBytes = metadata.compressor().uncompress(onHeapCompressed, 0, chunk.length, buffer.array(), 0);
                 buffer.limit(decompressedBytes);
             }
             catch (IOException e)
@@ -129,7 +140,8 @@ public class CompressedRandomAccessReader extends RandomAccessReader
 
                 if (metadata.hasPostCompressionAdlerChecksums)
                 {
-                    checksum.update(compressed.array(), 0, chunk.length);
+                    byte[] onHeapCompressed = getBytes(compressed, chunk.length);
+                    checksum.update(onHeapCompressed, 0, chunk.length);
                 }
                 else
                 {
@@ -155,6 +167,19 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         {
             throw new FSReadError(e, getPath());
         }
+    }
+
+    // need to copy on-heap if the buffer is a DirectBB ... <sigh>
+    private byte[] getBytes(ByteBuffer buffer, int length)
+    {
+        if (buffer.isDirect())
+        {
+            //i think we need to reposition (to get back to beg of buffer)????
+            buffer.position(0);
+            byte[] b = new byte[length];
+            buffer.get(b);
+        }
+        return buffer.array();
     }
 
     private int checksum(CompressionMetadata.Chunk chunk) throws IOException

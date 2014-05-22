@@ -44,11 +44,6 @@ public abstract class FileWrapper
         return bufferProvider.allocateBuffer(size);
     }
 
-    public void resetByteBuffer(ByteBuffer buffer)
-    {
-        bufferProvider.resetByteBuffer(buffer);
-    }
-
     public void destroyByteBuffer(ByteBuffer buffer)
     {
         bufferProvider.destroyByteBuffer(buffer);
@@ -144,21 +139,6 @@ public abstract class FileWrapper
         public long size() throws IOException
         {
             return asyncFileChannel.size();
-        }
-
-        public ByteBuffer allocateBuffer(int bufferSize)
-        {
-            return ByteBuffer.allocateDirect(bufferSize);
-        }
-
-        public void resetByteBuffer(ByteBuffer buffer)
-        {
-            buffer.clear();
-        }
-
-        public void destroyByteBuffer(ByteBuffer buffer)
-        {
-            //nop
         }
 
         public void close() throws IOException
