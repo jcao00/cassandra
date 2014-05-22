@@ -47,6 +47,7 @@ nbactions.xml
 # Maven, etc.
 out/
 target/
+lib/*.so
 
 # General
 *.pyc
