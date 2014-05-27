@@ -214,4 +214,13 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
             }
         }
     }
+
+    /* called from AbstractFuture.cancel(boolean) */
+    protected void interruptTask()
+    {
+        for (StreamSession session : coordinator.getAllStreamSessions())
+        {
+            session.onCancel();
+        }
+    }
 }

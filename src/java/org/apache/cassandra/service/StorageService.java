@@ -2711,17 +2711,14 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 }
 
                 UUID parentSession = null;
-                if (!fullRepair)
+                try
                 {
-                    try
-                    {
-                        parentSession = ActiveRepairService.instance.prepareForRepair(allNeighbors, ranges, columnFamilyStores);
-                    }
-                    catch (Throwable t)
-                    {
-                        sendNotification("repair", String.format("Repair failed with error %s", t.getMessage()), new int[]{cmd, ActiveRepairService.Status.FINISHED.ordinal()});
-                        return;
-                    }
+                    parentSession = ActiveRepairService.instance.prepareForRepair(allNeighbors, ranges, columnFamilyStores, fullRepair);
+                }
+                catch (Throwable t)
+                {
+                    sendNotification("repair", String.format("Repair failed with error %s", t.getMessage()), new int[]{cmd, ActiveRepairService.Status.FINISHED.ordinal()});
+                    return;
                 }
 
                 List<RepairFuture> futures = new ArrayList<>(ranges.size());
@@ -2774,8 +2771,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                         sendNotification("repair", message, new int[]{cmd, ActiveRepairService.Status.SESSION_FAILED.ordinal()});
                     }
                 }
-                if (!fullRepair)
-                    ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors, successful);
+                //TODO:JEB
+//                if (!fullRepair)
+//                    ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors, successful);
+                ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors);
                 sendNotification("repair", String.format("Repair command #%d finished", cmd), new int[]{cmd, ActiveRepairService.Status.FINISHED.ordinal()});
             }
         }, null);
@@ -2783,6 +2782,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void forceTerminateAllRepairSessions() {
         ActiveRepairService.instance.terminateSessions();
+    }
+
+    public void cancelRepairSession(String uuid)
+    {
+        ActiveRepairService.instance.cancelRepair(UUID.fromString(uuid));
     }
 
     /* End of MBean interface methods */

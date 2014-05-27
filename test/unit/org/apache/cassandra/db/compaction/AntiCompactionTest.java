@@ -25,10 +25,12 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
+
+import org.apache.cassandra.dht.Bounds;
+import org.apache.cassandra.service.ActiveRepairService;
+import org.junit.Test;
 
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
@@ -68,7 +70,11 @@ public class AntiCompactionTest extends SchemaLoader
 
         SSTableReader.acquireReferences(sstables);
         long repairedAt = 1000;
-        CompactionManager.instance.performAnticompaction(store, ranges, sstables, repairedAt);
+
+        Map<UUID, Set<SSTableReader>> sstablesToRepair = new HashMap<>();
+        sstablesToRepair.put(store.metadata.cfId, new HashSet<>(sstables));
+        ActiveRepairService.ParentRepairSession prs = new ActiveRepairService.IncrementalRepairSession(Collections.singletonList(store), ranges, sstablesToRepair, repairedAt);
+        CompactionManager.instance.performAnticompaction(store, sstables, prs);
 
         assertEquals(2, store.getSSTables().size());
         int repairedKeys = 0;

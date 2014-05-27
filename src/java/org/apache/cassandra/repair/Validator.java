@@ -20,10 +20,16 @@ package org.apache.cassandra.repair;
 import java.net.InetAddress;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.LinkedListMultimap;
+import com.google.common.collect.Multimap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,6 +55,11 @@ public class Validator implements Runnable
 {
     private static final Logger logger = LoggerFactory.getLogger(Validator.class);
 
+
+    static final ConcurrentMap<UUID, Validator> runningValidatons = new ConcurrentHashMap<>();
+    private final UUID identifier;
+    private volatile boolean cancelled = false;
+
     public final RepairJobDesc desc;
     public final InetAddress initiator;
     public final int gcBefore;
@@ -71,6 +82,8 @@ public class Validator implements Runnable
         validated = 0;
         range = null;
         ranges = null;
+        identifier = desc.parentSessionId;
+        runningValidatons.put(identifier, this);
     }
 
     public void prepare(ColumnFamilyStore cfs, MerkleTree tree)
@@ -222,6 +235,25 @@ public class Validator implements Runnable
         }
     }
 
+    public static boolean cancel(UUID sessionId)
+    {
+        Validator validator = runningValidatons.get(sessionId);
+        if (validator == null)
+            return false;
+        validator.cancel();
+        return true;
+    }
+
+    public void cancel()
+    {
+        cancelled = true;
+    }
+
+    public boolean isCancelled()
+    {
+        return cancelled;
+    }
+
     /**
      * Called when some error during the validation happened.
      * This sends RepairStatus to inform the initiator that the validation has failed.
@@ -229,7 +261,11 @@ public class Validator implements Runnable
      */
     public void fail()
     {
-        logger.error("Failed creating a merkle tree for {}, {} (see log for details)", desc, initiator);
+        runningValidatons.remove(this);
+        if (cancelled)
+            logger.info("Cancelled creating a merkle tree for {}, {}", desc, initiator);
+        else
+            logger.error("Failed creating a merkle tree for {}, {} (see log for details)", desc, initiator);
         // send fail message only to nodes >= version 2.0
         MessagingService.instance().sendOneWay(new ValidationComplete(desc).createMessage(), initiator);
     }
@@ -239,6 +275,7 @@ public class Validator implements Runnable
      */
     public void run()
     {
+        runningValidatons.remove(this);
         // respond to the request that triggered this validation
         if (!initiator.equals(FBUtilities.getBroadcastAddress()))
             logger.info(String.format("[repair #%s] Sending completed merkle tree to %s for %s/%s", desc.sessionId, initiator, desc.keyspace, desc.columnFamily));

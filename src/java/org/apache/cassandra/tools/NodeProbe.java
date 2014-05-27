@@ -1158,6 +1158,11 @@ public class NodeProbe implements AutoCloseable
     {
         return ssProxy.getLoggingLevels();
     }
+
+    public void cancelRepair(String uuid)
+    {
+        ssProxy.cancelRepairSession(uuid);
+    }
 }
 
 class ColumnFamilyStoreMBeanIterator implements Iterator<Map.Entry<String, ColumnFamilyStoreMBean>>

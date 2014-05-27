@@ -146,7 +146,8 @@ public class NodeTool
                 TruncateHints.class,
                 TpStats.class,
                 SetLoggingLevel.class,
-                GetLoggingLevels.class
+                GetLoggingLevels.class,
+                CancelRepair.class
         );
 
         Cli<Runnable> parser = Cli.<Runnable>builder("nodetool")
@@ -2443,4 +2444,23 @@ public class NodeTool
         }
     }
 
+    @Command(name = "cancelrepair", description = "Cancels a given repair session across the entire cluster")
+    public static class CancelRepair extends NodeToolCmd
+    {
+        @Arguments(description = "UUID of the repair session to cancel", required = true)
+        String uuid = EMPTY;
+
+        @Override
+        public void execute(NodeProbe probe)
+        {
+            try
+            {
+                probe.cancelRepair(uuid);
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+    }
 }

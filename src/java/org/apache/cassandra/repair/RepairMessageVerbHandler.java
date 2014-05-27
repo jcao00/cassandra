@@ -40,7 +40,12 @@ import org.apache.cassandra.net.IVerbHandler;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.repair.messages.*;
+import org.apache.cassandra.repair.messages.AnticompactionRequest;
+import org.apache.cassandra.repair.messages.CancelRepairRequest;
+import org.apache.cassandra.repair.messages.PrepareMessage;
+import org.apache.cassandra.repair.messages.RepairMessage;
+import org.apache.cassandra.repair.messages.SyncRequest;
+import org.apache.cassandra.repair.messages.ValidationRequest;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -55,7 +60,6 @@ public class RepairMessageVerbHandler implements IVerbHandler<RepairMessage>
     private static final Logger logger = LoggerFactory.getLogger(RepairMessageVerbHandler.class);
     public void doVerb(MessageIn<RepairMessage> message, int id)
     {
-        // TODO add cancel/interrupt message
         RepairJobDesc desc = message.payload.desc;
         switch (message.payload.messageType)
         {
@@ -70,7 +74,8 @@ public class RepairMessageVerbHandler implements IVerbHandler<RepairMessage>
                 }
                 ActiveRepairService.instance.registerParentRepairSession(prepareMessage.parentRepairSession,
                                                                          columnFamilyStores,
-                                                                         prepareMessage.ranges);
+                                                                         prepareMessage.ranges,
+                                                                         prepareMessage.incrementalRepair);
                 MessagingService.instance().sendReply(new MessageOut(MessagingService.Verb.INTERNAL_RESPONSE), id, message.from);
                 break;
 
@@ -120,6 +125,12 @@ public class RepairMessageVerbHandler implements IVerbHandler<RepairMessage>
                     throw new RuntimeException(e);
                 }
 
+                break;
+
+            case CANCEL_REPAIR:
+                CancelRepairRequest cancelRepairRequest = (CancelRepairRequest)message.payload;
+                ActiveRepairService.instance.terminateRepairOperations(cancelRepairRequest.parentRepairSession);
+                MessagingService.instance().sendReply(new MessageOut(MessagingService.Verb.INTERNAL_RESPONSE), id, message.from);
                 break;
 
             default:

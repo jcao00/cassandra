@@ -18,6 +18,9 @@
 package org.apache.cassandra.repair;
 
 import java.net.InetAddress;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +42,8 @@ import org.apache.cassandra.utils.FBUtilities;
 public class StreamingRepairTask implements Runnable, StreamEventHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamingRepairTask.class);
+    static final ConcurrentMap<UUID, StreamResultFuture> runningTasks = new ConcurrentHashMap<>();
+    private final UUID identifier;
 
     /** Repair session ID that this streaming task belongs */
     public final RepairJobDesc desc;
@@ -48,6 +53,7 @@ public class StreamingRepairTask implements Runnable, StreamEventHandler
     {
         this.desc = desc;
         this.request = request;
+        this.identifier = desc.parentSessionId;
     }
 
     public void run()
@@ -74,6 +80,7 @@ public class StreamingRepairTask implements Runnable, StreamEventHandler
                                     .transferRanges(dest, preferred, desc.keyspace, request.ranges, desc.columnFamily)
                                     .execute();
         op.addEventListener(this);
+        runningTasks.put(identifier, op);
     }
 
     private void forwardToSource()
@@ -88,6 +95,15 @@ public class StreamingRepairTask implements Runnable, StreamEventHandler
         // onSuccess and onFailure
     }
 
+    public static boolean cancel(UUID uuid)
+    {
+        StreamResultFuture task = runningTasks.get(uuid);
+        if (task == null)
+            return false;
+        task.cancel(true);
+        return true;
+    }
+
     /**
      * If we succeeded on both stream in and out, reply back to the initiator.
      */
@@ -95,6 +111,7 @@ public class StreamingRepairTask implements Runnable, StreamEventHandler
     {
         logger.info(String.format("[repair #%s] streaming task succeed, returning response to %s", desc.sessionId, request.initiator));
         MessagingService.instance().sendOneWay(new SyncComplete(desc, request.src, request.dst, true).createMessage(), request.initiator);
+        runningTasks.remove(identifier);
     }
 
     /**
@@ -103,5 +120,6 @@ public class StreamingRepairTask implements Runnable, StreamEventHandler
     public void onFailure(Throwable t)
     {
         MessagingService.instance().sendOneWay(new SyncComplete(desc, request.src, request.dst, false).createMessage(), request.initiator);
+        runningTasks.remove(identifier);
     }
 }

@@ -151,6 +151,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         WAIT_COMPLETE,
         COMPLETE,
         FAILED,
+        CANCELED,
     }
 
     private volatile State state = State.INITIALIZED;
@@ -363,13 +364,13 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         }
     }
 
-    private synchronized void closeSession(State finalState)
+    private void closeSession(State finalState)
     {
         if (isAborted.compareAndSet(false, true))
         {
             state(finalState);
 
-            if (finalState == State.FAILED)
+            if (finalState == State.FAILED || finalState == State.CANCELED)
             {
                 for (StreamTask task : Iterables.concat(receivers.values(), transfers.values()))
                     task.abort();
@@ -441,6 +442,13 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             case SESSION_FAILED:
                 sessionFailed();
                 break;
+
+            case CANCELED:
+                cancel();
+                break;
+
+            default:
+                throw new AssertionError("received an unknown streaming message type: " + message.type);
         }
     }
 
@@ -696,5 +704,19 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             else
                 taskCompleted(task); // there is no file to send
         }
+    }
+
+    /* invoked on node that wants to cancel session with peer */
+    public void onCancel()
+    {
+        if (handler.isOutgoingConnected())
+            handler.sendMessage(new CanceledStreamMessage());
+        cancel();
+    }
+
+    /* invoked on peer node, via streaming message */
+    private void cancel()
+    {
+        closeSession(State.CANCELED);
     }
 }
