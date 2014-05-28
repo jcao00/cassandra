@@ -180,8 +180,21 @@ public abstract class FileWrapper
                 final int cnt = handler.cnt;
                 if (cnt >= 0)
                 {
-                    buffer.position(cnt);
-                    offset += cnt;
+                    if (cnt > buffer.limit())
+                    {
+                        //this entire block seems wrong and fucking pyschotic
+                        logger.info("jeb_debug: bytes read count > than buffer.limit()");
+                        int pos = buffer.position();
+                        buffer.position(buffer.limit());
+                        offset += buffer.limit();
+                        return buffer.limit();
+                    }
+                    else
+                    {
+                        buffer.position(cnt);
+                        offset += cnt;
+                        return cnt;
+                    }
                 }
                 return cnt;
             }
@@ -205,7 +218,7 @@ public abstract class FileWrapper
 
             public void failed(Throwable exc, CountDownLatch attachment)
             {
-                ioe = new IOException("filed to read block", exc);
+                ioe = new IOException("failed to read block", exc);
                 attachment.countDown();
             }
         }

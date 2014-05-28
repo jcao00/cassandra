@@ -25,11 +25,15 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static org.apache.cassandra.io.util.FileWrapper.IoStyle;
 
 public class RandomAccessReader extends AbstractDataInput implements FileDataInput
 {
+    private static final Logger logger = LoggerFactory.getLogger(RandomAccessReader.class);
+
     public static final long CACHE_FLUSH_INTERVAL_IN_BYTES = (long) Math.pow(2, 27); // 128mb
 
     // default buffer size, 64Kb
@@ -139,8 +143,8 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
                 int n = channel.read(buffer);
                 if (n < 0)
                     break;
-                if (++i == 16)
-                    throw new RuntimeException("too many iterations!!!");
+                if (++i == 1028)
+                    throw new RuntimeException("too many iterations, count = " + i + ", last read cnt = " + n + ", buffer = " + buffer.toString());
             }
             buffer.flip();
         }

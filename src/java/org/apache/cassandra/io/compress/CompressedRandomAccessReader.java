@@ -80,13 +80,6 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         compressed = channel.allocateBuffer(metadata.compressor().initialCompressedBufferLength(metadata.chunkLength()));
     }
 
-//    protected ByteBuffer allocateBuffer1(int size)
-//    {
-//        //this is a friggin' hack ... make lovely later
-//        //  super.buffer is used for the uncompressed data, which, for simplicity, can remain on-heap
-//        return BufferProvider.NioBufferProvider.INSTANCE.allocateBuffer(size);
-//    }
-
     protected ByteBuffer allocateBuffer(int bufferSize)
     {
         assert Integer.bitCount(bufferSize) == 1;
@@ -112,8 +105,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
                 compressed = channel.allocateBuffer(chunk.length);
             }
             else
-                channel.clearByteBuffer(compressed);
-            compressed.limit(chunk.length);
+              compressed.limit(chunk.length);
 
             if (channel.read(compressed) != chunk.length)
                 throw new CorruptBlockException(getPath(), chunk);

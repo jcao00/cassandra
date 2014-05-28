@@ -26,7 +26,7 @@ import java.io.FileNotFoundException;
 
 import com.google.common.util.concurrent.RateLimiter;
 
-public class ThrottledReader extends RandomAccessReader
+public class  ThrottledReader extends RandomAccessReader
 {
     private final RateLimiter limiter;
 

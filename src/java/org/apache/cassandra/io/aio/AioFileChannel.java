@@ -38,14 +38,14 @@ public class AioFileChannel extends AsynchronousFileChannel
     public AioFileChannel(Path path, Set<? extends OpenOption> options, ByteBuffer aioContext) throws IOException
     {
         assert !options.contains(StandardOpenOption.WRITE) : "not supporting writing with async i/o";
-        //TODO: give this a legit value
-        int maxIO = 42;
 
         this.fileName = path.toFile().getAbsolutePath();
         fd = Native.open0(fileName);
         if (fd < 0)
             throw new AsyncFileException("Unable to open file " + fileName);
 
+        //TODO: give this a legit value
+        int maxIO = 256;
         maxIOSemaphore = new Semaphore(maxIO);
         this.aioContext = aioContext;
         submitted = new ConcurrentHashMap<>();
@@ -91,7 +91,8 @@ public class AioFileChannel extends AsynchronousFileChannel
         {
             submitted.put(id, new CompletionWrapper<CountDownLatch>((CountDownLatch)attachment,
                     (CompletionHandler<Integer, CountDownLatch>)handler));
-            int cnt = Native.read0(aioContext, this, id, dst, dst.remaining(), fd, filePosition);
+            logger.info("read0 {}, buffer = {}, remaining = {}", fileName, dst, dst.remaining());
+            int cnt = Native.read0(aioContext, this, id, dst, dst.capacity(), fd, filePosition);
             if (cnt != 1)
             {
                 submitted.remove(id);
@@ -109,7 +110,7 @@ public class AioFileChannel extends AsynchronousFileChannel
         }
     }
 
-    public void callback(long eventId, int status)
+    public void callback(long eventId, int status, int res2)
     {
         CompletionWrapper<CountDownLatch> callback = submitted.remove(eventId);
         if (callback == null)
@@ -118,15 +119,39 @@ public class AioFileChannel extends AsynchronousFileChannel
             return;
         }
 
-        if (status >= 0)
+        logger.warn("response in aio callback: status = {}, res2 = {}", status, res2);
+        if (status > 0)
         {
             callback.handler.completed(status, callback.attachment);
+        }
+        else if (status == 0)
+        {
+            callback.handler.completed(-1, callback.attachment);
         }
         else
         {
             callback.handler.failed(new AsyncFileException("failed!!!"), callback.attachment);
         }
     }
+
+    /**
+     * a batch callback interface optimized for jni-bounds crossing. each "read" event from the aio is returned as a consecutive pair
+     * in the batch array - first long is the event id, second is the io_event's res & res2 int's combined into a single long.
+     */
+//    public void callback(long[] batch)
+//    {
+//        if (batch.length % 2 == 1)
+//        {
+//            logger.warn("batch size not a multiple of 2, size = {}", batch.length);
+//        }
+//
+//        for (int i = 0; i < batch.length; i += 2)
+//        {
+//            long eventId = batch[i];
+//            int res = (int)batch[i + 1];
+//            callback(eventId, res);
+//        }
+//    }
 
     public AsynchronousFileChannel truncate(long size) throws IOException
     {

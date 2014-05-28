@@ -5,6 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public interface BufferProvider
 {
@@ -40,7 +42,7 @@ public interface BufferProvider
         private static final int ALIGNMENT = 512;
         private int requestedSize;
 
-        public ByteBuffer allocateBuffer(int bufferSize)
+        public synchronized ByteBuffer allocateBuffer(int bufferSize)
         {
             requestedSize = bufferSize;
             final int offset = bufferSize % ALIGNMENT;
@@ -48,7 +50,12 @@ public interface BufferProvider
             {
                 bufferSize += ALIGNMENT - offset;
             }
-            return Native.newNativeBuffer(bufferSize);
+            logger.info("new native buffer of size {}", bufferSize);
+            ByteBuffer buf = Native.newNativeBuffer(bufferSize);
+            if (buf == null)
+                throw new RuntimeException("failed to create a native buffer of size " + bufferSize);
+            buf.limit(requestedSize);
+            return buf;
         }
 
         public void clearByteBuffer(ByteBuffer buffer)
@@ -59,7 +66,7 @@ public interface BufferProvider
             buffer.limit(requestedSize);
         }
 
-        public void destroyByteBuffer(ByteBuffer buffer)
+        public synchronized void destroyByteBuffer(ByteBuffer buffer)
         {
             Native.destroyBuffer(buffer);
         }

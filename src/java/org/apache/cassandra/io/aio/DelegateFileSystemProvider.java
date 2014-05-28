@@ -146,12 +146,14 @@ public class DelegateFileSystemProvider extends FileSystemProvider
     public void createSymbolicLink(Path link, Path target, FileAttribute<?>... attrs) throws IOException
     {
         link = convertToDelegatePath(link);
+        target = convertToDelegatePath(target);
         delegate.createSymbolicLink(link, target, attrs);
     }
 
     public void createLink(Path link, Path existing) throws IOException
     {
         link = convertToDelegatePath(link);
+        existing = convertToDelegatePath(existing);
         delegate.createLink(link, existing);
     }
 
@@ -190,6 +192,7 @@ public class DelegateFileSystemProvider extends FileSystemProvider
     public boolean isSameFile(Path path, Path path2) throws IOException
     {
         path = convertToDelegatePath(path);
+        path2 = convertToDelegatePath(path2);
         return delegate.isSameFile(path, path2);
     }
 

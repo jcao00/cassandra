@@ -29,10 +29,10 @@ JNI_OnLoad(JavaVM *vm, void *reserved)
         return JNI_ERR;
     }
     jclass cls = (*env)->FindClass(env, "org/apache/cassandra/io/aio/AioFileChannel");
-    callback_method_id = (*env)->GetMethodID(env, cls, "callback", "(JI)V");
+    callback_method_id = (*env)->GetMethodID(env, cls, "callback", "(JII)V");
     if (callback_method_id == NULL)
     {
-        return -1;
+        return JNI_EINVAL;
     }
 
     return JNI_VERSION_1_6;
@@ -88,7 +88,7 @@ Java_org_apache_cassandra_io_aio_Native_resetBuffer(JNIEnv *env, jclass class, j
     void *buf = (*env)->GetDirectBufferAddress(env, buffer);
     if (buf == 0)
     {
-        return -1;
+        return JNI_EINVAL;
     }
 
     memset(buf, 0, (size_t)size);
@@ -100,7 +100,7 @@ Java_org_apache_cassandra_io_aio_Native_destroyBuffer(JNIEnv *env, jclass class,
 {
     if (buffer == 0)
     {
-        return -1;
+        return JNI_EINVAL;
     }
     void *buf = (*env)->GetDirectBufferAddress(env, buffer);
     free(buf);
@@ -154,16 +154,14 @@ Java_org_apache_cassandra_io_aio_Native_pollAioEvents(JNIEnv *env, jobject class
         if (result > 0)
         {
             evtcnt += result;
-            fprintf(stdout, "got %d event(s) from io_getevents\n", result);
+            //fprintf(stdout, "got %d event(s) from io_getevents\n", result);
             for (int i = 0; i < result; i++)
             {
                 struct io_event ev = events[i];
                 struct iocb *iocb = (struct iocb *)ev.obj;
                 struct iocb_refs *refs = (struct iocb_refs *)iocb->data;
 
-                //TODO: callback the java code!!!!!
-                int f = ev.res; //return value of read or write (this should be the size of data returned if read)
-                (*env)->CallVoidMethod(env, refs->callback_obj, callback_method_id, refs->id, ev.res);
+                (*env)->CallVoidMethod(env, refs->callback_obj, callback_method_id, refs->id, ev.res, ev.res2);
 
                 (*env)->DeleteGlobalRef(env, refs->callback_obj);
                 (*env)->DeleteGlobalRef(env, refs->buffer);
@@ -190,9 +188,10 @@ Java_org_apache_cassandra_io_aio_Native_open0(JNIEnv *env, jobject class, jstrin
     const char *name = (*env)->GetStringUTFChars(env, file_name, NULL);
     if (name == NULL)
     {
-        return -1;
+        return JNI_EINVAL;
     }
-    int fd = open(name, O_RDONLY /*| O_DIRECT*/, 0666);
+    fprintf(stdout, "opening w/ O_DIRECT\n");
+    int fd = open(name, O_RDONLY | O_DIRECT, 0666);
     (*env)->ReleaseStringUTFChars(env, file_name, name);
 
     return fd;
@@ -204,7 +203,7 @@ Java_org_apache_cassandra_io_aio_Native_size0(JNIEnv *env, jobject clazz, jint f
     struct stat statBuffer;
     if (fstat(fd, &statBuffer) < 0)
     {
-        return -1l;
+        return JNI_EINVAL;
     }
     return statBuffer.st_size;
 }
@@ -215,12 +214,12 @@ Java_org_apache_cassandra_io_aio_Native_read0(JNIEnv *env, jobject class, jobjec
     io_context_t *ctx = convert_context(env, ctx_addr);
     if (!ctx)
     {
-        return -JNI_EINVAL;
+        return JNI_EINVAL;
     }
     struct iocb *iocb = (struct iocb *)malloc(sizeof(struct iocb));
     if (!iocb)
     {
-        return -JNI_ENOMEM;
+        return JNI_ENOMEM;
     }
     memset(iocb, 0, sizeof(struct iocb));
 
@@ -231,19 +230,25 @@ Java_org_apache_cassandra_io_aio_Native_read0(JNIEnv *env, jobject class, jobjec
     }
     else if (((long)buf) % 512)
     {
-        return -JNI_EINVAL;
+        return JNI_EINVAL;
     }
+/*    else if ((size - buf) % 512)
+    {
+        return JNI_EINVAL;
+        }*/
 
     io_prep_pread(iocb, fd, buf, size, position);
     struct iocb_refs *refs = (struct iocb_refs *)malloc(sizeof(struct iocb_refs));
     if (!refs)
     {
         free(buf);
-        return -JNI_ENOMEM;
+        return JNI_ENOMEM;
     }
     memset(refs, 0, sizeof(struct iocb_refs));
     iocb->data = refs;
     refs->callback_obj = (*env)->NewGlobalRef(env, callback_target);
+    
+    //think i need buf here, not the global ref, but we do need to create the global ref and stash it somewhere (probably in refs)
     refs->buffer = (*env)->NewGlobalRef(env, dst);
     refs->id = id;
 

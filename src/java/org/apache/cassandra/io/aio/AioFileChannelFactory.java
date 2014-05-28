@@ -37,7 +37,7 @@ public class AioFileChannelFactory
     private AioFileChannelFactory()
     {
         //TODO: give this a legit value
-        this.maxEvents = 128;
+        this.maxEvents = 1024;
         aioContext = Native.createAioContext(maxEvents);
         if (aioContext == null)
         {
