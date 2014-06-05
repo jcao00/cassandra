@@ -28,6 +28,7 @@ import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.streaming.NativeStreamer;
 import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamWriter;
@@ -39,6 +40,7 @@ import org.apache.cassandra.utils.Pair;
 public class CompressedStreamWriter extends StreamWriter
 {
     public static final int CHUNK_SIZE = 10 * 1024 * 1024;
+    protected final boolean callNative = Boolean.parseBoolean(System.getProperty("cassandra.stream.native", "false"));
 
     private final CompressionInfo compressionInfo;
 
@@ -53,7 +55,6 @@ public class CompressedStreamWriter extends StreamWriter
     {
         long totalSize = totalSize();
         RandomAccessReader file = sstable.openDataReader();
-        FileChannel fc = file.getChannel();
 
         long progress = 0L;
         // calculate chunks to transfer. we want to send continuous chunks altogether.
@@ -71,7 +72,7 @@ public class CompressedStreamWriter extends StreamWriter
                 {
                     int toTransfer = (int) Math.min(CHUNK_SIZE, length - bytesTransferred);
                     limiter.acquire(toTransfer);
-                    long lastWrite = fc.transferTo(section.left + bytesTransferred, toTransfer, channel);
+                    long lastWrite = transfer(file, section.left + bytesTransferred, toTransfer, channel);
                     bytesTransferred += lastWrite;
                     progress += lastWrite;
                     session.progress(sstable.descriptor, ProgressInfo.Direction.OUT, progress, totalSize);
@@ -82,6 +83,19 @@ public class CompressedStreamWriter extends StreamWriter
         {
             // no matter what happens close file
             FileUtils.closeQuietly(file);
+        }
+    }
+
+    protected long transfer(RandomAccessReader file, long offset, int len, WritableByteChannel writableByteChannel) throws IOException
+    {
+        if (callNative)
+        {
+            NativeStreamer.write(file, offset, len, writableByteChannel);
+            return len;
+        }
+        else
+        {
+            return file.getChannel().transferTo(offset, len, writableByteChannel);
         }
     }
 
