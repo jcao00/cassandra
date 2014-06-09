@@ -1,6 +1,7 @@
 package org.apache.cassandra.streaming;
 
 import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.utils.CLibrary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,9 +51,9 @@ public class NativeStreamer
     }
 
     // this implementation inspired by http://dev.xscheme.de/2013/05/getting-the-file-descriptor-integers-from-a-socket-java/
-    private static Field fdField;
-    private static Method socketMethod;
-    private static Method socketImplMethod;
+    private static final Field fdField;
+    private static final Method socketMethod;
+    private static final Method socketImplMethod;
     static
     {
         try
@@ -77,17 +78,20 @@ public class NativeStreamer
         assert writableByteChannel instanceof SocketChannel;
         try
         {
+            logger.info("total size to splice() via write0 = {}", length);
+
             // if you like reflection, you'll love the four, back-to-back invoke()s to uncover
             // the file descriptors from the fabulous java nio api
-            int fd = fdField.getInt(reader.getFD());
+            int fd = CLibrary.getfd(reader.getFD());
             Socket socket = ((SocketChannel)writableByteChannel).socket();
             SocketImpl socketImpl = (SocketImpl)socketMethod.invoke(socket);
             FileDescriptor fileDescriptor = (FileDescriptor)socketImplMethod.invoke(socketImpl);
-            int outFd = fdField.getInt(fileDescriptor);
+            int outFd = CLibrary.getfd(fileDescriptor);
 
             // if you got this far without error, congratulate yourself with a trip over the jni-barrier.
             // do not pass go, do not collect 200 dollars, go straight to rage-ville.
             int status = write0(fd, offset, length, outFd);
+            logger.info("return from write0 = {}", status);
         }
         catch (Exception e)
         {

@@ -31,17 +31,22 @@ import com.google.common.collect.Iterators;
 import com.google.common.primitives.Ints;
 
 import org.apache.cassandra.io.compress.CompressionMetadata;
+import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.WrappedRunnable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * InputStream which reads data from underlining source with given {@link CompressionInfo}.
  */
 public class CompressedInputStream extends InputStream
 {
+    private static final Logger logger = LoggerFactory.getLogger(CompressedInputStream.class);
     private final CompressionInfo info;
     // chunk buffer
     private final BlockingQueue<byte[]> dataBuffer;
+    private final StreamSession session;
 
     // uncompressed bytes
     private byte[] buffer;
@@ -67,6 +72,11 @@ public class CompressedInputStream extends InputStream
      */
     public CompressedInputStream(InputStream source, CompressionInfo info, boolean hasPostCompressionAdlerChecksums)
     {
+        this(source, info, hasPostCompressionAdlerChecksums, null);
+    }
+
+    public CompressedInputStream(InputStream source, CompressionInfo info, boolean hasPostCompressionAdlerChecksums, StreamSession session)
+    {
         this.info = info;
         this.checksum = hasPostCompressionAdlerChecksums ? new Adler32() : new CRC32();
         this.hasPostCompressionAdlerChecksums = hasPostCompressionAdlerChecksums;
@@ -74,7 +84,8 @@ public class CompressedInputStream extends InputStream
         // buffer is limited to store up to 1024 chunks
         this.dataBuffer = new ArrayBlockingQueue<byte[]>(Math.min(info.chunks.length, 1024));
 
-        new Thread(new Reader(source, info, dataBuffer)).start();
+        new Thread(new Reader(source, info, dataBuffer, session)).start();
+        this.session = session;
     }
 
     public int read() throws IOException
@@ -88,6 +99,11 @@ public class CompressedInputStream extends InputStream
             catch (InterruptedException e)
             {
                 throw new EOFException("No chunk available");
+            }
+            catch (Exception ioe)
+            {
+                logger.warn("error decompressing from peer " + session.peer, ioe);
+                throw new RuntimeException(ioe);
             }
         }
 
@@ -142,12 +158,14 @@ public class CompressedInputStream extends InputStream
         private final InputStream source;
         private final Iterator<CompressionMetadata.Chunk> chunks;
         private final BlockingQueue<byte[]> dataBuffer;
+        private final StreamSession session;
 
-        Reader(InputStream source, CompressionInfo info, BlockingQueue<byte[]> dataBuffer)
+        Reader(InputStream source, CompressionInfo info, BlockingQueue<byte[]> dataBuffer, StreamSession session)
         {
             this.source = source;
             this.chunks = Iterators.forArray(info.chunks);
             this.dataBuffer = dataBuffer;
+            this.session = session;
         }
 
         protected void runMayThrow() throws Exception
@@ -161,8 +179,15 @@ public class CompressedInputStream extends InputStream
                 compressedWithCRC = new byte[readLength];
 
                 int bufferRead = 0;
-                while (bufferRead < readLength)
-                    bufferRead += source.read(compressedWithCRC, bufferRead, readLength - bufferRead);
+                try
+                {
+                    while (bufferRead < readLength)
+                        bufferRead += source.read(compressedWithCRC, bufferRead, readLength - bufferRead);
+                }
+                catch (Exception e)
+                {
+                    logger.warn("failed reading stream from peer " + session.peer, e);
+                }
                 dataBuffer.put(compressedWithCRC);
             }
         }

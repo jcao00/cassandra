@@ -40,7 +40,7 @@ import org.apache.cassandra.utils.Pair;
 public class CompressedStreamWriter extends StreamWriter
 {
     public static final int CHUNK_SIZE = 10 * 1024 * 1024;
-    protected final boolean callNative = Boolean.parseBoolean(System.getProperty("cassandra.stream.native", "false"));
+    protected final boolean callNative = Boolean.parseBoolean(System.getProperty("cassandra.stream.native", "true"));
 
     private final CompressionInfo compressionInfo;
 
