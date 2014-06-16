@@ -122,6 +122,7 @@ public abstract class FileWrapper
     /** wrapper for nio2 & aio-style files */
     static class AsyncFileChannelWrapper extends FileWrapper
     {
+        private static final int ALIGNMENT = 512;
         private final AsynchronousFileChannel asyncFileChannel;
         private final ExecutorService executor;
         private volatile long offset;
@@ -157,6 +158,11 @@ public abstract class FileWrapper
 
         public void position(long bufferOffset)
         {
+            long alignOffset = bufferOffset % ALIGNMENT;
+            if (alignOffset != 0)
+            {
+                bufferOffset -= alignOffset;
+            }
             offset = bufferOffset;
         }
 

@@ -70,7 +70,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
     private final Checksum checksum;
 
     // raw checksum bytes
-    private final ByteBuffer checksumBytes = channel.allocateBuffer(4);
+//    private final ByteBuffer checksumBytes = channel.allocateBuffer(4);
 
     protected CompressedRandomAccessReader(String dataFilePath, CompressionMetadata metadata, PoolingSegmentedFile owner) throws FileNotFoundException
     {
@@ -99,15 +99,19 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             if (channel.position() != chunk.offset)
                 channel.position(chunk.offset);
 
-            if (compressed.capacity() < chunk.length)
+            boolean mustReadChecksum = readChecksumBytes();
+            int readLen = chunk.length + (mustReadChecksum ? 4 : 0);
+
+            if (compressed.capacity() < readLen)
             {
                 channel.destroyByteBuffer(compressed);
-                compressed = channel.allocateBuffer(chunk.length);
+                compressed = channel.allocateBuffer(readLen);
             }
             else
-              compressed.limit(chunk.length);
+              compressed.limit(readLen);
 
-            if (channel.read(compressed) != chunk.length)
+            int readCnt = channel.read(compressed);
+            if (readCnt < readLen)
                 throw new CorruptBlockException(getPath(), chunk);
 
             // technically flip() is unnecessary since all the remaining work uses the raw array, but if that changes
@@ -115,26 +119,26 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             compressed.flip();
             buffer.clear();
             int decompressedBytes;
+            byte[] onHeapCompressed;
             try
             {
                 // need this on heap as DirectBB doesn't support array()
                 // interestingly, nio impl (FileChannel.read()) does more or less the same thing - create a tmp direct buffer
                 // for the data from the file, then copy into an on-heap buffer for app use.
-                byte[] onHeapCompressed = getBytes(compressed, chunk.length);
+                onHeapCompressed = getBytes(compressed, chunk.length);
                 decompressedBytes = metadata.compressor().uncompress(onHeapCompressed, 0, chunk.length, buffer.array(), 0);
-                buffer.limit(decompressedBytes);
+//                buffer.limit(decompressedBytes);
             }
             catch (IOException e)
             {
                 throw new CorruptBlockException(getPath(), chunk);
             }
 
-            if (metadata.parameters.getCrcCheckChance() > FBUtilities.threadLocalRandom().nextDouble())
+            if (mustReadChecksum)
             {
-
                 if (metadata.hasPostCompressionAdlerChecksums)
                 {
-                    byte[] onHeapCompressed = getBytes(compressed, chunk.length);
+//                    byte[] onHeapCompressed = getBytes(compressed, chunk.length);
                     checksum.update(onHeapCompressed, 0, chunk.length);
                 }
                 else
@@ -142,10 +146,10 @@ public class CompressedRandomAccessReader extends RandomAccessReader
                     checksum.update(buffer.array(), 0, decompressedBytes);
                 }
 
-                if (checksum(chunk) != (int) checksum.getValue())
+                if (compressed.getInt(chunk.length) != (int) checksum.getValue())
                     throw new CorruptBlockException(getPath(), chunk);
 
-                // reset checksum object back to the original (blank) state
+                // reset checksum ob( back to the original (blank) state
                 checksum.reset();
             }
 
@@ -163,12 +167,17 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         }
     }
 
+    boolean readChecksumBytes()
+    {
+        return metadata.parameters.getCrcCheckChance() > FBUtilities.threadLocalRandom().nextDouble();
+    }
+
     // need to copy on-heap if the buffer is a DirectBB ... <sigh>
     private byte[] getBytes(ByteBuffer buffer, int length)
     {
         if (buffer.isDirect())
         {
-            //i think we need to reposition (to get back to beg of buffer)????
+            //i think we need to reposition (to get back to beginning of buffer)????
             buffer.position(0);
             byte[] b = new byte[length];
             buffer.get(b);
@@ -179,18 +188,19 @@ public class CompressedRandomAccessReader extends RandomAccessReader
 
     private int checksum(CompressionMetadata.Chunk chunk) throws IOException
     {
-        assert channel.position() == chunk.offset + chunk.length;
+//        assert channel.position() == chunk.offset + chunk.length ;
 
         //TODO: fix this broken hack - basically, it would be cool to use channel.clearByteBuffer(),
         // but it kept the requestedSze for the compressed buffer, and when we force that as the limit
         // for checksumBytes, it throws and exception
         //channel.clearByteBuffer(checksumBytes);
-        checksumBytes.clear();
-        checksumBytes.limit(4);
-
-        if (channel.read(checksumBytes) != checksumBytes.limit())
-            throw new CorruptBlockException(getPath(), chunk);
-        return checksumBytes.getInt(0);
+//        checksumBytes.clear();
+//        checksumBytes.limit(4);
+//
+//        if (channel.read(checksumBytes) != checksumBytes.limit())
+//            throw new CorruptBlockException(getPath(), chunk);
+//        return checksumBytes.getInt(0);
+        return buffer.getInt(chunk.length + 1);
     }
 
     public int getTotalBufferSize()
@@ -212,8 +222,8 @@ public class CompressedRandomAccessReader extends RandomAccessReader
 
     public void deallocate()
     {
-        if (checksumBytes != null)
-            channel.destroyByteBuffer(checksumBytes);
+//        if (checksumBytes != null)
+//            channel.destroyByteBuffer(checksumBytes);
         if (compressed != null)
             channel.destroyByteBuffer(compressed);
         super.deallocate();

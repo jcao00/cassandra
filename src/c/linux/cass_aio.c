@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#include "linux_aio.h"
+#include "../cass_aio.h"
 
 jmethodID callback_method_id = NULL;
 
@@ -190,7 +190,6 @@ Java_org_apache_cassandra_io_aio_Native_open0(JNIEnv *env, jobject class, jstrin
     {
         return JNI_EINVAL;
     }
-    fprintf(stdout, "opening w/ O_DIRECT\n");
     int fd = open(name, O_RDONLY | O_DIRECT, 0666);
     (*env)->ReleaseStringUTFChars(env, file_name, name);
 

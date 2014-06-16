@@ -119,7 +119,6 @@ public class AioFileChannel extends AsynchronousFileChannel
             return;
         }
 
-        logger.warn("response in aio callback: status = {}, res2 = {}", status, res2);
         if (status > 0)
         {
             callback.handler.completed(status, callback.attachment);
@@ -130,28 +129,10 @@ public class AioFileChannel extends AsynchronousFileChannel
         }
         else
         {
+            logger.warn("response in aio callback: status = {}, res2 = {}", status, res2);
             callback.handler.failed(new AsyncFileException("failed!!!"), callback.attachment);
         }
     }
-
-    /**
-     * a batch callback interface optimized for jni-bounds crossing. each "read" event from the aio is returned as a consecutive pair
-     * in the batch array - first long is the event id, second is the io_event's res & res2 int's combined into a single long.
-     */
-//    public void callback(long[] batch)
-//    {
-//        if (batch.length % 2 == 1)
-//        {
-//            logger.warn("batch size not a multiple of 2, size = {}", batch.length);
-//        }
-//
-//        for (int i = 0; i < batch.length; i += 2)
-//        {
-//            long eventId = batch[i];
-//            int res = (int)batch[i + 1];
-//            callback(eventId, res);
-//        }
-//    }
 
     public AsynchronousFileChannel truncate(long size) throws IOException
     {
