@@ -52,7 +52,7 @@ public class CompressedStreamWriter extends StreamWriter
     public void write(WritableByteChannel channel) throws IOException
     {
         long totalSize = totalSize();
-        RandomAccessReader file = sstable.openDataReader();
+        RandomAccessReader file = sstable.openDirectReader();
         FileChannel fc = file.getChannel();
 
         long progress = 0L;
