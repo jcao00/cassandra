@@ -24,6 +24,7 @@ import com.google.common.collect.AbstractIterator;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.RowIndexEntry;
+import org.apache.cassandra.io.util.RandomAccessChannelReader;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -36,7 +37,7 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
     public KeyIterator(Descriptor desc)
     {
         File path = new File(desc.filenameFor(Component.PRIMARY_INDEX));
-        in = RandomAccessReader.open(path);
+        in = RandomAccessChannelReader.open(path);
     }
 
     protected DecoratedKey computeNext()

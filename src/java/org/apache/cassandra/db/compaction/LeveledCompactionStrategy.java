@@ -218,7 +218,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
             {
                 // L0 makes no guarantees about overlapping-ness.  Just create a direct scanner for each
                 for (SSTableReader sstable : byLevel.get(level))
-                    scanners.add(sstable.getScanner(range, CompactionManager.instance.getRateLimiter()));
+                    scanners.add(sstable.getDirectScanner(range, CompactionManager.instance.getRateLimiter()));
             }
             else
             {
@@ -267,7 +267,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
             Collections.sort(this.sstables, SSTableReader.sstableComparator);
             sstableIterator = this.sstables.iterator();
             assert sstableIterator.hasNext(); // caller should check intersecting first
-            currentScanner = sstableIterator.next().getScanner(range, CompactionManager.instance.getRateLimiter());
+            currentScanner = sstableIterator.next().getDirectScanner(range, CompactionManager.instance.getRateLimiter());
         }
 
         public static List<SSTableReader> intersecting(Collection<SSTableReader> sstables, Range<Token> range)
@@ -302,7 +302,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
                         currentScanner = null;
                         return endOfData();
                     }
-                    currentScanner = sstableIterator.next().getScanner(range, CompactionManager.instance.getRateLimiter());
+                    currentScanner = sstableIterator.next().getDirectScanner(range, CompactionManager.instance.getRateLimiter());
                 }
             }
             catch (IOException e)

@@ -18,8 +18,10 @@
 package org.apache.cassandra.utils;
 
 import java.io.FileDescriptor;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -211,11 +213,16 @@ public final class CLibrary
 
     public static int tryOpenDirectory(String path)
     {
+        return tryOpen(path, O_RDONLY);
+    }
+
+    private static int tryOpen(String path, int flags)
+    {
         int fd = -1;
 
         try
         {
-            return open(path, O_RDONLY);
+            return open(path, flags);
         }
         catch (UnsatisfiedLinkError e)
         {
@@ -265,7 +272,7 @@ public final class CLibrary
         }
         catch (UnsatisfiedLinkError e)
         {
-            // JNA is unavailable just skipping Direct I/O
+            // JNA is unavailable, just skipping
         }
         catch (RuntimeException e)
         {
@@ -278,7 +285,7 @@ public final class CLibrary
 
     /**
      * Get system file descriptor from FileDescriptor object.
-     * @param descriptor - FileDescriptor objec to get fd from
+     * @param descriptor - FileDescriptor object to get fd from
      * @return file descriptor, -1 or error
      */
     public static int getfd(FileDescriptor descriptor)

@@ -71,7 +71,7 @@ public class StreamWriter
     public void write(WritableByteChannel channel) throws IOException
     {
         long totalSize = totalSize();
-        RandomAccessReader file = sstable.openDataReader();
+        RandomAccessReader file = sstable.openDirectReader();
         ChecksumValidator validator = new File(sstable.descriptor.filenameFor(Component.CRC)).exists()
                                     ? DataIntegrityMetadata.checksumValidator(sstable.descriptor)
                                     : null;

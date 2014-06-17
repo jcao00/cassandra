@@ -21,15 +21,15 @@ package org.apache.cassandra.io.compress;
  */
 
 
-import java.io.FileNotFoundException;
-
 import com.google.common.util.concurrent.RateLimiter;
+
+import java.io.IOException;
 
 public class CompressedThrottledReader extends CompressedRandomAccessReader
 {
     private final RateLimiter limiter;
 
-    public CompressedThrottledReader(String file, CompressionMetadata metadata, RateLimiter limiter) throws FileNotFoundException
+    public CompressedThrottledReader(String file, CompressionMetadata metadata, RateLimiter limiter) throws IOException
     {
         super(file, metadata, null);
         this.limiter = limiter;
@@ -47,7 +47,7 @@ public class CompressedThrottledReader extends CompressedRandomAccessReader
         {
             return new CompressedThrottledReader(file, metadata, limiter);
         }
-        catch (FileNotFoundException e)
+        catch (IOException e)
         {
             throw new RuntimeException(e);
         }

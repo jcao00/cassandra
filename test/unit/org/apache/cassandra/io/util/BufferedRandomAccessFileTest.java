@@ -53,7 +53,7 @@ public class BufferedRandomAccessFileTest
         w.sync();
 
         // reading small amount of data from file, this is handled by initial buffer
-        RandomAccessReader r = RandomAccessReader.open(w);
+        RandomAccessReader r = RandomAccessChannelReader.open(w);
 
         byte[] buffer = new byte[data.length];
         assertEquals(data.length, r.read(buffer));
@@ -76,7 +76,7 @@ public class BufferedRandomAccessFileTest
 
         w.sync();
 
-        r = RandomAccessReader.open(w); // re-opening file in read-only mode
+        r = RandomAccessChannelReader.open(w); // re-opening file in read-only mode
 
         // reading written buffer
         r.seek(initialPosition); // back to initial (before write) position
@@ -137,7 +137,7 @@ public class BufferedRandomAccessFileTest
         byte[] in = generateByteArray(RandomAccessReader.DEFAULT_BUFFER_SIZE);
         w.write(in);
 
-        RandomAccessReader r = RandomAccessReader.open(w);
+        RandomAccessReader r = RandomAccessChannelReader.open(w);
 
         // Read it into a same size array.
         byte[] out = new byte[RandomAccessReader.DEFAULT_BUFFER_SIZE];
@@ -176,7 +176,7 @@ public class BufferedRandomAccessFileTest
         w.close();
 
         // will use cachedlength
-        RandomAccessReader r = RandomAccessReader.open(tmpFile);
+        RandomAccessReader r = RandomAccessChannelReader.open(tmpFile);
         assertEquals(lessThenBuffer.length + biggerThenBuffer.length, r.length());
         r.close();
     }
@@ -196,7 +196,7 @@ public class BufferedRandomAccessFileTest
         w.write(data);
         w.sync();
 
-        final RandomAccessReader r = RandomAccessReader.open(w);
+        final RandomAccessReader r = RandomAccessChannelReader.open(w);
 
         ByteBuffer content = r.readBytes((int) r.length());
 
@@ -230,7 +230,7 @@ public class BufferedRandomAccessFileTest
         w.write(data);
         w.close();
 
-        final RandomAccessReader file = RandomAccessReader.open(w);
+        final RandomAccessReader file = RandomAccessChannelReader.open(w);
 
         file.seek(0);
         assertEquals(file.getFilePointer(), 0);
@@ -269,7 +269,7 @@ public class BufferedRandomAccessFileTest
         w.write(generateByteArray(RandomAccessReader.DEFAULT_BUFFER_SIZE * 2));
         w.close();
 
-        RandomAccessReader file = RandomAccessReader.open(w);
+        RandomAccessReader file = RandomAccessChannelReader.open(w);
 
         file.seek(0); // back to the beginning of the file
         assertEquals(file.skipBytes(10), 10);
@@ -303,7 +303,7 @@ public class BufferedRandomAccessFileTest
 
         w.sync();
 
-        RandomAccessReader r = RandomAccessReader.open(w);
+        RandomAccessReader r = RandomAccessChannelReader.open(w);
 
         // position should change after skip bytes
         r.seek(0);
@@ -338,7 +338,7 @@ public class BufferedRandomAccessFileTest
             for (final int offset : Arrays.asList(0, 8))
             {
                 File file1 = writeTemporaryFile(new byte[16]);
-                try (final RandomAccessReader file = RandomAccessReader.open(file1, bufferSize, null))
+                try (final RandomAccessReader file = RandomAccessChannelReader.open(file1, bufferSize, null))
                 {
                     expectEOF(new Callable<Object>()
                     {
@@ -355,7 +355,7 @@ public class BufferedRandomAccessFileTest
             for (final int n : Arrays.asList(1, 2, 4, 8))
             {
                 File file1 = writeTemporaryFile(new byte[16]);
-                try (final RandomAccessReader file = RandomAccessReader.open(file1, bufferSize, null))
+                try (final RandomAccessReader file = RandomAccessChannelReader.open(file1, bufferSize, null))
                 {
                     expectEOF(new Callable<Object>()
                     {
@@ -373,7 +373,7 @@ public class BufferedRandomAccessFileTest
     @Test
     public void testNotEOF() throws IOException
     {
-        assertEquals(1, RandomAccessReader.open(writeTemporaryFile(new byte[1])).read(new byte[2]));
+        assertEquals(1, RandomAccessChannelReader.open(writeTemporaryFile(new byte[1])).read(new byte[2]));
     }
 
     @Test
@@ -387,7 +387,7 @@ public class BufferedRandomAccessFileTest
 
         w.sync();
 
-        RandomAccessReader r = RandomAccessReader.open(w);
+        RandomAccessReader r = RandomAccessChannelReader.open(w);
 
         assertEquals(r.bytesRemaining(), toWrite);
 
@@ -412,7 +412,7 @@ public class BufferedRandomAccessFileTest
         tmpFile.deleteOnExit();
 
         // Create the BRAF by filename instead of by file.
-        try (final RandomAccessReader r = RandomAccessReader.open(new File(tmpFile.getPath())))
+        try (final RandomAccessReader r = RandomAccessChannelReader.open(new File(tmpFile.getPath())))
         {
             assert tmpFile.getPath().equals(r.getPath());
     
@@ -435,7 +435,7 @@ public class BufferedRandomAccessFileTest
         w.write(data);
         w.close(); // will flush
 
-        final RandomAccessReader r = RandomAccessReader.open(new File(w.getPath()));
+        final RandomAccessReader r = RandomAccessChannelReader.open(new File(w.getPath()));
 
         r.close(); // closing to test read after close
 
@@ -456,7 +456,7 @@ public class BufferedRandomAccessFileTest
             }
         }, ClosedChannelException.class);
 
-        try (RandomAccessReader copy = RandomAccessReader.open(new File(r.getPath())))
+        try (RandomAccessReader copy = RandomAccessChannelReader.open(new File(r.getPath())))
         {
             ByteBuffer contents = copy.readBytes((int) copy.length());
     
@@ -473,7 +473,7 @@ public class BufferedRandomAccessFileTest
 
         w.close();
 
-        RandomAccessReader file = RandomAccessReader.open(w);
+        RandomAccessReader file = RandomAccessChannelReader.open(w);
 
         file.seek(10);
         FileMark mark = file.mark();
@@ -508,7 +508,7 @@ public class BufferedRandomAccessFileTest
             w.write(new byte[30]);
             w.flush();
     
-            try (RandomAccessReader r = RandomAccessReader.open(w))
+            try (RandomAccessReader r = RandomAccessChannelReader.open(w))
             {
                 r.seek(10);
                 r.mark();
@@ -532,7 +532,7 @@ public class BufferedRandomAccessFileTest
         file.sync(); // flushing file to the disk
 
         // read-only copy of the file, with fixed file length
-        final RandomAccessReader copy = RandomAccessReader.open(new File(file.getPath()));
+        final RandomAccessReader copy = RandomAccessChannelReader.open(new File(file.getPath()));
 
         copy.seek(copy.length());
         assertTrue(copy.bytesRemaining() == 0 && copy.isEOF());

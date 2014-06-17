@@ -50,6 +50,8 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Ordering;
 import com.google.common.primitives.Longs;
 import com.google.common.util.concurrent.RateLimiter;
+import org.apache.cassandra.io.compress.CompressedDirectReader;
+import org.apache.cassandra.io.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,15 +91,6 @@ import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.sstable.metadata.ValidationMetadata;
-import org.apache.cassandra.io.util.BufferedSegmentedFile;
-import org.apache.cassandra.io.util.CompressedSegmentedFile;
-import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
-import org.apache.cassandra.io.util.FileDataInput;
-import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.io.util.ICompressedFile;
-import org.apache.cassandra.io.util.RandomAccessReader;
-import org.apache.cassandra.io.util.SegmentedFile;
-import org.apache.cassandra.io.util.ThrottledReader;
 import org.apache.cassandra.metrics.RestorableMeter;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.service.ActiveRepairService;
@@ -771,7 +764,7 @@ public class SSTableReader extends SSTable
     private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded, int samplingLevel) throws IOException
     {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+        RandomAccessReader primaryIndex = RandomAccessChannelReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
 
         try
         {
@@ -1030,7 +1023,7 @@ public class SSTableReader extends SSTable
     private IndexSummary buildSummaryAtLevel(int newSamplingLevel) throws IOException
     {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+        RandomAccessReader primaryIndex = RandomAccessChannelReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
         try
         {
             long indexSize = primaryIndex.length();
@@ -1641,6 +1634,11 @@ public class SSTableReader extends SSTable
         return new SSTableScanner(this, dataRange, null);
     }
 
+    public SSTableScanner getDirectScanner(DataRange dataRange)
+    {
+        return new SSTableScanner(this, dataRange, null, true);
+    }
+
     /**
      * I/O SSTableScanner
      * @return A Scanner for seeking over the rows of the SSTable.
@@ -1650,9 +1648,19 @@ public class SSTableReader extends SSTable
         return getScanner((RateLimiter) null);
     }
 
+    public SSTableScanner getDirectScanner()
+    {
+        return getDirectScanner((RateLimiter) null);
+    }
+
     public SSTableScanner getScanner(RateLimiter limiter)
     {
         return new SSTableScanner(this, DataRange.allData(partitioner), limiter);
+    }
+
+    public SSTableScanner getDirectScanner(RateLimiter limiter)
+    {
+        return new SSTableScanner(this, DataRange.allData(partitioner), limiter, true);
     }
 
     /**
@@ -1668,7 +1676,14 @@ public class SSTableReader extends SSTable
         return getScanner(Collections.singletonList(range), limiter);
     }
 
-   /**
+    public ICompactionScanner getDirectScanner(Range<Token> range, RateLimiter limiter)
+    {
+        if (range == null)
+            return getDirectScanner(limiter);
+        return getDirectScanner(Collections.singletonList(range), limiter);
+    }
+
+    /**
     * Direct I/O SSTableScanner over a defined collection of ranges of tokens.
     *
     * @param ranges the range of keys to cover
@@ -1682,6 +1697,16 @@ public class SSTableReader extends SSTable
             return new EmptyCompactionScanner(getFilename());
         else
             return new SSTableScanner(this, ranges, limiter);
+    }
+
+    public ICompactionScanner getDirectScanner(Collection<Range<Token>> ranges, RateLimiter limiter)
+    {
+        // We want to avoid allocating a SSTableScanner if the range don't overlap the sstable (#5249)
+        List<Pair<Long, Long>> positions = getPositionsForRanges(Range.normalize(ranges));
+        if (positions.isEmpty())
+            return new EmptyCompactionScanner(getFilename());
+        else
+            return new SSTableScanner(this, ranges, limiter, true);
     }
 
     public FileDataInput getFileDataInput(long position)
@@ -1867,20 +1892,32 @@ public class SSTableReader extends SSTable
     {
         assert limiter != null;
         return compression
-               ? CompressedThrottledReader.open(getFilename(), getCompressionMetadata(), limiter)
-               : ThrottledReader.open(new File(getFilename()), limiter);
+                ? CompressedThrottledReader.open(getFilename(), getCompressionMetadata(), limiter)
+                : ThrottledReader.open(new File(getFilename()), limiter);
     }
 
     public RandomAccessReader openDataReader()
     {
         return compression
-               ? CompressedRandomAccessReader.open(getFilename(), getCompressionMetadata())
-               : RandomAccessReader.open(new File(getFilename()));
+                ? CompressedRandomAccessReader.open(getFilename(), getCompressionMetadata())
+                : RandomAccessChannelReader.open(new File(getFilename()));
+    }
+
+    public RandomAccessReader openDirectReader(RateLimiter limiter)
+    {
+        return compression
+                ? CompressedDirectReader.open(new File(getFilename()), getCompressionMetadata(), limiter)
+                : DirectReader.open(new File(getFilename()), limiter);
+    }
+
+    public RandomAccessReader openDirectReader()
+    {
+        return openDirectReader(null);
     }
 
     public RandomAccessReader openIndexReader()
     {
-        return RandomAccessReader.open(new File(getIndexFilename()));
+        return RandomAccessChannelReader.open(new File(getIndexFilename()));
     }
 
     /**

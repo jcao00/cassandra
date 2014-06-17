@@ -22,16 +22,12 @@ import java.util.*;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import org.apache.cassandra.io.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
-import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
-import org.apache.cassandra.io.util.FileDataInput;
-import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
@@ -87,7 +83,7 @@ public class MetadataSerializer implements IMetadataSerializer
         }
         else
         {
-            try (RandomAccessReader r = RandomAccessReader.open(statsFile))
+            try (RandomAccessReader r = RandomAccessChannelReader.open(statsFile))
             {
                 components = deserialize(descriptor, r, types);
             }

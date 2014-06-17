@@ -62,9 +62,17 @@ public class SSTableScanner implements ICompactionScanner
      */
     SSTableScanner(SSTableReader sstable, DataRange dataRange, RateLimiter limiter)
     {
+        this(sstable, dataRange, limiter, false);
+    }
+
+    SSTableScanner(SSTableReader sstable, DataRange dataRange, RateLimiter limiter, boolean useDirectIo)
+    {
         assert sstable != null;
 
-        this.dfile = limiter == null ? sstable.openDataReader() : sstable.openDataReader(limiter);
+        if (useDirectIo)
+            this.dfile = sstable.openDirectReader(limiter);
+        else
+            this.dfile = limiter == null ? sstable.openDataReader() : sstable.openDataReader(limiter);
         this.ifile = sstable.openIndexReader();
         this.sstable = sstable;
         this.dataRange = dataRange;
@@ -91,9 +99,17 @@ public class SSTableScanner implements ICompactionScanner
      */
     SSTableScanner(SSTableReader sstable, Collection<Range<Token>> tokenRanges, RateLimiter limiter)
     {
+        this (sstable, tokenRanges, limiter, false);
+    }
+
+    SSTableScanner(SSTableReader sstable, Collection<Range<Token>> tokenRanges, RateLimiter limiter, boolean useDirectIo)
+    {
         assert sstable != null;
 
-        this.dfile = limiter == null ? sstable.openDataReader() : sstable.openDataReader(limiter);
+        if (useDirectIo)
+            this.dfile = sstable.openDirectReader(limiter);
+        else
+            this.dfile = limiter == null ? sstable.openDataReader() : sstable.openDataReader(limiter);
         this.ifile = sstable.openIndexReader();
         this.sstable = sstable;
         this.dataRange = null;

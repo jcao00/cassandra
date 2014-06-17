@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.google.common.collect.Sets;
+import org.apache.cassandra.io.util.RandomAccessChannelReader;
 import org.junit.Test;
 
 import org.apache.cassandra.db.commitlog.ReplayPosition;
@@ -76,7 +77,7 @@ public class MetadataSerializerTest
         }
 
         Descriptor desc = new Descriptor(Descriptor.Version.CURRENT, statsFile.getParentFile(), "", "", 0, Descriptor.Type.FINAL);
-        try (RandomAccessReader in = RandomAccessReader.open(statsFile))
+        try (RandomAccessReader in = RandomAccessChannelReader.open(statsFile))
         {
             Map<MetadataType, MetadataComponent> deserialized = serializer.deserialize(desc, in, EnumSet.allOf(MetadataType.class));
 

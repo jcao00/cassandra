@@ -52,8 +52,9 @@ public class CompressedStreamWriter extends StreamWriter
     public void write(WritableByteChannel channel) throws IOException
     {
         long totalSize = totalSize();
-        RandomAccessReader file = sstable.openDataReader();
-        FileChannel fc = file.getChannel();
+        RandomAccessReader file = sstable.openDirectReader();
+        //TODO: jeb - fix me
+        FileChannel fc = null;//file.getChannel();
 
         long progress = 0L;
         // calculate chunks to transfer. we want to send continuous chunks altogether.
