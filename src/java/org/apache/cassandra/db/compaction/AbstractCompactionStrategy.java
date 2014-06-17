@@ -268,7 +268,7 @@ public abstract class AbstractCompactionStrategy
         RateLimiter limiter = CompactionManager.instance.getRateLimiter();
         ArrayList<ICompactionScanner> scanners = new ArrayList<ICompactionScanner>();
         for (SSTableReader sstable : sstables)
-            scanners.add(sstable.getScanner(range, limiter));
+            scanners.add(sstable.getDirectScanner(range, limiter));
         return scanners;
     }
 

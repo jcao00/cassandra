@@ -113,6 +113,8 @@ import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 
+import javax.naming.OperationNotSupportedException;
+
 import static org.apache.cassandra.db.Directories.SECONDARY_INDEX_NAME_SEPARATOR;
 
 /**
@@ -1641,6 +1643,11 @@ public class SSTableReader extends SSTable
         return new SSTableScanner(this, dataRange, null);
     }
 
+    public SSTableScanner getDirectScanner(DataRange dataRange)
+    {
+        return new SSTableScanner(this, dataRange, null, true);
+    }
+
     /**
      * I/O SSTableScanner
      * @return A Scanner for seeking over the rows of the SSTable.
@@ -1650,9 +1657,19 @@ public class SSTableReader extends SSTable
         return getScanner((RateLimiter) null);
     }
 
+    public SSTableScanner getDirectScanner()
+    {
+        return getDirectScanner((RateLimiter) null);
+    }
+
     public SSTableScanner getScanner(RateLimiter limiter)
     {
         return new SSTableScanner(this, DataRange.allData(partitioner), limiter);
+    }
+
+    public SSTableScanner getDirectScanner(RateLimiter limiter)
+    {
+        return new SSTableScanner(this, DataRange.allData(partitioner), limiter, true);
     }
 
     /**
@@ -1668,7 +1685,14 @@ public class SSTableReader extends SSTable
         return getScanner(Collections.singletonList(range), limiter);
     }
 
-   /**
+    public ICompactionScanner getDirectScanner(Range<Token> range, RateLimiter limiter)
+    {
+        if (range == null)
+            return getDirectScanner(limiter);
+        return getDirectScanner(Collections.singletonList(range), limiter);
+    }
+
+    /**
     * Direct I/O SSTableScanner over a defined collection of ranges of tokens.
     *
     * @param ranges the range of keys to cover
@@ -1682,6 +1706,16 @@ public class SSTableReader extends SSTable
             return new EmptyCompactionScanner(getFilename());
         else
             return new SSTableScanner(this, ranges, limiter);
+    }
+
+    public ICompactionScanner getDirectScanner(Collection<Range<Token>> ranges, RateLimiter limiter)
+    {
+        // We want to avoid allocating a SSTableScanner if the range don't overlap the sstable (#5249)
+        List<Pair<Long, Long>> positions = getPositionsForRanges(Range.normalize(ranges));
+        if (positions.isEmpty())
+            return new EmptyCompactionScanner(getFilename());
+        else
+            return new SSTableScanner(this, ranges, limiter, true);
     }
 
     public FileDataInput getFileDataInput(long position)
@@ -1867,15 +1901,25 @@ public class SSTableReader extends SSTable
     {
         assert limiter != null;
         return compression
-               ? CompressedThrottledReader.open(getFilename(), getCompressionMetadata(), limiter)
-               : ThrottledReader.open(new File(getFilename()), limiter);
+                ? CompressedThrottledReader.open(getFilename(), getCompressionMetadata(), limiter)
+                : ThrottledReader.open(new File(getFilename()), limiter);
     }
 
     public RandomAccessReader openDataReader()
     {
         return compression
-               ? CompressedRandomAccessReader.open(getFilename(), getCompressionMetadata())
-               : RandomAccessReader.open(new File(getFilename()));
+                ? CompressedRandomAccessReader.open(getFilename(), getCompressionMetadata())
+                : RandomAccessReader.open(new File(getFilename()));
+    }
+
+    public RandomAccessReader openDirectReader(RateLimiter limiter)
+    {
+        throw new UnsupportedOperationException("jeb has yet to impl this!");
+    }
+
+    public RandomAccessReader openDirectReader()
+    {
+        throw new UnsupportedOperationException("jeb has yet to impl this!");
     }
 
     public RandomAccessReader openIndexReader()

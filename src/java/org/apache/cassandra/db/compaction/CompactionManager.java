@@ -764,7 +764,7 @@ public class CompactionManager implements CompactionManagerMBean
             @Override
             public ICompactionScanner getScanner(SSTableReader sstable, RateLimiter limiter)
             {
-                return sstable.getScanner(ranges, limiter);
+                return sstable.getDirectScanner(ranges, limiter);
             }
 
             @Override
@@ -790,7 +790,7 @@ public class CompactionManager implements CompactionManagerMBean
             @Override
             public ICompactionScanner getScanner(SSTableReader sstable, RateLimiter limiter)
             {
-                return sstable.getScanner(limiter);
+                return sstable.getDirectScanner(limiter);
             }
 
             @Override
