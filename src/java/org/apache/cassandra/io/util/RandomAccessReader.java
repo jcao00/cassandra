@@ -35,7 +35,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     public static final int DEFAULT_BUFFER_SIZE = 65536;
 
     // absolute filesystem path to the file
-    private final String filePath;
+    protected final String filePath;
 
     // buffer which will cache file blocks
     protected ByteBuffer buffer;
@@ -47,19 +47,18 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     // channel linked with the file, used to retrieve data and force updates.
     protected final FileChannel channel;
 
-    private final long fileLength;
+    protected final long fileLength;
 
     protected final PoolingSegmentedFile owner;
 
     protected RandomAccessReader(File file, int bufferSize, PoolingSegmentedFile owner) throws FileNotFoundException
     {
         this.owner = owner;
-
         filePath = file.getAbsolutePath();
 
         try
         {
-            channel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
+            channel = openChannel(file);
         }
         catch (IOException e)
         {
@@ -83,11 +82,17 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         buffer.limit(0);
     }
 
+    protected FileChannel openChannel(File file) throws IOException
+    {
+        return FileChannel.open(file.toPath(), StandardOpenOption.READ);
+    }
+
     protected ByteBuffer allocateBuffer(int bufferSize)
     {
         return ByteBuffer.allocate((int) Math.min(fileLength, bufferSize));
     }
 
+    // only called from BuffPoolingSegFile
     public static RandomAccessReader open(File file, PoolingSegmentedFile owner)
     {
         return open(file, DEFAULT_BUFFER_SIZE, owner);
@@ -273,7 +278,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         if (newPosition < 0)
             throw new IllegalArgumentException("new position should not be negative");
 
-        if (newPosition >= length()) // it is save to call length() in read-only mode
+        if (newPosition >= length()) // it is safe to call length() in read-only mode
         {
             if (newPosition > length())
                 throw new IllegalArgumentException(String.format("unable to seek to position %d in %s (%d bytes) in read-only mode",

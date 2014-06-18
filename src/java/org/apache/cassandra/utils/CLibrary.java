@@ -211,11 +211,16 @@ public final class CLibrary
 
     public static int tryOpenDirectory(String path)
     {
+        return tryOpen(path, O_RDONLY);
+    }
+
+    private static int tryOpen(String path, int flags)
+    {
         int fd = -1;
 
         try
         {
-            return open(path, O_RDONLY);
+            return open(path, flags);
         }
         catch (UnsatisfiedLinkError e)
         {
@@ -230,6 +235,11 @@ public final class CLibrary
         }
 
         return fd;
+    }
+
+    public static int tryOpenDirect(String path)
+    {
+        return tryOpen(path, O_RDONLY | O_DIRECT);
     }
 
     public static void trySync(int fd)
@@ -278,7 +288,7 @@ public final class CLibrary
 
     /**
      * Get system file descriptor from FileDescriptor object.
-     * @param descriptor - FileDescriptor objec to get fd from
+     * @param descriptor - FileDescriptor object to get fd from
      * @return file descriptor, -1 or error
      */
     public static int getfd(FileDescriptor descriptor)
@@ -298,6 +308,27 @@ public final class CLibrary
         }
 
         return -1;
+    }
+
+    public static FileDescriptor setfd(int fd)
+    {
+        Field field = FBUtilities.getProtectedField(FileDescriptor.class, "fd");
+
+        if (field == null)
+            return null;
+
+        try
+        {
+            FileDescriptor fileDescriptor = new FileDescriptor();
+            field.setInt(fileDescriptor, fd);
+            return fileDescriptor;
+        }
+        catch (Exception e)
+        {
+            logger.warn("unable to read fd field from FileDescriptor");
+        }
+
+        return null;
     }
 
     public static int getfd(String path)
