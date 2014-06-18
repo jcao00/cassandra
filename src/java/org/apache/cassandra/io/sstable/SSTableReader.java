@@ -50,6 +50,8 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Ordering;
 import com.google.common.primitives.Longs;
 import com.google.common.util.concurrent.RateLimiter;
+import org.apache.cassandra.io.compress.CompressedDirectReader;
+import org.apache.cassandra.io.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,15 +91,6 @@ import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.sstable.metadata.ValidationMetadata;
-import org.apache.cassandra.io.util.BufferedSegmentedFile;
-import org.apache.cassandra.io.util.CompressedSegmentedFile;
-import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
-import org.apache.cassandra.io.util.FileDataInput;
-import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.io.util.ICompressedFile;
-import org.apache.cassandra.io.util.RandomAccessReader;
-import org.apache.cassandra.io.util.SegmentedFile;
-import org.apache.cassandra.io.util.ThrottledReader;
 import org.apache.cassandra.metrics.RestorableMeter;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.service.ActiveRepairService;
@@ -1914,12 +1907,14 @@ public class SSTableReader extends SSTable
 
     public RandomAccessReader openDirectReader(RateLimiter limiter)
     {
-        throw new UnsupportedOperationException("jeb has yet to impl this!");
+        return compression
+                ? CompressedDirectReader.open(new File(getFilename()), RandomAccessReader.DEFAULT_BUFFER_SIZE, getCompressionMetadata(), limiter)
+                : DirectReader.open(new File(getFilename()), RandomAccessReader.DEFAULT_BUFFER_SIZE, limiter);
     }
 
     public RandomAccessReader openDirectReader()
     {
-        throw new UnsupportedOperationException("jeb has yet to impl this!");
+        return openDirectReader(null);
     }
 
     public RandomAccessReader openIndexReader()

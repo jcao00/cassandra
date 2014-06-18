@@ -29,6 +29,7 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Ordering;
+import org.apache.cassandra.io.util.DirectReader;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -249,7 +250,7 @@ public class CommitLogReplayer
                     file.getPath(),
                     desc.version,
                     desc.getMessagingVersion());
-        RandomAccessReader reader = RandomAccessReader.open(new File(file.getAbsolutePath()));
+        RandomAccessReader reader = DirectReader.open(new File(file.getAbsolutePath()));
 
         try
         {
