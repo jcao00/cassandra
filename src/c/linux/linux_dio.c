@@ -35,7 +35,7 @@
 
 #include "../cass_dio.h"
 
-//may want something less hard-coded, but this seems to be the accepted value in linux-land
+// we may want something less hard-coded, but this seems to be the accepted value in linux-land
 #define ALIGNMENT 512
 
 JNIEXPORT jobject JNICALL 

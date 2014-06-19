@@ -33,6 +33,7 @@ public class DirectReader extends RandomAccessReader
 {
     private static final Logger logger = LoggerFactory.getLogger(DirectReader.class);
     protected static final int ALIGNMENT = 512;// getAlignment();
+    private int bufferMisalignment;
 
     private static int getAlignment()
     {
@@ -89,7 +90,7 @@ public class DirectReader extends RandomAccessReader
 
     public static RandomAccessReader open(File file, int bufferSize)
     {
-        return open(file, bufferSize, (RateLimiter)null);
+        return open(file, bufferSize, (RateLimiter) null);
     }
 
     public static RandomAccessReader open(File file, int bufferSize, RateLimiter limiter)
@@ -114,14 +115,17 @@ public class DirectReader extends RandomAccessReader
         {
             buffer.clear();
             //adjust the buffer.limit if we have less bytes to read than current limit
-            long readSize = buffer.capacity();
-            long curPos = channel.position();
-            if (curPos + buffer.capacity() > fileLength - curPos)
-                readSize = fileLength - curPos;
+            int readSize = buffer.capacity();
+            final long curPos = channel.position();
+            if (curPos + buffer.capacity() > fileLength)
+                readSize = (int)(fileLength - curPos);
             if (limiter != null)
-                limiter.acquire(buffer.limit());
+                limiter.acquire(readSize);
 
-            channel.position(bufferOffset); // setting channel position
+            //adjust for any misalignments in the channel offset - that is, start from an earlier
+            // position in the channel (on the ALIGNMENT bound), then readjust the buffer's position later
+            bufferMisalignment = (int)(bufferOffset % ALIGNMENT);
+            channel.position(bufferOffset - bufferMisalignment);
             while (readSize > 0)
             {
                 int n = channel.read(buffer);
@@ -130,11 +134,17 @@ public class DirectReader extends RandomAccessReader
                 readSize -= n;
             }
             buffer.flip();
+            buffer.position(bufferMisalignment);
         }
         catch (IOException e)
         {
             throw new FSReadError(e, filePath);
         }
+    }
+
+    protected long current()
+    {
+        return bufferOffset + (buffer == null ? 0 : buffer.position() - bufferMisalignment);
     }
 
     public void close()

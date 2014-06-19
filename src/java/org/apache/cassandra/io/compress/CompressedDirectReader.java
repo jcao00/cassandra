@@ -88,6 +88,7 @@ public class CompressedDirectReader extends DirectReader
             }
 
             int readCnt = channel.read(compressed);
+//            int readCnt = super.reBuffer(compressed);
             if (readCnt < readLen)
                 throw new CorruptBlockException(getPath(), chunk);
 
