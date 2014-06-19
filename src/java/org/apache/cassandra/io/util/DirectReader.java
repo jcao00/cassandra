@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.cassandra.io.util;
 
 import com.google.common.util.concurrent.RateLimiter;
@@ -15,7 +32,7 @@ import java.nio.channels.FileChannel;
 public class DirectReader extends RandomAccessReader
 {
     private static final Logger logger = LoggerFactory.getLogger(DirectReader.class);
-    private static final int ALIGNMENT = 512;// getAlignment();
+    protected static final int ALIGNMENT = 512;// getAlignment();
 
     private static int getAlignment()
     {
@@ -34,9 +51,7 @@ public class DirectReader extends RandomAccessReader
         }
     }
 
-
     protected final RateLimiter limiter;
-
     protected FileInputStream fis;
 
     protected DirectReader(File file, int bufferSize, RateLimiter limiter) throws FileNotFoundException
@@ -45,28 +60,7 @@ public class DirectReader extends RandomAccessReader
         this.limiter = limiter;
     }
 
-    public static DirectReader open(File file)
-    {
-        return open(file, DEFAULT_BUFFER_SIZE, (RateLimiter)null);
-    }
-
-    public static DirectReader open(File file, int bufferSize)
-    {
-        return open(file, bufferSize, (RateLimiter)null);
-    }
-
-    public static DirectReader open(File file, int bufferSize, RateLimiter limiter)
-    {
-        try
-        {
-            return new DirectReader(file, bufferSize, limiter);
-        }
-        catch (FileNotFoundException e)
-        {
-            throw new RuntimeException(e);
-        }
-    }
-
+    // called by ctor
     protected FileChannel openChannel(File file) throws IOException
     {
         int fd = CLibrary.tryOpenDirect(file.getAbsolutePath());
@@ -77,6 +71,7 @@ public class DirectReader extends RandomAccessReader
         return fis.getChannel();
     }
 
+    // called by ctor
     protected ByteBuffer allocateBuffer(int bufferSize)
     {
         int size = (int) Math.min(fileLength, bufferSize);
@@ -84,7 +79,30 @@ public class DirectReader extends RandomAccessReader
         if (alignOff != 0)
             size += ALIGNMENT - alignOff;
 
-        return ByteBuffer.allocateDirect(size);
+        return CLibrary.allocateBuffer(size);
+    }
+
+    public static RandomAccessReader open(File file)
+    {
+        return open(file, DEFAULT_BUFFER_SIZE, (RateLimiter)null);
+    }
+
+    public static RandomAccessReader open(File file, int bufferSize)
+    {
+        return open(file, bufferSize, (RateLimiter)null);
+    }
+
+    public static RandomAccessReader open(File file, int bufferSize, RateLimiter limiter)
+    {
+        try
+        {
+            //TODO: have some check if we're on linux and loaded the magick lib
+            return new DirectReader(file, bufferSize, limiter);
+        }
+        catch (FileNotFoundException e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 
     protected void reBuffer()
@@ -121,7 +139,20 @@ public class DirectReader extends RandomAccessReader
 
     public void close()
     {
-        FileUtils.closeQuietly(fis);
-        super.close();
+        bufferOffset += buffer.position();
+
+        if (buffer.isDirect())
+            CLibrary.destroyBuffer(buffer);
+        buffer = null;
+
+        try
+        {
+            channel.close();
+            FileUtils.closeQuietly(fis);
+        }
+        catch (IOException e)
+        {
+            throw new FSReadError(e, filePath);
+        }
     }
 }
