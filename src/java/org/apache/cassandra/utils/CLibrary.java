@@ -20,6 +20,7 @@ package org.apache.cassandra.utils;
 import java.io.FileDescriptor;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +74,16 @@ public final class CLibrary
             logger.warn("Obsolete version of JNA present; unable to register C library. Upgrade to JNA 3.2.7 or later");
             jnaAvailable = false;
         }
+
+        try
+        {
+            System.loadLibrary("cassandra-dio");
+        }
+        catch (Throwable e)
+        {
+            logger.info("error loading the direct-io (dio) native library ");
+        }
+
     }
 
     private static native int mlockall(int flags) throws LastErrorException;
@@ -357,4 +368,8 @@ public final class CLibrary
             }
         }
     }
+
+    public static native ByteBuffer allocateBuffer(long size);
+
+    public static native void destroyBuffer(ByteBuffer buffer);
 }
