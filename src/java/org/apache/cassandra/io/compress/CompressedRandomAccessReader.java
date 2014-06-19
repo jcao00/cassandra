@@ -42,7 +42,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         {
             return new CompressedRandomAccessReader(path, metadata, owner);
         }
-        catch (FileNotFoundException e)
+        catch (IOException e)
         {
             throw new RuntimeException(e);
         }
@@ -54,7 +54,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         {
             return new CompressedRandomAccessReader(dataFilePath, metadata, null);
         }
-        catch (FileNotFoundException e)
+        catch (IOException e)
         {
             throw new RuntimeException(e);
         }
@@ -71,7 +71,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
     // raw checksum bytes
     private final ByteBuffer checksumBytes = ByteBuffer.wrap(new byte[4]);
 
-    protected CompressedRandomAccessReader(String dataFilePath, CompressionMetadata metadata, PoolingSegmentedFile owner) throws FileNotFoundException
+    protected CompressedRandomAccessReader(String dataFilePath, CompressionMetadata metadata, PoolingSegmentedFile owner) throws IOException
     {
         super(new File(dataFilePath), metadata.chunkLength(), owner);
         this.metadata = metadata;

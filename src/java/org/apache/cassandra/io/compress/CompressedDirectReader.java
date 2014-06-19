@@ -4,15 +4,12 @@ import com.google.common.util.concurrent.RateLimiter;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.util.DirectReader;
-import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.io.util.PoolingSegmentedFile;
 import org.apache.cassandra.utils.CLibrary;
 import org.apache.cassandra.utils.FBUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.zip.Adler32;
@@ -34,7 +31,7 @@ public class CompressedDirectReader extends DirectReader
     // raw checksum bytes
     private final ByteBuffer checksumBytes = ByteBuffer.wrap(new byte[4]);
 
-    protected CompressedDirectReader(File file, int bufferSize, CompressionMetadata metadata, RateLimiter limiter) throws FileNotFoundException
+    protected CompressedDirectReader(File file, int bufferSize, CompressionMetadata metadata, RateLimiter limiter) throws IOException
     {
         super(file, metadata.chunkLength(), limiter);
         this.metadata = metadata;
@@ -60,7 +57,7 @@ public class CompressedDirectReader extends DirectReader
         {
             return new CompressedDirectReader(file, bufferSize, metadata, limiter);
         }
-        catch (FileNotFoundException e)
+        catch (IOException e)
         {
             throw new RuntimeException(e);
         }
@@ -87,14 +84,10 @@ public class CompressedDirectReader extends DirectReader
                 compressed = super.allocateBuffer(readLen);
             }
 
-            int readCnt = channel.read(compressed);
-//            int readCnt = super.reBuffer(compressed);
-            if (readCnt < readLen)
+            reBuffer(compressed);
+            if (compressed.limit() < readLen)
                 throw new CorruptBlockException(getPath(), chunk);
 
-            // technically flip() is unnecessary since all the remaining work uses the raw array, but if that changes
-            // in the future this will save a lot of hair-pulling
-            compressed.flip();
             buffer.clear();
             int decompressedBytes;
             byte[] onHeapCompressed;
@@ -113,7 +106,6 @@ public class CompressedDirectReader extends DirectReader
 
             if (mustReadChecksum)
             {
-
                 if (metadata.hasPostCompressionAdlerChecksums)
                 {
                     checksum.update(onHeapCompressed, 0, chunk.length);
@@ -162,11 +154,6 @@ public class CompressedDirectReader extends DirectReader
         }
         return buffer.array();
     }
-
-//    private int checksum(CompressionMetadata.Chunk chunk) throws IOException
-//    {
-//        return buf   fer.getInt(chunk.length + 1);
-//    }
 
     public int getTotalBufferSize()
     {

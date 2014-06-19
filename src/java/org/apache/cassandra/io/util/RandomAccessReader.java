@@ -51,19 +51,11 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
 
     protected final PoolingSegmentedFile owner;
 
-    protected RandomAccessReader(File file, int bufferSize, PoolingSegmentedFile owner) throws FileNotFoundException
+    protected RandomAccessReader(File file, int bufferSize, PoolingSegmentedFile owner) throws IOException
     {
         this.owner = owner;
         filePath = file.getAbsolutePath();
-
-        try
-        {
-            channel = openChannel(file);
-        }
-        catch (IOException e)
-        {
-            throw new FileNotFoundException(filePath);
-        }
+        channel = openChannel(file);
 
         // allocating required size of the buffer
         if (bufferSize <= 0)

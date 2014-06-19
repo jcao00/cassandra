@@ -55,7 +55,7 @@ public class DirectReader extends RandomAccessReader
     protected final RateLimiter limiter;
     protected FileInputStream fis;
 
-    protected DirectReader(File file, int bufferSize, RateLimiter limiter) throws FileNotFoundException
+    protected DirectReader(File file, int bufferSize, RateLimiter limiter) throws IOException
     {
         super(file, bufferSize, null);
         this.limiter = limiter;
@@ -100,7 +100,7 @@ public class DirectReader extends RandomAccessReader
             //TODO: have some check if we're on linux and loaded the magick lib
             return new DirectReader(file, bufferSize, limiter);
         }
-        catch (FileNotFoundException e)
+        catch (IOException e)
         {
             throw new RuntimeException(e);
         }
@@ -108,16 +108,21 @@ public class DirectReader extends RandomAccessReader
 
     protected void reBuffer()
     {
-        bufferOffset += buffer.position();
+        reBuffer(buffer);
+    }
+
+    protected void reBuffer(ByteBuffer buf)
+    {
+        bufferOffset += buf.position();
         assert bufferOffset < fileLength;
 
         try
         {
-            buffer.clear();
+            buf.clear();
             //adjust the buffer.limit if we have less bytes to read than current limit
-            int readSize = buffer.capacity();
+            int readSize = buf.capacity();
             final long curPos = channel.position();
-            if (curPos + buffer.capacity() > fileLength)
+            if (curPos + buf.capacity() > fileLength)
                 readSize = (int)(fileLength - curPos);
             if (limiter != null)
                 limiter.acquire(readSize);
@@ -128,13 +133,13 @@ public class DirectReader extends RandomAccessReader
             channel.position(bufferOffset - bufferMisalignment);
             while (readSize > 0)
             {
-                int n = channel.read(buffer);
+                int n = channel.read(buf);
                 if (n < 0)
                     break;
                 readSize -= n;
             }
-            buffer.flip();
-            buffer.position(bufferMisalignment);
+            buf.flip();
+            buf.position(bufferMisalignment);
         }
         catch (IOException e)
         {
