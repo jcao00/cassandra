@@ -108,14 +108,13 @@ public class DirectReader extends RandomAccessReader
 
     protected void reBuffer()
     {
+        bufferOffset += buffer.position();
+        assert bufferOffset < fileLength;
         reBuffer(buffer);
     }
 
     protected void reBuffer(ByteBuffer buf)
     {
-        bufferOffset += buf.position();
-        assert bufferOffset < fileLength;
-
         try
         {
             buf.clear();
