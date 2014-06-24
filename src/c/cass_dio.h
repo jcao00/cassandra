@@ -26,8 +26,14 @@ extern "C" {
 #endif
 
 
+/* native buffer ops */
 JNIEXPORT jobject JNICALL Java_org_apache_cassandra_utils_CLibrary_allocateBuffer(JNIEnv *env, jobject class, jlong size);
 JNIEXPORT jint JNICALL Java_org_apache_cassandra_utils_CLibrary_destroyBuffer(JNIEnv *env, jobject class, jobject buffer);
+
+/* file ops */
+JNIEXPORT jlong JNICALL Java_org_apache_cassandra_utils_CLibrary_filesize0(JNIEnv *env, jobject class, jint fd);
+JNIEXPORT jint JNICALL Java_org_apache_cassandra_utils_CLibrary_pread0(JNIEnv *env, jobject class, jint fd, jobject buffer, jint size, jlong offset);
+
 
 #ifdef __cplusplus
 }

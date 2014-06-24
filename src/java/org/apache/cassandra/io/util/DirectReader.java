@@ -27,13 +27,16 @@ import sun.misc.Unsafe;
 import java.io.*;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 
+/**
+ * Uses memory and block alignment, as well as DIO.
+ *
+ * Using native pread to get around using nio/nio2 (yeech!)
+ */
 public class DirectReader extends RandomAccessReader
 {
     private static final Logger logger = LoggerFactory.getLogger(DirectReader.class);
     protected static final int ALIGNMENT = 512;// getAlignment();
-    private int bufferMisalignment;
 
     private static int getAlignment()
     {
@@ -52,27 +55,24 @@ public class DirectReader extends RandomAccessReader
         }
     }
 
+    private final int fd;
     protected final RateLimiter limiter;
-    protected FileInputStream fis;
+
+    protected ByteBuffer buffer;
+    private int bufferMisalignment;
 
     protected DirectReader(File file, int bufferSize, RateLimiter limiter) throws IOException
     {
-        super(file, bufferSize, null);
+        super(file, bufferSize);
+        fd = CLibrary.tryOpenDirect(file.getAbsolutePath());
+        if (fd < 0)
+            throw new IOException("Unable to open file for direct i/o, return = {}" + fd);
+        fileLength = CLibrary.getFileLength(fd);
+
+        buffer = allocateBuffer(bufferSize);
         this.limiter = limiter;
     }
 
-    // called by ctor
-    protected FileChannel openChannel(File file) throws IOException
-    {
-        int fd = CLibrary.tryOpenDirect(file.getAbsolutePath());
-        if (fd < 0)
-            throw new IOException("Unable to open file for direct i/o, return = {}" + fd);
-        FileDescriptor fileDescriptor = CLibrary.setfd(fd);
-        fis = new FileInputStream(fileDescriptor);
-        return fis.getChannel();
-    }
-
-    // called by ctor
     protected ByteBuffer allocateBuffer(int bufferSize)
     {
         int size = (int) Math.min(fileLength, bufferSize);
@@ -85,19 +85,18 @@ public class DirectReader extends RandomAccessReader
 
     public static RandomAccessReader open(File file)
     {
-        return open(file, DEFAULT_BUFFER_SIZE, (RateLimiter)null);
+        return open(file, DEFAULT_BUFFER_SIZE, null);
     }
 
     public static RandomAccessReader open(File file, int bufferSize)
     {
-        return open(file, bufferSize, (RateLimiter) null);
+        return open(file, bufferSize, null);
     }
 
     public static RandomAccessReader open(File file, int bufferSize, RateLimiter limiter)
     {
         try
         {
-            //TODO: have some check if we're on linux and loaded the magick lib
             return new DirectReader(file, bufferSize, limiter);
         }
         catch (IOException e)
@@ -110,37 +109,46 @@ public class DirectReader extends RandomAccessReader
     {
         bufferOffset += buffer.position();
         assert bufferOffset < fileLength;
-        reBuffer(buffer);
+        buffer = reBuffer(buffer);
     }
 
-    protected void reBuffer(ByteBuffer buf)
+    protected ByteBuffer reBuffer(ByteBuffer buf)
     {
         try
         {
             buf.clear();
             //adjust the buffer.limit if we have less bytes to read than current limit
             int readSize = buf.capacity();
-            final long curPos = channel.position();
+            final long curPos = bufferOffset;
             if (curPos + buf.capacity() > fileLength)
                 readSize = (int)(fileLength - curPos);
-            if (limiter != null)
-                limiter.acquire(readSize);
 
-            //adjust for any misalignments in the channel offset - that is, start from an earlier
+            //adjust for any misalignments in the file offset - that is, start from an earlier
             // position in the channel (on the ALIGNMENT bound), then readjust the buffer's position later
             bufferMisalignment = (int)(bufferOffset % ALIGNMENT);
-            channel.position(bufferOffset - bufferMisalignment);
+            readSize += bufferMisalignment;
+            if (buf.capacity() < readSize)
+            {
+                CLibrary.destroyBuffer(buf);
+                buf = allocateBuffer(readSize);
+            }
+            long readStart = bufferOffset - bufferMisalignment;
+
+            if (limiter != null)
+                limiter.acquire(readSize);
             while (readSize > 0)
             {
-                int n = channel.read(buf);
+                int n = CLibrary.tryPread(fd, buf, readSize, readStart);
                 if (n < 0)
                     break;
                 readSize -= n;
+                readStart += n;
             }
             buf.flip();
             buf.position(bufferMisalignment);
+            return buf;
         }
-        catch (IOException e)
+        catch (Exception e)
         {
             throw new FSReadError(e, filePath);
         }
@@ -151,7 +159,7 @@ public class DirectReader extends RandomAccessReader
         return bufferOffset + (buffer == null ? 0 : buffer.position() - bufferMisalignment);
     }
 
-    public void close()
+    public void deallocate()
     {
         bufferOffset += buffer.position();
 
@@ -159,14 +167,11 @@ public class DirectReader extends RandomAccessReader
             CLibrary.destroyBuffer(buffer);
         buffer = null;
 
-        try
-        {
-            channel.close();
-            FileUtils.closeQuietly(fis);
-        }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
+        CLibrary.tryCloseFD(fd);
+    }
+
+    public void close()
+    {
+        deallocate();
     }
 }

@@ -75,8 +75,7 @@ public class CompressedDirectReader extends DirectReader
 
             CompressionMetadata.Chunk chunk = metadata.chunkFor(position);
 
-            if (channel.position() != chunk.offset)
-                channel.position(chunk.offset);
+            bufferOffset = chunk.offset;
 
             final boolean mustReadChecksum = shouldReadChecksumBytes();
             int readLen = chunk.length + (mustReadChecksum ? 4 : 0);
@@ -87,7 +86,7 @@ public class CompressedDirectReader extends DirectReader
                 compressed = super.allocateBuffer(readLen);
             }
 
-            reBuffer(compressed);
+            compressed = reBuffer(compressed);
             // make sure we read the number of bytes we actually care about (first byte of buffer will be at the block alignment, so account for the offset)
             if (compressed.limit() - compressed.position() < readLen)
                 throw new CorruptBlockException(getPath(), chunk);

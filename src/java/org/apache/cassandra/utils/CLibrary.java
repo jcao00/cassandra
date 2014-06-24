@@ -18,6 +18,7 @@
 package org.apache.cassandra.utils;
 
 import java.io.FileDescriptor;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
@@ -286,7 +287,7 @@ public final class CLibrary
         }
         catch (UnsatisfiedLinkError e)
         {
-            // JNA is unavailable just skipping Direct I/O
+            // JNA is unavailable, just skipping
         }
         catch (RuntimeException e)
         {
@@ -321,27 +322,6 @@ public final class CLibrary
         return -1;
     }
 
-    public static FileDescriptor setfd(int fd)
-    {
-        Field field = FBUtilities.getProtectedField(FileDescriptor.class, "fd");
-
-        if (field == null)
-            return null;
-
-        try
-        {
-            FileDescriptor fileDescriptor = new FileDescriptor();
-            field.setInt(fileDescriptor, fd);
-            return fileDescriptor;
-        }
-        catch (Exception e)
-        {
-            logger.warn("unable to read fd field from FileDescriptor");
-        }
-
-        return null;
-    }
-
     public static int getfd(String path)
     {
         RandomAccessFile file = null;
@@ -372,4 +352,35 @@ public final class CLibrary
     public static native ByteBuffer allocateBuffer(long size);
 
     public static native void destroyBuffer(ByteBuffer buffer);
+
+    public static long getFileLength(int fd) throws IOException
+    {
+        long filesize = filesize0(fd);
+        if (filesize < 0)
+            throw new IOException("could not get filesize");
+        return filesize;
+    }
+
+    private static native long filesize0(int fd);
+
+    public static int tryPread(int fd, ByteBuffer buf, int size, long offset)
+    {
+        try
+        {
+            return pread0(fd, buf, size, offset);
+        }
+        catch (UnsatisfiedLinkError e)
+        {
+            // JNA is unavailable, just skipping
+            throw new RuntimeException("cannot call pread");
+        }
+        catch (RuntimeException e)
+        {
+            logger.warn(String.format("pread(%d) failed, errno (%d).", fd, errno(e)));
+            throw e;
+        }
+    }
+
+
+    private static native int pread0(int fd, ByteBuffer buf, int size, long offset);
 }

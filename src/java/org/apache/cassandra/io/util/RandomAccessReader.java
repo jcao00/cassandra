@@ -17,139 +17,66 @@
  */
 package org.apache.cassandra.io.util;
 
-import java.io.*;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.StandardOpenOption;
-
-import com.google.common.annotations.VisibleForTesting;
-
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
-public class RandomAccessReader extends AbstractDataInput implements FileDataInput
-{
-    public static final long CACHE_FLUSH_INTERVAL_IN_BYTES = (long) Math.pow(2, 27); // 128mb
+import java.io.EOFException;
+import java.io.File;
+import java.nio.ByteBuffer;
 
+public abstract class RandomAccessReader extends AbstractDataInput implements FileDataInput
+{
     // default buffer size, 64Kb
     public static final int DEFAULT_BUFFER_SIZE = 65536;
 
+    // `bufferOffset` is the offset of the beginning of the buffer
+    protected long bufferOffset;
+
+    // `markedPointer` folds the offset of the last file mark
+    protected long markedPointer;
     // absolute filesystem path to the file
     protected final String filePath;
+
+    protected long fileLength;
 
     // buffer which will cache file blocks
     protected ByteBuffer buffer;
 
-    // `bufferOffset` is the offset of the beginning of the buffer
-    // `markedPointer` folds the offset of the last file mark
-    protected long bufferOffset, markedPointer;
 
-    // channel linked with the file, used to retrieve data and force updates.
-    protected final FileChannel channel;
-
-    protected final long fileLength;
-
-    protected final PoolingSegmentedFile owner;
-
-    protected RandomAccessReader(File file, int bufferSize, PoolingSegmentedFile owner) throws IOException
+    protected RandomAccessReader(File file, int bufferSize)
     {
-        this.owner = owner;
-        filePath = file.getAbsolutePath();
-        channel = openChannel(file);
-
         // allocating required size of the buffer
         if (bufferSize <= 0)
             throw new IllegalArgumentException("bufferSize must be positive");
 
-        // we can cache file length in read-only mode
-        try
-        {
-            fileLength = channel.size();
-        }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
+        filePath = file.getAbsolutePath();
         buffer = allocateBuffer(bufferSize);
         buffer.limit(0);
     }
 
-    protected FileChannel openChannel(File file) throws IOException
-    {
-        return FileChannel.open(file.toPath(), StandardOpenOption.READ);
-    }
+    protected abstract ByteBuffer allocateBuffer(int bufferSize);
 
-    protected ByteBuffer allocateBuffer(int bufferSize)
-    {
-        return ByteBuffer.allocate((int) Math.min(fileLength, bufferSize));
-    }
+    public abstract void deallocate();
 
-    // only called from BuffPoolingSegFile
-    public static RandomAccessReader open(File file, PoolingSegmentedFile owner)
-    {
-        return open(file, DEFAULT_BUFFER_SIZE, owner);
-    }
+    /* methods (re-)declared here to make them publicly visible */
+    public abstract void close();
 
-    public static RandomAccessReader open(File file)
+    public long getPosition()
     {
-        return open(file, DEFAULT_BUFFER_SIZE, null);
-    }
-
-    @VisibleForTesting
-    static RandomAccessReader open(File file, int bufferSize, PoolingSegmentedFile owner)
-    {
-        try
-        {
-            return new RandomAccessReader(file, bufferSize, owner);
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
-    }
-
-    @VisibleForTesting
-    static RandomAccessReader open(SequentialWriter writer)
-    {
-        return open(new File(writer.getPath()), DEFAULT_BUFFER_SIZE, null);
-    }
-
-    // channel extends FileChannel, impl SeekableByteChannel.  Safe to cast.
-    public FileChannel getChannel()
-    {
-        return channel;
+        return bufferOffset + buffer.position();
     }
 
     /**
-     * Read data from file starting from current currentOffset to populate buffer.
+     * Class to hold a mark to the position of the file
      */
-    protected void reBuffer()
+    protected static class BufferedRandomAccessFileMark implements FileMark
     {
-        bufferOffset += buffer.position();
-        buffer.clear();
-        assert bufferOffset < fileLength;
+        final long pointer;
 
-        try
+        public BufferedRandomAccessFileMark(long pointer)
         {
-            channel.position(bufferOffset); // setting channel position
-            while (buffer.hasRemaining())
-            {
-                int n = channel.read(buffer);
-                if (n < 0)
-                    break;
-            }
-            buffer.flip();
+            this.pointer = pointer;
         }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
-    }
-
-    @Override
-    public long getFilePointer()
-    {
-        return current();
     }
 
     protected long current()
@@ -157,20 +84,6 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         return bufferOffset + (buffer == null ? 0 : buffer.position());
     }
 
-    public String getPath()
-    {
-        return filePath;
-    }
-
-    public int getTotalBufferSize()
-    {
-        return buffer.capacity();
-    }
-
-    public void reset()
-    {
-        seek(markedPointer);
-    }
 
     public long bytesPastMark()
     {
@@ -199,12 +112,9 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         return bytes;
     }
 
-    /**
-     * @return true if there is no more data to read
-     */
-    public boolean isEOF()
+    public void reset()
     {
-        return getFilePointer() == length();
+        seek(markedPointer);
     }
 
     public long bytesRemaining()
@@ -212,85 +122,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         return length() - getFilePointer();
     }
 
-    @Override
-    public void close()
-    {
-        if (owner == null || buffer == null)
-        {
-            // The buffer == null check is so that if the pool owner has deallocated us, calling close()
-            // will re-call deallocate rather than recycling a deallocated object.
-            // I'd be more comfortable if deallocate didn't have to handle being idempotent like that,
-            // but RandomAccessFile.close will call AbstractInterruptibleChannel.close which will
-            // re-call RAF.close -- in this case, [C]RAR.close since we are overriding that.
-            deallocate();
-        }
-        else
-        {
-            owner.recycle(this);
-        }
-    }
-
-    public void deallocate()
-    {
-        bufferOffset += buffer.position();
-        buffer = null; // makes sure we don't use this after it's ostensibly closed
-
-        try
-        {
-            channel.close();
-        }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
-    }
-
-    @Override
-    public String toString()
-    {
-        return getClass().getSimpleName() + "(" + "filePath='" + filePath + "')";
-    }
-
-    /**
-     * Class to hold a mark to the position of the file
-     */
-    protected static class BufferedRandomAccessFileMark implements FileMark
-    {
-        final long pointer;
-
-        public BufferedRandomAccessFileMark(long pointer)
-        {
-            this.pointer = pointer;
-        }
-    }
-
-    @Override
-    public void seek(long newPosition)
-    {
-        if (newPosition < 0)
-            throw new IllegalArgumentException("new position should not be negative");
-
-        if (newPosition >= length()) // it is safe to call length() in read-only mode
-        {
-            if (newPosition > length())
-                throw new IllegalArgumentException(String.format("unable to seek to position %d in %s (%d bytes) in read-only mode",
-                                                             newPosition, getPath(), length()));
-            buffer.limit(0);
-            bufferOffset = newPosition;
-            return;
-        }
-
-        if (newPosition >= bufferOffset && newPosition < bufferOffset + buffer.limit())
-        {
-            buffer.position((int) (newPosition - bufferOffset));
-            return;
-        }
-        // Set current location to newPosition and clear buffer so reBuffer calculates from newPosition
-        bufferOffset = newPosition;
-        buffer.clear();
-        reBuffer();
-        assert current() == newPosition;
-    }
+    protected abstract void reBuffer();
 
     // -1 will be returned if there is nothing to read; higher-level methods like readInt
     // or readFully (from RandomAccessFile) will throw EOFException but this should not
@@ -306,12 +138,6 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
             reBuffer();
 
         return (int)buffer.get() & 0xff;
-    }
-
-    @Override
-    public int read(byte[] buffer)
-    {
-        return read(buffer, 0, buffer.length);
     }
 
     @Override
@@ -363,18 +189,74 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         }
     }
 
+
+    /**
+     * @return true if there is no more data to read
+     */
+    public boolean isEOF()
+    {
+        return getFilePointer() == length();
+    }
+
+    public long getFilePointer()
+    {
+        return current();
+    }
+
+    public String getPath()
+    {
+        return filePath;
+    }
+
+    public int getTotalBufferSize()
+    {
+        return buffer.capacity();
+    }
+
+
     public long length()
     {
         return fileLength;
     }
 
-    public long getPosition()
-    {
-        return bufferOffset + buffer.position();
-    }
 
     public long getPositionLimit()
     {
         return length();
     }
+
+    public String toString()
+    {
+        return getClass().getSimpleName() + "(" + "filePath='" + filePath + "')";
+    }
+
+
+    @Override
+    public void seek(long newPosition)
+    {
+        if (newPosition < 0)
+            throw new IllegalArgumentException("new position should not be negative");
+
+        if (newPosition >= length()) // it is safe to call length() in read-only mode
+        {
+            if (newPosition > length())
+                throw new IllegalArgumentException(String.format("unable to seek to position %d in %s (%d bytes) in read-only mode",
+                        newPosition, getPath(), length()));
+            buffer.limit(0);
+            bufferOffset = newPosition;
+            return;
+        }
+
+        if (newPosition >= bufferOffset && newPosition < bufferOffset + buffer.limit())
+        {
+            buffer.position((int) (newPosition - bufferOffset));
+            return;
+        }
+        // Set current location to newPosition and clear buffer so reBuffer calculates from newPosition
+        bufferOffset = newPosition;
+        buffer.clear();
+        reBuffer();
+        assert current() == newPosition;
+    }
+
 }

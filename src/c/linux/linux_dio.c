@@ -20,10 +20,10 @@
 #define _GNU_SOURCE
 #endif
 
-//#include <jni.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/stat.h>
 //#include <time.h>
 #include <sys/file.h>
@@ -68,3 +68,32 @@ Java_org_apache_cassandra_utils_CLibrary_destroyBuffer(JNIEnv *env, jobject clas
     free(buf);
     return 0;
 }
+
+JNIEXPORT jlong JNICALL 
+Java_org_apache_cassandra_utils_CLibrary_filesize0(JNIEnv *env, jobject class, jint fd)
+{
+    struct stat statBuffer;
+    if (fstat(fd, &statBuffer))
+    {
+        return JNI_EINVAL;
+    }
+    return statBuffer.st_size;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_apache_cassandra_utils_CLibrary_pread0(JNIEnv *env, jobject class, jint fd, jobject buffer, jint size, jlong offset)
+{
+    void *b = (*env)->GetDirectBufferAddress(env, buffer);
+    if (!b)
+    {
+        return JNI_ENOMEM;
+    }
+
+    int status = pread(fd, b, size, offset);
+    if (status < 0)
+    {
+        return -errno;
+    }
+    return status;
+}
+

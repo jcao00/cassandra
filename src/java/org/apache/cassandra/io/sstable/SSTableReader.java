@@ -766,7 +766,7 @@ public class SSTableReader extends SSTable
     private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded, int samplingLevel) throws IOException
     {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+        RandomAccessReader primaryIndex = RandomAccessDataReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
 
         try
         {
@@ -1025,7 +1025,7 @@ public class SSTableReader extends SSTable
     private IndexSummary buildSummaryAtLevel(int newSamplingLevel) throws IOException
     {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+        RandomAccessReader primaryIndex = RandomAccessDataReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
         try
         {
             long indexSize = primaryIndex.length();
@@ -1902,7 +1902,7 @@ public class SSTableReader extends SSTable
     {
         return compression
                 ? CompressedRandomAccessReader.open(getFilename(), getCompressionMetadata())
-                : RandomAccessReader.open(new File(getFilename()));
+                : RandomAccessDataReader.open(new File(getFilename()));
     }
 
     public RandomAccessReader openDirectReader(RateLimiter limiter)
@@ -1919,7 +1919,7 @@ public class SSTableReader extends SSTable
 
     public RandomAccessReader openIndexReader()
     {
-        return RandomAccessReader.open(new File(getIndexFilename()));
+        return RandomAccessDataReader.open(new File(getIndexFilename()));
     }
 
     /**
