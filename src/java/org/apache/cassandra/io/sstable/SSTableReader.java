@@ -1906,8 +1906,8 @@ public class SSTableReader extends SSTable
     public RandomAccessReader openDirectReader(RateLimiter limiter)
     {
         return compression
-                ? CompressedDirectReader.open(new File(getFilename()), RandomAccessReader.DEFAULT_BUFFER_SIZE, getCompressionMetadata(), limiter)
-                : DirectReader.open(new File(getFilename()), RandomAccessReader.DEFAULT_BUFFER_SIZE, limiter);
+                ? CompressedDirectReader.open(new File(getFilename()), getCompressionMetadata(), limiter)
+                : DirectReader.open(new File(getFilename()), limiter);
     }
 
     public RandomAccessReader openDirectReader()

@@ -80,19 +80,14 @@ public class DirectReader extends RandomAccessReader
 
     public static RandomAccessReader open(File file)
     {
-        return open(file, DEFAULT_BUFFER_SIZE, null);
+        return open(file, null);
     }
 
-    public static RandomAccessReader open(File file, int bufferSize)
-    {
-        return open(file, bufferSize, null);
-    }
-
-    public static RandomAccessReader open(File file, int bufferSize, RateLimiter limiter)
+    public static RandomAccessReader open(File file, RateLimiter limiter)
     {
         try
         {
-            return new DirectReader(file, bufferSize, limiter);
+            return new DirectReader(file, DEFAULT_BUFFER_SIZE, limiter);
         }
         catch (IOException e)
         {

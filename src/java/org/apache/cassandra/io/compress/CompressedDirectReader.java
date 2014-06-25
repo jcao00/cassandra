@@ -28,12 +28,13 @@ public class CompressedDirectReader extends DirectReader
     // re-use single crc object
     private final Checksum checksum;
 
-    protected CompressedDirectReader(File file, int bufferSize, CompressionMetadata metadata, RateLimiter limiter) throws IOException
+    protected CompressedDirectReader(File file, CompressionMetadata metadata, RateLimiter limiter) throws IOException
     {
         super(file, metadata.chunkLength(), limiter);
         this.metadata = metadata;
         checksum = metadata.hasPostCompressionAdlerChecksums ? new Adler32() : new CRC32();
-        compressed = allocateDirectBuffer(metadata.chunkLength() < fileLength ? metadata.chunkLength() : (int)fileLength);
+        int len = metadata.compressor().initialCompressedBufferLength(metadata.chunkLength());
+        compressed = allocateDirectBuffer(len < fileLength ? len : (int)fileLength);
     }
 
     // called be ctor, super.buffer does *not* need to be off-heap
@@ -42,16 +43,16 @@ public class CompressedDirectReader extends DirectReader
         return ByteBuffer.allocate(bufferSize);
     }
 
-    public static CompressedDirectReader open(File file, int bufferSize, CompressionMetadata metadata)
+    public static CompressedDirectReader open(File file, CompressionMetadata metadata)
     {
-        return open(file, bufferSize, metadata, null);
+        return open(file, metadata, null);
     }
 
-    public static CompressedDirectReader open(File file, int bufferSize, CompressionMetadata metadata, RateLimiter limiter)
+    public static CompressedDirectReader open(File file, CompressionMetadata metadata, RateLimiter limiter)
     {
         try
         {
-            return new CompressedDirectReader(file, bufferSize, metadata, limiter);
+            return new CompressedDirectReader(file, metadata, limiter);
         }
         catch (IOException e)
         {
