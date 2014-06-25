@@ -25,19 +25,15 @@ import java.nio.file.StandardOpenOption;
 import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.cassandra.io.FSReadError;
-import org.apache.cassandra.utils.ByteBufferUtil;
 
-public class RandomAccessDataReader extends RandomAccessReader
+public class RandomAccessChannelReader extends RandomAccessReader
 {
-
-
     // channel linked with the file, used to retrieve data and force updates.
     protected final FileChannel channel;
 
-
     protected final PoolingSegmentedFile owner;
 
-    protected RandomAccessDataReader(File file, int bufferSize, PoolingSegmentedFile owner) throws IOException
+    protected RandomAccessChannelReader(File file, int bufferSize, PoolingSegmentedFile owner) throws IOException
     {
         super(file, bufferSize);
         this.owner = owner;
@@ -52,6 +48,9 @@ public class RandomAccessDataReader extends RandomAccessReader
         {
             throw new FSReadError(e, filePath);
         }
+
+        buffer = allocateBuffer(bufferSize);
+        buffer.limit(0);
     }
 
     protected ByteBuffer allocateBuffer(int bufferSize)
@@ -75,7 +74,7 @@ public class RandomAccessDataReader extends RandomAccessReader
     {
         try
         {
-            return new RandomAccessDataReader(file, bufferSize, owner);
+            return new RandomAccessChannelReader(file, bufferSize, owner);
         }
         catch (IOException e)
         {
@@ -153,6 +152,4 @@ public class RandomAccessDataReader extends RandomAccessReader
             throw new FSReadError(e, filePath);
         }
     }
-
-
 }

@@ -86,14 +86,30 @@ Java_org_apache_cassandra_utils_CLibrary_pread0(JNIEnv *env, jobject class, jint
     void *b = (*env)->GetDirectBufferAddress(env, buffer);
     if (!b)
     {
-        return JNI_ENOMEM;
+        return JNI_EINVAL;
     }
 
-    int status = pread(fd, b, size, offset);
-    if (status < 0)
+    int total = 0;
+    while (size > 0)
     {
-        return -errno;
+        int cnt = pread64(fd, b, size, offset);
+        if (cnt == -1)
+        {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                continue;
+            }
+            return -errno;
+        }
+        else if (cnt == 0)
+        {
+            break;
+        }
+        b += cnt;
+        size -= cnt;
+        offset += cnt;
+        total += cnt; 
     }
-    return status;
+    return total;
 }
 

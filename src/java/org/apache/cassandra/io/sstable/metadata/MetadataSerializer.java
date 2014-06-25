@@ -83,7 +83,7 @@ public class MetadataSerializer implements IMetadataSerializer
         }
         else
         {
-            try (RandomAccessReader r = RandomAccessDataReader.open(statsFile))
+            try (RandomAccessReader r = RandomAccessChannelReader.open(statsFile))
             {
                 components = deserialize(descriptor, r, types);
             }

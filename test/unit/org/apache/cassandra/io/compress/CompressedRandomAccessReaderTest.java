@@ -24,7 +24,7 @@ import java.io.RandomAccessFile;
 import java.util.Collections;
 import java.util.Random;
 
-import org.apache.cassandra.io.util.RandomAccessDataReader;
+import org.apache.cassandra.io.util.RandomAccessChannelReader;
 import org.junit.Test;
 
 import org.apache.cassandra.db.composites.SimpleDenseCellNameType;
@@ -125,7 +125,7 @@ public class CompressedRandomAccessReaderTest
             assert f.exists();
             RandomAccessReader reader = compressed
                                       ? CompressedRandomAccessReader.open(filename, new CompressionMetadata(filename + ".metadata", f.length(), true))
-                                      : RandomAccessDataReader.open(f);
+                                      : RandomAccessChannelReader.open(f);
             String expected = "The quick brown fox jumps over the lazy dog";
             assertEquals(expected.length(), reader.length());
             byte[] b = new byte[expected.length()];

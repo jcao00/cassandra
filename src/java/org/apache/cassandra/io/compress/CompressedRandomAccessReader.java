@@ -27,15 +27,14 @@ import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.util.CompressedPoolingSegmentedFile;
 import org.apache.cassandra.io.util.PoolingSegmentedFile;
-import org.apache.cassandra.io.util.RandomAccessDataReader;
-import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.io.util.RandomAccessChannelReader;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
  * CRAR extends RAR to transparently uncompress blocks from the file into RAR.buffer.  Most of the RAR
  * "read bytes from the buffer, rebuffering when necessary" machinery works unchanged after that.
  */
-public class CompressedRandomAccessReader extends RandomAccessDataReader
+public class CompressedRandomAccessReader extends RandomAccessChannelReader
 {
     public static CompressedRandomAccessReader open(String path, CompressionMetadata metadata, CompressedPoolingSegmentedFile owner)
     {

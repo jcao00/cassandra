@@ -106,8 +106,6 @@ import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 
-import javax.naming.OperationNotSupportedException;
-
 import static org.apache.cassandra.db.Directories.SECONDARY_INDEX_NAME_SEPARATOR;
 
 /**
@@ -766,7 +764,7 @@ public class SSTableReader extends SSTable
     private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded, int samplingLevel) throws IOException
     {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessDataReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+        RandomAccessReader primaryIndex = RandomAccessChannelReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
 
         try
         {
@@ -1025,7 +1023,7 @@ public class SSTableReader extends SSTable
     private IndexSummary buildSummaryAtLevel(int newSamplingLevel) throws IOException
     {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessDataReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+        RandomAccessReader primaryIndex = RandomAccessChannelReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
         try
         {
             long indexSize = primaryIndex.length();
@@ -1902,7 +1900,7 @@ public class SSTableReader extends SSTable
     {
         return compression
                 ? CompressedRandomAccessReader.open(getFilename(), getCompressionMetadata())
-                : RandomAccessDataReader.open(new File(getFilename()));
+                : RandomAccessChannelReader.open(new File(getFilename()));
     }
 
     public RandomAccessReader openDirectReader(RateLimiter limiter)
@@ -1919,7 +1917,7 @@ public class SSTableReader extends SSTable
 
     public RandomAccessReader openIndexReader()
     {
-        return RandomAccessDataReader.open(new File(getIndexFilename()));
+        return RandomAccessChannelReader.open(new File(getIndexFilename()));
     }
 
     /**

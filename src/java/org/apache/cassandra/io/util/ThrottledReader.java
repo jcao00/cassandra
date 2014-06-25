@@ -22,12 +22,11 @@ package org.apache.cassandra.io.util;
 
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import com.google.common.util.concurrent.RateLimiter;
 
-public class ThrottledReader extends RandomAccessDataReader
+public class ThrottledReader extends RandomAccessChannelReader
 {
     private final RateLimiter limiter;
 

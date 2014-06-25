@@ -27,6 +27,7 @@ import sun.misc.Unsafe;
 import java.io.*;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Uses memory and block alignment, as well as DIO.
@@ -57,23 +58,30 @@ public class DirectReader extends RandomAccessReader
 
     private final int fd;
     protected final RateLimiter limiter;
+    protected final AtomicBoolean open = new AtomicBoolean(false);
 
-    protected ByteBuffer buffer;
-    private int bufferMisalignment;
+    protected int bufferMisalignment;
 
     protected DirectReader(File file, int bufferSize, RateLimiter limiter) throws IOException
     {
         super(file, bufferSize);
         fd = CLibrary.tryOpenDirect(file.getAbsolutePath());
         if (fd < 0)
-            throw new IOException("Unable to open file for direct i/o, return = {}" + fd);
+            throw new IOException(String.format("Unable to open %s for direct i/o, return = %d", filePath, fd));
+        open.set(true);
         fileLength = CLibrary.getFileLength(fd);
 
         buffer = allocateBuffer(bufferSize);
+        buffer.limit(0);
         this.limiter = limiter;
     }
 
     protected ByteBuffer allocateBuffer(int bufferSize)
+    {
+        return allocateDirectBuffer(bufferSize);
+    }
+
+    protected ByteBuffer allocateDirectBuffer(int bufferSize)
     {
         int size = (int) Math.min(fileLength, bufferSize);
         int alignOff = size % ALIGNMENT;
@@ -107,46 +115,62 @@ public class DirectReader extends RandomAccessReader
 
     protected void reBuffer()
     {
-        bufferOffset += buffer.position();
+        bufferOffset += buffer.position() - bufferMisalignment;
         assert bufferOffset < fileLength;
-        buffer = reBuffer(buffer);
+        buffer.clear();
+        buffer = reBuffer(buffer, bufferOffset);
     }
 
-    protected ByteBuffer reBuffer(ByteBuffer buf)
+    protected ByteBuffer reBuffer(ByteBuffer dst, long readStart)
     {
         try
         {
-            buf.clear();
-            //adjust the buffer.limit if we have less bytes to read than current limit
-            int readSize = buf.capacity();
-            final long curPos = bufferOffset;
-            if (curPos + buf.capacity() > fileLength)
-                readSize = (int)(fileLength - curPos);
+            assert readStart < fileLength;
+
+            int readSize = dst.limit() - dst.position();
+            if (readStart + dst.capacity() > fileLength)
+                readSize = (int)(fileLength - readStart);
 
             //adjust for any misalignments in the file offset - that is, start from an earlier
-            // position in the channel (on the ALIGNMENT bound), then readjust the buffer's position later
-            bufferMisalignment = (int)(bufferOffset % ALIGNMENT);
+            // position in the channel (on the ALIGNMENT bound), then readjust the buffer's position later.
+            // in short, this aligns the read starting byte.
+            bufferMisalignment = (int)(readStart % ALIGNMENT);
+            readStart -= bufferMisalignment;
             readSize += bufferMisalignment;
-            if (buf.capacity() < readSize)
+
+            // needed when we're at the end of file (or in a short file), and number of bytes to read is < ALIGNMENT,
+            // tell pread we want an aligned read count, even though we'll we'll hit EOF before that.
+            // in short, this makes sure the number of bytes we tell read() that we want to read is aligned
+            int readSizeAlign = readSize;
+            if (readSizeAlign % ALIGNMENT != 0)
             {
-                CLibrary.destroyBuffer(buf);
-                buf = allocateBuffer(readSize);
+                readSizeAlign += ALIGNMENT - (readSizeAlign % ALIGNMENT);
             }
-            long readStart = bufferOffset - bufferMisalignment;
+
+            if (dst.capacity() < readSizeAlign)
+            {
+                CLibrary.destroyBuffer(dst);
+                dst = allocateDirectBuffer(readSizeAlign);
+            }
+            dst.limit(readSizeAlign);
 
             if (limiter != null)
-                limiter.acquire(readSize);
-            while (readSize > 0)
+                limiter.acquire(readSizeAlign);
+            int cnt = 0;
+            while (cnt < readSize)
             {
-                int n = CLibrary.tryPread(fd, buf, readSize, readStart);
+                int n = CLibrary.tryPread(fd, dst, readSizeAlign, readStart);
                 if (n < 0)
                     break;
-                readSize -= n;
+                cnt += n;
+                dst.position(cnt);
                 readStart += n;
             }
-            buf.flip();
-            buf.position(bufferMisalignment);
-            return buf;
+
+            // now clean up alignment offset
+            dst.flip();
+            dst.position(bufferMisalignment);
+            return dst;
         }
         catch (Exception e)
         {
@@ -161,13 +185,20 @@ public class DirectReader extends RandomAccessReader
 
     public void deallocate()
     {
-        bufferOffset += buffer.position();
+        if (buffer != null)
+        {
+            bufferOffset += buffer.position();
 
-        if (buffer.isDirect())
-            CLibrary.destroyBuffer(buffer);
-        buffer = null;
+            if (buffer.isDirect())
+                CLibrary.destroyBuffer(buffer);
+            buffer = null;
+        }
 
-        CLibrary.tryCloseFD(fd);
+        if (open.compareAndSet(true, false))
+        {
+            logger.info("closing fd {}", fd);
+            CLibrary.tryCloseFD(fd);
+        }
     }
 
     public void close()

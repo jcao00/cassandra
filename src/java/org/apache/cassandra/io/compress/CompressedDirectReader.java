@@ -28,9 +28,6 @@ public class CompressedDirectReader extends DirectReader
     // re-use single crc object
     private final Checksum checksum;
 
-    // raw checksum bytes
-    private final ByteBuffer checksumBytes = ByteBuffer.wrap(new byte[4]);
-
     private int rebufferInvokeCnt;
 
     protected CompressedDirectReader(File file, int bufferSize, CompressionMetadata metadata, RateLimiter limiter) throws IOException
@@ -38,13 +35,12 @@ public class CompressedDirectReader extends DirectReader
         super(file, metadata.chunkLength(), limiter);
         this.metadata = metadata;
         checksum = metadata.hasPostCompressionAdlerChecksums ? new Adler32() : new CRC32();
-        compressed = super.allocateBuffer(metadata.chunkLength() < fileLength ? metadata.chunkLength() : (int)fileLength);
+        compressed = allocateDirectBuffer(metadata.chunkLength() < fileLength ? metadata.chunkLength() : (int)fileLength);
     }
 
-    // called be ctor, that buffer does *not* need to be off-heap
+    // called be ctor, super.buffer does *not* need to be off-heap
     protected ByteBuffer allocateBuffer(int bufferSize)
     {
-        assert Integer.bitCount(bufferSize) == 1;
         return ByteBuffer.allocate(bufferSize);
     }
 
@@ -68,25 +64,29 @@ public class CompressedDirectReader extends DirectReader
     protected void reBuffer()
     {
         rebufferInvokeCnt++;
+        CompressionMetadata.Chunk chunk = null;
         try
         {
             final long position = current();
             assert position < metadata.dataLength;
 
-            CompressionMetadata.Chunk chunk = metadata.chunkFor(position);
+            chunk = metadata.chunkFor(position);
 
-            bufferOffset = chunk.offset;
-
-            final boolean mustReadChecksum = shouldReadChecksumBytes();
-            int readLen = chunk.length + (mustReadChecksum ? 4 : 0);
+            final boolean readChecksum = metadata.parameters.getCrcCheckChance() > FBUtilities.threadLocalRandom().nextDouble();
+            int readLen = chunk.length + (readChecksum ? 4 : 0);
 
             if (compressed.capacity() < readLen)
             {
                 CLibrary.destroyBuffer(compressed);
-                compressed = super.allocateBuffer(readLen);
+                compressed = allocateDirectBuffer(readLen);
             }
+            else
+            {
+                compressed.clear();
+            }
+            compressed.limit(readLen);
 
-            compressed = reBuffer(compressed);
+            compressed = reBuffer(compressed, chunk.offset);
             // make sure we read the number of bytes we actually care about (first byte of buffer will be at the block alignment, so account for the offset)
             if (compressed.limit() - compressed.position() < readLen)
                 throw new CorruptBlockException(getPath(), chunk);
@@ -108,7 +108,7 @@ public class CompressedDirectReader extends DirectReader
                 throw new CorruptBlockException(getPath(), chunk);
             }
 
-            if (mustReadChecksum)
+            if (readChecksum)
             {
                 if (metadata.hasPostCompressionAdlerChecksums)
                 {
@@ -119,7 +119,7 @@ public class CompressedDirectReader extends DirectReader
                     checksum.update(buffer.array(), 0, decompressedBytes);
                 }
 
-                if (compressed.getInt(chunk.length) != (int) checksum.getValue())
+                if (compressed.getInt(bufferMisalignment + chunk.length) != (int) checksum.getValue())
                     throw new CorruptBlockException(getPath(), chunk);
 
                 // reset checksum object back to the original (blank) state
@@ -128,21 +128,20 @@ public class CompressedDirectReader extends DirectReader
 
             // buffer offset is always aligned
             bufferOffset = position & ~(buffer.capacity() - 1);
-            buffer.position((int) (position - bufferOffset));
+            logger.info("compressed block info 1a: file = {}, bufferOffset = {}, chunk = {}, compressed = {}, buffer = {}, rebufferInvokeCnt = {}", filePath, bufferOffset, chunk, compressed, buffer, rebufferInvokeCnt);
+            buffer.position(0);
+//            buffer.position((int) (position - bufferOffset));
+            logger.info("compressed block info 1b: file = {}, bufferOffset = {}, chunk = {}, compressed = {}, buffer = {}, rebufferInvokeCnt = {}", filePath, bufferOffset, chunk, compressed, buffer, rebufferInvokeCnt);
         }
         catch (CorruptBlockException e)
         {
             throw new CorruptSSTableException(e, getPath());
         }
-        catch (IOException e)
+        catch (Exception e)
         {
-            throw new FSReadError(e, getPath());
+            logger.error("corrupt compressed block: bufferOffset = {}, chunk = {}, compressed = {}, rebufferInvokeCnt = {}", bufferOffset, chunk, compressed, rebufferInvokeCnt);
+            throw new RuntimeException(e);
         }
-    }
-
-    boolean shouldReadChecksumBytes()
-    {
-        return metadata.parameters.getCrcCheckChance() > FBUtilities.threadLocalRandom().nextDouble();
     }
 
     private byte[] getBytes(ByteBuffer buffer, int length)
@@ -155,6 +154,11 @@ public class CompressedDirectReader extends DirectReader
             return b;
         }
         return buffer.array();
+    }
+
+    protected long current()
+    {
+        return bufferOffset + (buffer == null ? 0 : buffer.position());
     }
 
     public int getTotalBufferSize()
@@ -172,11 +176,11 @@ public class CompressedDirectReader extends DirectReader
         return String.format("%s - chunk length %d, data length %d.", getPath(), metadata.chunkLength(), metadata.dataLength);
     }
 
-    public void close()
+    public void deallocate()
     {
-        CLibrary.destroyBuffer(compressed);
+        if (compressed != null && compressed.isDirect())
+            CLibrary.destroyBuffer(compressed);
         compressed = null;
-        super.close();
+        super.deallocate();
     }
-
 }
