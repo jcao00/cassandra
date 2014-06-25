@@ -37,24 +37,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class DirectReader extends RandomAccessReader
 {
     private static final Logger logger = LoggerFactory.getLogger(DirectReader.class);
-    protected static final int ALIGNMENT = 512;// getAlignment();
 
-    private static int getAlignment()
-    {
-        try
-        {
-            Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-            field.setAccessible(true);
-            Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
-            int pageSize = unsafe.pageSize();
-            logger.info("alignment/pageSize = {}", pageSize);
-            return pageSize;
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException("could not get page size alignment from Unsafe", e);
-        }
-    }
+    //alignment for memory pages
+    protected static final int PAGE_ALIGNMENT = 512;
+    //alignment for disk blocks
+    protected static final int BLOCK_ALIGNMENT = 512;
 
     private final int fd;
     protected final RateLimiter limiter;
@@ -84,9 +71,9 @@ public class DirectReader extends RandomAccessReader
     protected ByteBuffer allocateDirectBuffer(int bufferSize)
     {
         int size = (int) Math.min(fileLength, bufferSize);
-        int alignOff = size % ALIGNMENT;
+        int alignOff = size % PAGE_ALIGNMENT;
         if (alignOff != 0)
-            size += ALIGNMENT - alignOff;
+            size += PAGE_ALIGNMENT - alignOff;
 
         return CLibrary.allocateBuffer(size);
     }
@@ -134,7 +121,7 @@ public class DirectReader extends RandomAccessReader
             //adjust for any misalignments in the file offset - that is, start from an earlier
             // position in the channel (on the ALIGNMENT bound), then readjust the buffer's position later.
             // in short, this aligns the read starting byte.
-            bufferMisalignment = (int)(readStart % ALIGNMENT);
+            bufferMisalignment = (int)(readStart % BLOCK_ALIGNMENT);
             readStart -= bufferMisalignment;
             readSize += bufferMisalignment;
 
@@ -142,9 +129,9 @@ public class DirectReader extends RandomAccessReader
             // tell pread we want an aligned read count, even though we'll we'll hit EOF before that.
             // in short, this makes sure the number of bytes we tell read() that we want to read is aligned
             int readSizeAlign = readSize;
-            if (readSizeAlign % ALIGNMENT != 0)
+            if (readSizeAlign % BLOCK_ALIGNMENT != 0)
             {
-                readSizeAlign += ALIGNMENT - (readSizeAlign % ALIGNMENT);
+                readSizeAlign += BLOCK_ALIGNMENT - (readSizeAlign % BLOCK_ALIGNMENT);
             }
 
             if (dst.capacity() < readSizeAlign)

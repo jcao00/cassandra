@@ -28,8 +28,6 @@ public class CompressedDirectReader extends DirectReader
     // re-use single crc object
     private final Checksum checksum;
 
-    private int rebufferInvokeCnt;
-
     protected CompressedDirectReader(File file, int bufferSize, CompressionMetadata metadata, RateLimiter limiter) throws IOException
     {
         super(file, metadata.chunkLength(), limiter);
@@ -63,15 +61,12 @@ public class CompressedDirectReader extends DirectReader
 
     protected void reBuffer()
     {
-        rebufferInvokeCnt++;
-        CompressionMetadata.Chunk chunk = null;
         try
         {
             final long position = current();
             assert position < metadata.dataLength;
 
-            chunk = metadata.chunkFor(position);
-
+            final CompressionMetadata.Chunk chunk = metadata.chunkFor(position);
             final boolean readChecksum = metadata.parameters.getCrcCheckChance() > FBUtilities.threadLocalRandom().nextDouble();
             int readLen = chunk.length + (readChecksum ? 4 : 0);
 
@@ -87,7 +82,6 @@ public class CompressedDirectReader extends DirectReader
             compressed.limit(readLen);
 
             compressed = reBuffer(compressed, chunk.offset);
-            // make sure we read the number of bytes we actually care about (first byte of buffer will be at the block alignment, so account for the offset)
             if (compressed.limit() - compressed.position() < readLen)
                 throw new CorruptBlockException(getPath(), chunk);
 
@@ -128,19 +122,11 @@ public class CompressedDirectReader extends DirectReader
 
             // buffer offset is always aligned
             bufferOffset = position & ~(buffer.capacity() - 1);
-            logger.info("compressed block info 1a: file = {}, bufferOffset = {}, chunk = {}, compressed = {}, buffer = {}, rebufferInvokeCnt = {}", filePath, bufferOffset, chunk, compressed, buffer, rebufferInvokeCnt);
-            buffer.position(0);
-//            buffer.position((int) (position - bufferOffset));
-            logger.info("compressed block info 1b: file = {}, bufferOffset = {}, chunk = {}, compressed = {}, buffer = {}, rebufferInvokeCnt = {}", filePath, bufferOffset, chunk, compressed, buffer, rebufferInvokeCnt);
+            buffer.position((int) (position - bufferOffset));
         }
         catch (CorruptBlockException e)
         {
             throw new CorruptSSTableException(e, getPath());
-        }
-        catch (Exception e)
-        {
-            logger.error("corrupt compressed block: bufferOffset = {}, chunk = {}, compressed = {}, rebufferInvokeCnt = {}", bufferOffset, chunk, compressed, rebufferInvokeCnt);
-            throw new RuntimeException(e);
         }
     }
 
