@@ -99,13 +99,13 @@ public class RandomAccessChannelReader extends RandomAccessReader
      */
     protected void reBuffer()
     {
-        bufferOffset += buffer.position();
+        fileOffset += buffer.position();
         buffer.clear();
-        assert bufferOffset < fileLength;
+        assert fileOffset < fileLength;
 
         try
         {
-            channel.position(bufferOffset); // setting channel position
+            channel.position(fileOffset); // setting channel position
             while (buffer.hasRemaining())
             {
                 int n = channel.read(buffer);
@@ -140,7 +140,7 @@ public class RandomAccessChannelReader extends RandomAccessReader
 
     public void deallocate()
     {
-        bufferOffset += buffer.position();
+        fileOffset += buffer.position();
         buffer = null; // makes sure we don't use this after it's ostensibly closed
 
         try

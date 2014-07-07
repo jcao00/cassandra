@@ -39,7 +39,7 @@
 #define ALIGNMENT 512
 
 JNIEXPORT jobject JNICALL 
-Java_org_apache_cassandra_utils_CLibrary_allocateBuffer(JNIEnv *env, jobject class, jlong size)
+Java_org_apache_cassandra_io_util_DirectReader_allocateNativeBuffer(JNIEnv *env, jobject class, jlong size)
 {
     if (size % ALIGNMENT)
     {
@@ -58,7 +58,7 @@ Java_org_apache_cassandra_utils_CLibrary_allocateBuffer(JNIEnv *env, jobject cla
 }
 
 JNIEXPORT jint JNICALL 
-Java_org_apache_cassandra_utils_CLibrary_destroyBuffer(JNIEnv *env, jobject class, jobject buffer)
+Java_org_apache_cassandra_io_util_DirectReader_destroyNativeBuffer(JNIEnv *env, jobject class, jobject buffer)
 {
     if (buffer == 0)
     {
@@ -69,8 +69,28 @@ Java_org_apache_cassandra_utils_CLibrary_destroyBuffer(JNIEnv *env, jobject clas
     return 0;
 }
 
+JNIEXPORT jlong JNICALL
+Java_org_apache_cassandra_io_util_DirectReader_open0(JNIEnv *env, jobject class, jstring file_name)
+{
+    const char *name = (*env)->GetStringUTFChars(env, file_name, NULL);
+    if (name == NULL)
+    {
+        return JNI_EINVAL;
+    }
+    int fd = open(name, O_RDONLY | O_DIRECT, 0666);
+    (*env)->ReleaseStringUTFChars(env, file_name, name);
+
+    return fd;
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_apache_cassandra_io_util_DirectReader_close0(JNIEnv *env, jobject class, jint fd)
+{
+    return close(fd);
+}
+
 JNIEXPORT jlong JNICALL 
-Java_org_apache_cassandra_utils_CLibrary_filesize0(JNIEnv *env, jobject class, jint fd)
+Java_org_apache_cassandra_io_util_DirectReader_filesize0(JNIEnv *env, jobject class, jint fd)
 {
     struct stat statBuffer;
     if (fstat(fd, &statBuffer))
@@ -81,7 +101,7 @@ Java_org_apache_cassandra_utils_CLibrary_filesize0(JNIEnv *env, jobject class, j
 }
 
 JNIEXPORT jint JNICALL
-Java_org_apache_cassandra_utils_CLibrary_pread0(JNIEnv *env, jobject class, jint fd, jobject buffer, jint size, jlong offset)
+Java_org_apache_cassandra_io_util_DirectReader_pread0(JNIEnv *env, jobject class, jint fd, jobject buffer, jint size, jlong offset)
 {
     void *b = (*env)->GetDirectBufferAddress(env, buffer);
     if (!b)

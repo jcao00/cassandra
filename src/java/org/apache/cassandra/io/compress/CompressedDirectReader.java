@@ -1,10 +1,8 @@
 package org.apache.cassandra.io.compress;
 
 import com.google.common.util.concurrent.RateLimiter;
-import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.util.DirectReader;
-import org.apache.cassandra.utils.CLibrary;
 import org.apache.cassandra.utils.FBUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,7 +71,7 @@ public class CompressedDirectReader extends DirectReader
 
             if (compressed.capacity() < readLen)
             {
-                CLibrary.destroyBuffer(compressed);
+                destroyNativeBuffer(compressed);
                 compressed = allocateDirectBuffer(readLen);
             }
             else
@@ -122,8 +120,8 @@ public class CompressedDirectReader extends DirectReader
             }
 
             // buffer offset is always aligned
-            bufferOffset = position & ~(buffer.capacity() - 1);
-            buffer.position((int) (position - bufferOffset));
+            fileOffset = position & ~(buffer.capacity() - 1);
+            buffer.position((int) (position - fileOffset));
         }
         catch (CorruptBlockException e)
         {
@@ -145,7 +143,7 @@ public class CompressedDirectReader extends DirectReader
 
     protected long current()
     {
-        return bufferOffset + (buffer == null ? 0 : buffer.position());
+        return fileOffset + (buffer == null ? 0 : buffer.position());
     }
 
     public int getTotalBufferSize()
@@ -166,7 +164,7 @@ public class CompressedDirectReader extends DirectReader
     public void deallocate()
     {
         if (compressed != null && compressed.isDirect())
-            CLibrary.destroyBuffer(compressed);
+            destroyNativeBuffer(compressed);
         compressed = null;
         super.deallocate();
     }

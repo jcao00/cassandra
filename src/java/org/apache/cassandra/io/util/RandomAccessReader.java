@@ -21,9 +21,12 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public abstract class RandomAccessReader extends AbstractDataInput implements FileDataInput
 {
+    private static final Logger logger = LoggerFactory.getLogger(RandomAccessReader.class);
     // default buffer size, 64Kb
     public static final int DEFAULT_BUFFER_SIZE = 65536;
 
@@ -33,9 +36,9 @@ public abstract class RandomAccessReader extends AbstractDataInput implements Fi
     // buffer which will cache file blocks
     protected ByteBuffer buffer;
 
-    // `bufferOffset` is the offset of the beginning of the buffer
+    // `fileOffset` is the offset of the beginning of the file
     // `markedPointer` folds the offset of the last file mark
-    protected long bufferOffset, markedPointer;
+    protected long fileOffset, markedPointer;
 
     protected long fileLength;
 
@@ -63,7 +66,7 @@ public abstract class RandomAccessReader extends AbstractDataInput implements Fi
 
     protected long current()
     {
-        return bufferOffset + (buffer == null ? 0 : buffer.position());
+        return fileOffset + (buffer == null ? 0 : buffer.position());
     }
 
     public String getPath()
@@ -156,17 +159,17 @@ public abstract class RandomAccessReader extends AbstractDataInput implements Fi
         if (newPosition == length())
         {
             buffer.limit(0);
-            bufferOffset = newPosition;
+            fileOffset = newPosition;
             return;
         }
 
-        if (newPosition >= bufferOffset && newPosition < bufferOffset + buffer.limit())
+        if (newPosition >= fileOffset && newPosition < fileOffset + buffer.limit())
         {
-            buffer.position((int) (newPosition - bufferOffset));
+            buffer.position((int) (newPosition - fileOffset));
             return;
         }
         // Set current location to newPosition and clear buffer so reBuffer calculates from newPosition
-        bufferOffset = newPosition;
+        fileOffset = newPosition;
         buffer.clear();
         reBuffer();
         assert current() == newPosition;
@@ -250,7 +253,7 @@ public abstract class RandomAccessReader extends AbstractDataInput implements Fi
 
     public long getPosition()
     {
-        return bufferOffset + buffer.position();
+        return fileOffset + buffer.position();
     }
 
     public long getPositionLimit()

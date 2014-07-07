@@ -75,16 +75,6 @@ public final class CLibrary
             logger.warn("Obsolete version of JNA present; unable to register C library. Upgrade to JNA 3.2.7 or later");
             jnaAvailable = false;
         }
-
-        try
-        {
-            System.loadLibrary("cassandra-dio");
-        }
-        catch (Throwable e)
-        {
-            logger.info("error loading the direct-io (dio) native library ");
-        }
-
     }
 
     private static native int mlockall(int flags) throws LastErrorException;
@@ -249,11 +239,6 @@ public final class CLibrary
         return fd;
     }
 
-    public static int tryOpenDirect(String path)
-    {
-        return tryOpen(path, O_RDONLY | O_DIRECT);
-    }
-
     public static void trySync(int fd)
     {
         if (fd == -1)
@@ -348,39 +333,4 @@ public final class CLibrary
             }
         }
     }
-
-    public static native ByteBuffer allocateBuffer(long size);
-
-    public static native void destroyBuffer(ByteBuffer buffer);
-
-    public static long getFileLength(int fd) throws IOException
-    {
-        long filesize = filesize0(fd);
-        if (filesize < 0)
-            throw new IOException("could not get filesize");
-        return filesize;
-    }
-
-    private static native long filesize0(int fd);
-
-    public static int tryPread(int fd, ByteBuffer buf, int size, long offset)
-    {
-        try
-        {
-            return pread0(fd, buf, size, offset);
-        }
-        catch (UnsatisfiedLinkError e)
-        {
-            // JNA is unavailable, just skipping
-            throw new RuntimeException("cannot call pread");
-        }
-        catch (RuntimeException e)
-        {
-            logger.warn(String.format("pread(%d) failed, errno (%d).", fd, errno(e)));
-            throw e;
-        }
-    }
-
-
-    private static native int pread0(int fd, ByteBuffer buf, int size, long offset);
 }

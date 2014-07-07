@@ -142,8 +142,8 @@ public class CompressedRandomAccessReader extends RandomAccessChannelReader
             }
 
             // buffer offset is always aligned
-            bufferOffset = position & ~(buffer.capacity() - 1);
-            buffer.position((int) (position - bufferOffset));
+            fileOffset = position & ~(buffer.capacity() - 1);
+            buffer.position((int) (position - fileOffset));
         }
         catch (CorruptBlockException e)
         {

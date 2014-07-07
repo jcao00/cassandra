@@ -19,13 +19,10 @@ package org.apache.cassandra.io.util;
 
 import com.google.common.util.concurrent.RateLimiter;
 import org.apache.cassandra.io.FSReadError;
-import org.apache.cassandra.utils.CLibrary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import sun.misc.Unsafe;
 
 import java.io.*;
-import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -37,6 +34,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class DirectReader extends RandomAccessReader
 {
     private static final Logger logger = LoggerFactory.getLogger(DirectReader.class);
+
+    static
+    {
+        try
+        {
+            System.loadLibrary("cassandra-dio");
+        }
+        catch (Throwable e)
+        {
+            logger.info("error loading the direct-io (dio) native library ");
+        }
+    }
 
     //alignment for memory pages
     protected static final int PAGE_ALIGNMENT = 512;
@@ -52,11 +61,11 @@ public class DirectReader extends RandomAccessReader
     protected DirectReader(File file, int bufferSize, RateLimiter limiter) throws IOException
     {
         super(file, bufferSize);
-        fd = CLibrary.tryOpenDirect(file.getAbsolutePath());
+        fd = tryOpenDirect(file.getAbsolutePath());
         if (fd < 0)
             throw new IOException(String.format("Unable to open %s for direct i/o, return = %d", filePath, fd));
         open.set(true);
-        fileLength = CLibrary.getFileLength(fd);
+        fileLength = getFileLength(fd);
 
         buffer = allocateBuffer(bufferSize);
         buffer.limit(0);
@@ -70,12 +79,13 @@ public class DirectReader extends RandomAccessReader
 
     protected ByteBuffer allocateDirectBuffer(int bufferSize)
     {
+        // make the buffer memory-page aligned
         int size = (int) Math.min(fileLength, bufferSize);
         int alignOff = size % PAGE_ALIGNMENT;
         if (alignOff != 0)
             size += PAGE_ALIGNMENT - alignOff;
 
-        return CLibrary.allocateBuffer(size);
+        return allocateNativeBuffer(size);
     }
 
     public static RandomAccessReader open(File file)
@@ -97,61 +107,74 @@ public class DirectReader extends RandomAccessReader
 
     protected void reBuffer()
     {
-        bufferOffset += buffer.position() - bufferMisalignment;
-        assert bufferOffset < fileLength;
+        fileOffset += buffer.position() - bufferMisalignment;
+        assert fileOffset < fileLength;
         buffer.clear();
-        buffer = reBuffer(buffer, bufferOffset);
+        buffer = reBuffer(buffer, fileOffset);
     }
 
+    /**
+     * @param dst the buffer to write into
+     * @param readStart allow callers to state an explicit offset (allows CompressedDirectReader to override RAR.fileOffset)
+     */
     protected ByteBuffer reBuffer(ByteBuffer dst, long readStart)
     {
+        logger.info("\t\t*** rebuffer ***");
         try
         {
             assert readStart < fileLength;
 
             int readSize = dst.limit() - dst.position();
-            if (readStart + dst.capacity() > fileLength)
+            if (readStart + readSize > fileLength)
                 readSize = (int)(fileLength - readStart);
 
             //adjust for any misalignments in the file offset - that is, start from an earlier
-            // position in the channel (on the ALIGNMENT bound), then readjust the buffer's position later.
+            // position in the file (on the BLOCK_ALIGNMENT bound), then readjust the buffer.position later.
             // in short, this aligns the read starting byte.
             bufferMisalignment = (int)(readStart % BLOCK_ALIGNMENT);
             readStart -= bufferMisalignment;
             readSize += bufferMisalignment;
 
-            // needed when we're at the end of file (or in a short file), and number of bytes to read is < ALIGNMENT,
-            // tell pread we want an aligned read count, even though we'll we'll hit EOF before that.
-            // in short, this makes sure the number of bytes we tell read() that we want to read is aligned
-            int readSizeAlign = readSize;
-            if (readSizeAlign % BLOCK_ALIGNMENT != 0)
+            // this makes sure the number of bytes we want to read is disk-block aligned;
+            // that is, adjust the readSize to be a multiple of BLOCK_ALIGNMENT
+//            int readSizeAlign = readSize;
+            int bufferMisalignmentFromEnd = readSize % BLOCK_ALIGNMENT;
+            if (bufferMisalignmentFromEnd != 0)
             {
-                readSizeAlign += BLOCK_ALIGNMENT - (readSizeAlign % BLOCK_ALIGNMENT);
+                bufferMisalignmentFromEnd = BLOCK_ALIGNMENT - bufferMisalignmentFromEnd;
+                readSize += bufferMisalignmentFromEnd;
             }
 
-            if (dst.capacity() < readSizeAlign)
+            //resize the buffer to make sure it has enough capacity in case the the read size has been
+            // enlarged due to any block alignment adjustments above
+            if (dst.capacity() < readSize)
             {
-                CLibrary.destroyBuffer(dst);
-                dst = allocateDirectBuffer(readSizeAlign);
+                destroyNativeBuffer(dst);
+                dst = allocateDirectBuffer(readSize);
             }
-            dst.limit(readSizeAlign);
+            else
+            {
+                dst.clear();
+            }
+            dst.limit(readSize);
 
             if (limiter != null)
-                limiter.acquire(readSizeAlign);
-            int cnt = 0;
-            while (cnt < readSize)
+                limiter.acquire(readSize);
+            while (readSize > 0)
             {
-                int n = CLibrary.tryPread(fd, dst, readSizeAlign, readStart);
-                if (n < 0)
+                int cnt = tryPread(fd, dst, readSize, readStart);
+                if (cnt == 0)
                     break;
-                cnt += n;
-                dst.position(cnt);
-                readStart += n;
+                readStart += cnt;
+                readSize -= cnt;
             }
 
             // now clean up alignment offset
             dst.flip();
             dst.position(bufferMisalignment);
+            //only adjust this if we actually read the full readSize
+            if (bufferMisalignmentFromEnd > 0 && readSize == 0)
+                dst.limit(dst.limit() - bufferMisalignmentFromEnd);
             return dst;
         }
         catch (Exception e)
@@ -162,29 +185,71 @@ public class DirectReader extends RandomAccessReader
 
     protected long current()
     {
-        return bufferOffset + (buffer == null ? 0 : buffer.position() - bufferMisalignment);
+        return fileOffset + (buffer == null ? 0 : buffer.position() - bufferMisalignment);
     }
 
     public void deallocate()
     {
         if (buffer != null)
         {
-            bufferOffset += buffer.position();
+            fileOffset += buffer.position();
 
             if (buffer.isDirect())
-                CLibrary.destroyBuffer(buffer);
+                destroyNativeBuffer(buffer);
             buffer = null;
         }
 
         if (open.compareAndSet(true, false))
-        {
-            logger.info("closing fd {}", fd);
-            CLibrary.tryCloseFD(fd);
-        }
+            tryCloseFD(fd);
     }
 
     public void close()
     {
         deallocate();
     }
+
+    public int tryOpenDirect(String absolutePath) throws IOException
+    {
+        int fd = open0(absolutePath);
+        if (fd < 0)
+            throw new IOException("could not open file, status = " + fd);
+        return fd;
+    }
+
+    private static native int open0(String file);
+
+    public void tryCloseFD(int fd)
+    {
+        int status = close0(fd);
+        if (status < 0)
+            logger.info("unable to close fd {} for file {}", fd, filePath);
+    }
+
+    private static native int close0(int fd);
+
+    public native ByteBuffer allocateNativeBuffer(long size);
+
+    public native void destroyNativeBuffer(ByteBuffer buffer);
+
+    public long getFileLength(int fd) throws IOException
+    {
+        long filesize = filesize0(fd);
+        if (filesize < 0)
+            throw new IOException("could not get filesize");
+        return filesize;
+    }
+
+    private static native long filesize0(int fd);
+
+    public int tryPread(int fd, ByteBuffer buf, int size, long offset) throws IOException
+    {
+        int status = pread0(fd, buf, size, offset);
+        if (status < 0)
+            throw new IOException(String.format("pread(%d) failed, errno (%d).", fd, status));
+        buf.position(buf.position() + status);
+        return status;
+    }
+
+
+    private static native int pread0(int fd, ByteBuffer buf, int size, long offset);
 }

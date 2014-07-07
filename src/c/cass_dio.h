@@ -27,12 +27,15 @@ extern "C" {
 
 
 /* native buffer ops */
-JNIEXPORT jobject JNICALL Java_org_apache_cassandra_utils_CLibrary_allocateBuffer(JNIEnv *env, jobject class, jlong size);
-JNIEXPORT jint JNICALL Java_org_apache_cassandra_utils_CLibrary_destroyBuffer(JNIEnv *env, jobject class, jobject buffer);
+JNIEXPORT jobject JNICALL Java_org_apache_cassandra_io_util_DirectReader_allocateNativeBuffer(JNIEnv *env, jobject class, jlong size);
+JNIEXPORT jint JNICALL Java_org_apache_cassandra_io_util_DirectReader_destroyNativeBuffer(JNIEnv *env, jobject class, jobject buffer);
 
 /* file ops */
-JNIEXPORT jlong JNICALL Java_org_apache_cassandra_utils_CLibrary_filesize0(JNIEnv *env, jobject class, jint fd);
-JNIEXPORT jint JNICALL Java_org_apache_cassandra_utils_CLibrary_pread0(JNIEnv *env, jobject class, jint fd, jobject buffer, jint size, jlong offset);
+JNIEXPORT jlong JNICALL Java_org_apache_cassandra_io_util_DirectReader_open0(JNIEnv *env, jobject class, jstring file_name);
+JNIEXPORT jlong JNICALL Java_org_apache_cassandra_io_util_DirectReader_close0(JNIEnv *env, jobject class, jint fd);
+
+JNIEXPORT jlong JNICALL Java_org_apache_cassandra_io_util_DirectReader_filesize0(JNIEnv *env, jobject class, jint fd);
+JNIEXPORT jint JNICALL Java_org_apache_cassandra_io_util_DirectReader_pread0(JNIEnv *env, jobject class, jint fd, jobject buffer, jint size, jlong offset);
 
 
 #ifdef __cplusplus
