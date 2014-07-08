@@ -119,7 +119,6 @@ public class DirectReader extends RandomAccessReader
      */
     protected ByteBuffer reBuffer(ByteBuffer dst, long readStart)
     {
-        logger.info("\t\t*** rebuffer ***");
         try
         {
             assert readStart < fileLength;
