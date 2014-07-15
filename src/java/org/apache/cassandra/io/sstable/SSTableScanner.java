@@ -70,7 +70,7 @@ public class SSTableScanner implements ICompactionScanner
         assert sstable != null;
 
         if (useDirectIo)
-            this.dfile = limiter == null ? sstable.openDirectReader() : sstable.openDirectReader(limiter);
+            this.dfile = sstable.openDirectReader(limiter);
         else
             this.dfile = limiter == null ? sstable.openDataReader() : sstable.openDataReader(limiter);
         this.ifile = sstable.openIndexReader();
@@ -107,7 +107,7 @@ public class SSTableScanner implements ICompactionScanner
         assert sstable != null;
 
         if (useDirectIo)
-            this.dfile = limiter == null ? sstable.openDirectReader() : sstable.openDirectReader(limiter);
+            this.dfile = sstable.openDirectReader(limiter);
         else
             this.dfile = limiter == null ? sstable.openDataReader() : sstable.openDataReader(limiter);
         this.ifile = sstable.openIndexReader();

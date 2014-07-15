@@ -136,7 +136,6 @@ public class DirectReader extends RandomAccessReader
 
             // this makes sure the number of bytes we want to read is disk-block aligned;
             // that is, adjust the readSize to be a multiple of BLOCK_ALIGNMENT
-//            int readSizeAlign = readSize;
             int bufferMisalignmentFromEnd = readSize % BLOCK_ALIGNMENT;
             if (bufferMisalignmentFromEnd != 0)
             {
@@ -182,9 +181,19 @@ public class DirectReader extends RandomAccessReader
         }
     }
 
+    protected int bufferOffset()
+    {
+        return bufferMisalignment;
+    }
+
     protected long current()
     {
         return fileOffset + (buffer == null ? 0 : buffer.position() - bufferMisalignment);
+    }
+
+    public long getPosition()
+    {
+        return fileOffset + buffer.position() - bufferMisalignment;
     }
 
     public void deallocate()

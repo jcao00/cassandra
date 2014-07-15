@@ -165,7 +165,7 @@ public abstract class RandomAccessReader extends AbstractDataInput implements Fi
 
         if (newPosition >= fileOffset && newPosition < fileOffset + buffer.limit())
         {
-            buffer.position((int) (newPosition - fileOffset));
+            buffer.position((int) (newPosition - fileOffset) + bufferOffset());
             return;
         }
         // Set current location to newPosition and clear buffer so reBuffer calculates from newPosition
@@ -173,6 +173,11 @@ public abstract class RandomAccessReader extends AbstractDataInput implements Fi
         buffer.clear();
         reBuffer();
         assert current() == newPosition;
+    }
+
+    protected int bufferOffset()
+    {
+        return 0;
     }
 
     // -1 will be returned if there is nothing to read; higher-level methods like readInt
