@@ -322,7 +322,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
             return;
         }
 
-        if (!FailureDetector.instance.isAlive(endpoint))
+        if (!StorageService.instance.peerStatusService.fd.isAlive(endpoint))
         {
             logger.debug("Endpoint {} died before hint delivery, aborting", endpoint);
             return;
@@ -381,7 +381,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
             }
 
             // check if node is still alive and we should continue delivery process
-            if (!FailureDetector.instance.isAlive(endpoint))
+            if (!StorageService.instance.peerStatusService.fd.isAlive(endpoint))
             {
                 logger.info("Endpoint {} died during hint delivery; aborting ({} delivered)", endpoint, rowsReplayed);
                 break;

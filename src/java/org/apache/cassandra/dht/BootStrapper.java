@@ -64,7 +64,7 @@ public class BootStrapper
             logger.debug("Beginning bootstrap process");
 
         RangeStreamer streamer = new RangeStreamer(tokenMetadata, tokens, address, "Bootstrap");
-        streamer.addSourceFilter(new RangeStreamer.FailureDetectorSourceFilter(FailureDetector.instance));
+        streamer.addSourceFilter(new RangeStreamer.FailureDetectorSourceFilter(StorageService.instance.peerStatusService.fd));
 
         for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
         {

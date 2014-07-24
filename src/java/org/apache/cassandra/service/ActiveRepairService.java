@@ -130,7 +130,7 @@ public class ActiveRepairService
     {
         sessions.put(session.getId(), session);
         Gossiper.instance.register(session);
-        FailureDetector.instance.registerFailureDetectionEventListener(session);
+        StorageService.instance.peerStatusService.fd.registerFailureDetectionEventListener(session);
     }
 
     public void removeFromActiveSessions(RepairSession session)

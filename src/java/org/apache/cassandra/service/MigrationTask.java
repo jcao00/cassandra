@@ -50,7 +50,7 @@ class MigrationTask extends WrappedRunnable
     {
         MessageOut message = new MessageOut<>(MessagingService.Verb.MIGRATION_REQUEST, null, MigrationManager.MigrationsSerializer.instance);
 
-        if (!FailureDetector.instance.isAlive(endpoint))
+        if (!StorageService.instance.peerStatusService.fd.isAlive(endpoint))
         {
             logger.error("Can't send migration request: node {} is down.", endpoint);
             return;

@@ -33,13 +33,19 @@ import org.apache.cassandra.net.MessagingService;
 public class GossipDigestAckVerbHandler implements IVerbHandler<GossipDigestAck>
 {
     private static final Logger logger = LoggerFactory.getLogger(GossipDigestAckVerbHandler.class);
+    private final Gossiper gossiper;
+
+    public GossipDigestAckVerbHandler(Gossiper gossiper)
+    {
+        this.gossiper = gossiper;
+    }
 
     public void doVerb(MessageIn<GossipDigestAck> message, int id)
     {
         InetAddress from = message.from;
         if (logger.isTraceEnabled())
             logger.trace("Received a GossipDigestAckMessage from {}", from);
-        if (!Gossiper.instance.isEnabled() && !Gossiper.instance.isInShadowRound())
+        if (!gossiper.isEnabled() && !gossiper.isInShadowRound())
         {
             if (logger.isTraceEnabled())
                 logger.trace("Ignoring GossipDigestAckMessage because gossip is disabled");
@@ -54,15 +60,15 @@ public class GossipDigestAckVerbHandler implements IVerbHandler<GossipDigestAck>
         if (epStateMap.size() > 0)
         {
             /* Notify the Failure Detector */
-            Gossiper.instance.notifyFailureDetector(epStateMap);
-            Gossiper.instance.applyStateLocally(epStateMap);
+            gossiper.notifyFailureDetector(epStateMap);
+            gossiper.applyStateLocally(epStateMap);
         }
 
-        if (Gossiper.instance.isInShadowRound())
+        if (gossiper.isInShadowRound())
         {
             if (logger.isDebugEnabled())
                 logger.debug("Finishing shadow round with {}", from);
-            Gossiper.instance.finishShadowRound();
+            gossiper.finishShadowRound();
             return; // don't bother doing anything else, we have what we came for
         }
 
@@ -71,7 +77,7 @@ public class GossipDigestAckVerbHandler implements IVerbHandler<GossipDigestAck>
         for (GossipDigest gDigest : gDigestList)
         {
             InetAddress addr = gDigest.getEndpoint();
-            EndpointState localEpStatePtr = Gossiper.instance.getStateForVersionBiggerThan(addr, gDigest.getMaxVersion());
+            EndpointState localEpStatePtr = gossiper.getStateForVersionBiggerThan(addr, gDigest.getMaxVersion());
             if (localEpStatePtr != null)
                 deltaEpStateMap.put(addr, localEpStatePtr);
         }

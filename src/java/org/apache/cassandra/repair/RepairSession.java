@@ -28,6 +28,7 @@ import java.util.concurrent.locks.Condition;
 
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import org.apache.cassandra.service.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -189,7 +190,7 @@ public class RepairSession extends WrappedRunnable implements IEndpointStateChan
                 // After this point, we rely on tcp_keepalive for individual sockets to notify us when a connection is down.
                 // See CASSANDRA-3569
                 if (fdUnregistered.compareAndSet(false, true))
-                    FailureDetector.instance.unregisterFailureDetectionEventListener(this);
+                    StorageService.instance.peerStatusService.fd.unregisterFailureDetectionEventListener(this);
 
                 // We are done with this repair session as far as differencing
                 // is considered. Just inform the session
@@ -269,7 +270,7 @@ public class RepairSession extends WrappedRunnable implements IEndpointStateChan
         // Checking all nodes are live
         for (InetAddress endpoint : endpoints)
         {
-            if (!FailureDetector.instance.isAlive(endpoint))
+            if (!StorageService.instance.peerStatusService.fd.isAlive(endpoint))
             {
                 String message = String.format("Cannot proceed on repair because a neighbor (%s) is dead: session failed", endpoint);
                 differencingDone.signalAll();
@@ -318,7 +319,7 @@ public class RepairSession extends WrappedRunnable implements IEndpointStateChan
             // If we've reached here in an exception state without completing Merkle Tree sync, we'll still be registered
             // with the FailureDetector.
             if (fdUnregistered.compareAndSet(false, true))
-                FailureDetector.instance.unregisterFailureDetectionEventListener(this);
+                StorageService.instance.peerStatusService.fd.unregisterFailureDetectionEventListener(this);
         }
     }
 

@@ -386,7 +386,7 @@ public class BatchlogManager implements BatchlogManagerMBean
             {
                 if (endpoint.equals(FBUtilities.getBroadcastAddress()))
                     mutation.apply();
-                else if (FailureDetector.instance.isAlive(endpoint))
+                else if (StorageService.instance.peerStatusService.fd.isAlive(endpoint))
                     liveEndpoints.add(endpoint); // will try delivering directly instead of writing a hint.
                 else
                     StorageProxy.writeHintForMutation(mutation, writtenAt, ttl, endpoint);
@@ -520,7 +520,7 @@ public class BatchlogManager implements BatchlogManagerMBean
         @VisibleForTesting
         protected boolean isValid(InetAddress input)
         {
-            return !input.equals(FBUtilities.getBroadcastAddress()) && FailureDetector.instance.isAlive(input);
+            return !input.equals(FBUtilities.getBroadcastAddress()) && StorageService.instance.peerStatusService.fd.isAlive(input);
         }
 
         @VisibleForTesting

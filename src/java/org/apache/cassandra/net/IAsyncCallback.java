@@ -22,6 +22,7 @@ import java.net.InetAddress;
 import com.google.common.base.Predicate;
 
 import org.apache.cassandra.gms.FailureDetector;
+import org.apache.cassandra.service.StorageService;
 
 /**
  * implementors of IAsyncCallback need to make sure that any public methods
@@ -35,7 +36,7 @@ public interface IAsyncCallback<T>
     {
         public boolean apply(InetAddress endpoint)
         {
-            return FailureDetector.instance.isAlive(endpoint);
+            return StorageService.instance.peerStatusService.fd.isAlive(endpoint);
         }
     };
 

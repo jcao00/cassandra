@@ -23,7 +23,6 @@ import java.net.UnknownHostException;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
@@ -76,7 +75,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public final static int intervalInMillis = 1000;
     public final static int QUARANTINE_DELAY = StorageService.RING_DELAY * 2;
     private static final Logger logger = LoggerFactory.getLogger(Gossiper.class);
-    public static final Gossiper instance = new Gossiper(true);
 
     public static final long aVeryLongTime = 259200 * 1000; // 3 days
     private long FatClientTimeout;
@@ -119,8 +117,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public static final VersionGenerator versionGenerator = new VersionGenerator();
     public final FailureDetector fd;
 
-
-
     private class GossipTask implements Runnable
     {
         public void run()
@@ -140,7 +136,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     {
         // half of QUARATINE_DELAY, to ensure justRemovedEndpoints has enough leeway to prevent re-gossip
         FatClientTimeout = (long) (QUARANTINE_DELAY / 2);
-        fd = new FailureDetector();
+        fd = new FailureDetector(this, registerJmx);
 
         if (registerJmx)
         {

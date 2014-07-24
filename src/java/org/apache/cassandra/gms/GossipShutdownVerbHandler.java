@@ -26,6 +26,12 @@ import org.slf4j.LoggerFactory;
 public class GossipShutdownVerbHandler implements IVerbHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(GossipShutdownVerbHandler.class);
+    private final FailureDetector failureDetector;
+
+    public GossipShutdownVerbHandler(FailureDetector failureDetector)
+    {
+        this.failureDetector = failureDetector;
+    }
 
     public void doVerb(MessageIn message, int id)
     {
@@ -34,7 +40,7 @@ public class GossipShutdownVerbHandler implements IVerbHandler
             logger.debug("Ignoring shutdown message from {} because gossip is disabled", message.from);
             return;
         }
-        FailureDetector.instance.forceConviction(message.from);
+        failureDetector.forceConviction(message.from);
     }
 
 }

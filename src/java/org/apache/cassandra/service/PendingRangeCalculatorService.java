@@ -18,11 +18,14 @@
 
 package org.apache.cassandra.service;
 
+import com.google.common.util.concurrent.Uninterruptibles;
+import org.apache.cassandra.concurrent.DebuggableThreadPoolExecutor;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
+import org.apache.cassandra.locator.TokenMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,36 +34,52 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class PendingRangeCalculatorService
 {
-    public static final PendingRangeCalculatorService instance = new PendingRangeCalculatorService();
 
     private static Logger logger = LoggerFactory.getLogger(PendingRangeCalculatorService.class);
-    private final JMXEnabledThreadPoolExecutor executor = new JMXEnabledThreadPoolExecutor(1, Integer.MAX_VALUE, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<Runnable>(1), new NamedThreadFactory("PendingRangeCalculator"), "internal");
+    private final ThreadPoolExecutor executor;
 
     private AtomicInteger updateJobs = new AtomicInteger(0);
 
-    public PendingRangeCalculatorService()
+    public PendingRangeCalculatorService(boolean registerJmx)
     {
+        if (registerJmx)
+        {
+            executor = new JMXEnabledThreadPoolExecutor(1, Integer.MAX_VALUE, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<Runnable>(1), new NamedThreadFactory("PendingRangeCalculator"), "internal");
+        }
+        else
+        {
+            executor = new DebuggableThreadPoolExecutor(1, Integer.MAX_VALUE, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<Runnable>(1), new NamedThreadFactory("PendingRangeCalculator"));
+        }
+
         executor.setRejectedExecutionHandler(new RejectedExecutionHandler()
         {
             public void rejectedExecution(Runnable r, ThreadPoolExecutor e)
             {
-                PendingRangeCalculatorService.instance.finishUpdate();
+                finishUpdate();
             }
         }
         );
     }
 
-    private static class PendingRangeTask implements Runnable
+    private class PendingRangeTask implements Runnable
     {
+        private final TokenMetadata tokenMetadata;
+
+        public PendingRangeTask(TokenMetadata tokenMetadata)
+        {
+            this.tokenMetadata = tokenMetadata;
+        }
+
         public void run()
         {
             long start = System.currentTimeMillis();
             for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
             {
-                calculatePendingRanges(Keyspace.open(keyspaceName).getReplicationStrategy(), keyspaceName);
+                calculatePendingRanges(tokenMetadata, Keyspace.open(keyspaceName).getReplicationStrategy(), keyspaceName);
             }
-            PendingRangeCalculatorService.instance.finishUpdate();
+            finishUpdate();
             logger.debug("finished calculation for {} keyspaces in {}ms", Schema.instance.getNonSystemKeyspaces().size(), System.currentTimeMillis() - start);
         }
     }
@@ -70,10 +89,10 @@ public class PendingRangeCalculatorService
         updateJobs.decrementAndGet();
     }
 
-    public void update()
+    public void update(TokenMetadata tokenMetadata)
     {
         updateJobs.incrementAndGet();
-        executor.submit(new PendingRangeTask());
+        executor.submit(new PendingRangeTask(tokenMetadata));
     }
 
     public void blockUntilFinished()
@@ -81,21 +100,12 @@ public class PendingRangeCalculatorService
         // We want to be sure the job we're blocking for is actually finished and we can't trust the TPE's active job count
         while (updateJobs.get() > 0)
         {
-            try
-            {
-                Thread.sleep(100);
-            }
-            catch (InterruptedException e)
-            {
-                throw new RuntimeException(e);
-            }
+            Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
         }
     }
 
-
-    // public & static for testing purposes
-    public static void calculatePendingRanges(AbstractReplicationStrategy strategy, String keyspaceName)
+    public void calculatePendingRanges(TokenMetadata tokenMetadata, AbstractReplicationStrategy strategy, String keyspaceName)
     {
-        StorageService.instance.getTokenMetadata().calculatePendingRanges(strategy, keyspaceName);
+        tokenMetadata.calculatePendingRanges(strategy, keyspaceName);
     }
 }

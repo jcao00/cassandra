@@ -429,7 +429,7 @@ public class StorageProxy implements StorageProxyMBean
         MessageOut<Commit> message = new MessageOut<Commit>(MessagingService.Verb.PAXOS_COMMIT, proposal, Commit.serializer);
         for (InetAddress destination : Iterables.concat(naturalEndpoints, pendingEndpoints))
         {
-            if (FailureDetector.instance.isAlive(destination))
+            if (StorageService.instance.peerStatusService.fd.isAlive(destination))
                 MessagingService.instance().sendRR(message, destination, responseHandler);
         }
 
@@ -814,7 +814,7 @@ public class StorageProxy implements StorageProxyMBean
                     throw new OverloadedException("Too many in flight hints: " + StorageMetrics.totalHintsInProgress.count());
                 }
 
-                if (FailureDetector.instance.isAlive(destination))
+                if (StorageService.instance.peerStatusService.fd.isAlive(destination))
                 {
                     if (destination.equals(FBUtilities.getBroadcastAddress()) && OPTIMIZE_LOCAL_REQUESTS)
                     {
