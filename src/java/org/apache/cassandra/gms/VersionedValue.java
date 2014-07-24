@@ -89,11 +89,6 @@ public class VersionedValue implements Comparable<VersionedValue>
         this.version = version;
     }
 
-    private VersionedValue(String value)
-    {
-        this(value, VersionGenerator.getNextVersion());
-    }
-
     public int compareTo(VersionedValue value)
     {
         return this.version - value.version;
@@ -113,27 +108,29 @@ public class VersionedValue implements Comparable<VersionedValue>
     public static class VersionedValueFactory
     {
         final IPartitioner partitioner;
+        private final VersionGenerator versionGenerator;
 
-        public VersionedValueFactory(IPartitioner partitioner)
+        public VersionedValueFactory(IPartitioner partitioner, VersionGenerator versionGenerator)
         {
             this.partitioner = partitioner;
+            this.versionGenerator = versionGenerator;
         }
         
         public VersionedValue cloneWithHigherVersion(VersionedValue value)
         {
-            return new VersionedValue(value.value);
+            return new VersionedValue(value.value, versionGenerator.getNextVersion());
         }
 
         public VersionedValue bootstrapping(Collection<Token> tokens)
         {
             return new VersionedValue(versionString(VersionedValue.STATUS_BOOTSTRAPPING,
-                                                    makeTokenString(tokens)));
+                                                    makeTokenString(tokens)), versionGenerator.getNextVersion());
         }
 
         public VersionedValue normal(Collection<Token> tokens)
         {
             return new VersionedValue(versionString(VersionedValue.STATUS_NORMAL,
-                                                    makeTokenString(tokens)));
+                                                    makeTokenString(tokens)), versionGenerator.getNextVersion());
         }
 
         private String makeTokenString(Collection<Token> tokens)
@@ -143,41 +140,41 @@ public class VersionedValue implements Comparable<VersionedValue>
 
         public VersionedValue load(double load)
         {
-            return new VersionedValue(String.valueOf(load));
+            return new VersionedValue(String.valueOf(load), versionGenerator.getNextVersion());
         }
 
         public VersionedValue schema(UUID newVersion)
         {
-            return new VersionedValue(newVersion.toString());
+            return new VersionedValue(newVersion.toString(), versionGenerator.getNextVersion());
         }
 
         public VersionedValue leaving(Collection<Token> tokens)
         {
             return new VersionedValue(versionString(VersionedValue.STATUS_LEAVING,
-                                                    makeTokenString(tokens)));
+                                                    makeTokenString(tokens)), versionGenerator.getNextVersion());
         }
 
         public VersionedValue left(Collection<Token> tokens, long expireTime)
         {
             return new VersionedValue(versionString(VersionedValue.STATUS_LEFT,
                                                     makeTokenString(tokens),
-                                                    Long.toString(expireTime)));
+                                                    Long.toString(expireTime)), versionGenerator.getNextVersion());
         }
 
         public VersionedValue moving(Token token)
         {
-            return new VersionedValue(VersionedValue.STATUS_MOVING + VersionedValue.DELIMITER + partitioner.getTokenFactory().toString(token));
+            return new VersionedValue(VersionedValue.STATUS_MOVING + VersionedValue.DELIMITER + partitioner.getTokenFactory().toString(token), versionGenerator.getNextVersion());
         }
 
         public VersionedValue relocating(Collection<Token> srcTokens)
         {
             return new VersionedValue(
-                    versionString(VersionedValue.STATUS_RELOCATING, StringUtils.join(srcTokens, VersionedValue.DELIMITER)));
+                    versionString(VersionedValue.STATUS_RELOCATING, StringUtils.join(srcTokens, VersionedValue.DELIMITER)), versionGenerator.getNextVersion());
         }
 
         public VersionedValue hostId(UUID hostId)
         {
-            return new VersionedValue(hostId.toString());
+            return new VersionedValue(hostId.toString(), versionGenerator.getNextVersion());
         }
 
         public VersionedValue tokens(Collection<Token> tokens)
@@ -192,62 +189,62 @@ public class VersionedValue implements Comparable<VersionedValue>
             {
                 throw new RuntimeException(e);
             }
-            return new VersionedValue(new String(bos.toByteArray(), ISO_8859_1));
+            return new VersionedValue(new String(bos.toByteArray(), ISO_8859_1), versionGenerator.getNextVersion());
         }
 
         public VersionedValue removingNonlocal(UUID hostId)
         {
-            return new VersionedValue(versionString(VersionedValue.REMOVING_TOKEN, hostId.toString()));
+            return new VersionedValue(versionString(VersionedValue.REMOVING_TOKEN, hostId.toString()), versionGenerator.getNextVersion());
         }
 
         public VersionedValue removedNonlocal(UUID hostId, long expireTime)
         {
-            return new VersionedValue(versionString(VersionedValue.REMOVED_TOKEN, hostId.toString(), Long.toString(expireTime)));
+            return new VersionedValue(versionString(VersionedValue.REMOVED_TOKEN, hostId.toString(), Long.toString(expireTime)), versionGenerator.getNextVersion());
         }
 
         public VersionedValue removalCoordinator(UUID hostId)
         {
-            return new VersionedValue(versionString(VersionedValue.REMOVAL_COORDINATOR, hostId.toString()));
+            return new VersionedValue(versionString(VersionedValue.REMOVAL_COORDINATOR, hostId.toString()), versionGenerator.getNextVersion());
         }
 
         public VersionedValue hibernate(boolean value)
         {
-            return new VersionedValue(VersionedValue.HIBERNATE + VersionedValue.DELIMITER + value);
+            return new VersionedValue(VersionedValue.HIBERNATE + VersionedValue.DELIMITER + value, versionGenerator.getNextVersion());
         }
 
         public VersionedValue datacenter(String dcId)
         {
-            return new VersionedValue(dcId);
+            return new VersionedValue(dcId, versionGenerator.getNextVersion());
         }
 
         public VersionedValue rack(String rackId)
         {
-            return new VersionedValue(rackId);
+            return new VersionedValue(rackId, versionGenerator.getNextVersion());
         }
 
         public VersionedValue rpcaddress(InetAddress endpoint)
         {
-            return new VersionedValue(endpoint.getHostAddress());
+            return new VersionedValue(endpoint.getHostAddress(), versionGenerator.getNextVersion());
         }
 
         public VersionedValue releaseVersion()
         {
-            return new VersionedValue(FBUtilities.getReleaseVersionString());
+            return new VersionedValue(FBUtilities.getReleaseVersionString(), versionGenerator.getNextVersion());
         }
 
         public VersionedValue networkVersion()
         {
-            return new VersionedValue(String.valueOf(MessagingService.current_version));
+            return new VersionedValue(String.valueOf(MessagingService.current_version), versionGenerator.getNextVersion());
         }
 
         public VersionedValue internalIP(String private_ip)
         {
-            return new VersionedValue(private_ip);
+            return new VersionedValue(private_ip, versionGenerator.getNextVersion());
         }
 
         public VersionedValue severity(double value)
         {
-            return new VersionedValue(String.valueOf(value));
+            return new VersionedValue(String.valueOf(value), versionGenerator.getNextVersion());
         }
     }
 

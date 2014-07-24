@@ -144,7 +144,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     /* This abstraction maintains the token/endpoint metadata information */
     private TokenMetadata tokenMetadata = new TokenMetadata();
 
-    public volatile VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(getPartitioner());
+    public volatile VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(getPartitioner(), Gossiper.instance.versionGenerator);
 
     public static final StorageService instance = new StorageService();
 
@@ -3719,7 +3719,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         IPartitioner oldPartitioner = DatabaseDescriptor.getPartitioner();
         DatabaseDescriptor.setPartitioner(newPartitioner);
-        valueFactory = new VersionedValue.VersionedValueFactory(getPartitioner());
+        valueFactory = new VersionedValue.VersionedValueFactory(getPartitioner(), Gossiper.instance.versionGenerator);
         return oldPartitioner;
     }
 

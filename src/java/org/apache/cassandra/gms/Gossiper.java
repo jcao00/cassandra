@@ -23,6 +23,7 @@ import java.net.UnknownHostException;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
@@ -75,7 +76,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public final static int intervalInMillis = 1000;
     public final static int QUARANTINE_DELAY = StorageService.RING_DELAY * 2;
     private static final Logger logger = LoggerFactory.getLogger(Gossiper.class);
-    public static final Gossiper instance = new Gossiper();
+    public static final Gossiper instance = new Gossiper(true);
 
     public static final long aVeryLongTime = 259200 * 1000; // 3 days
     private long FatClientTimeout;
@@ -115,35 +116,100 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     private volatile long lastProcessedMessageAt = System.currentTimeMillis();
 
+    public static final VersionGenerator versionGenerator = new VersionGenerator();
+    public final FailureDetector fd;
+
+
+
     private class GossipTask implements Runnable
     {
         public void run()
         {
             try
             {
-                //wait on messaging service to start listening
-                MessagingService.instance().waitUntilListening();
+                startNextRound();
+            }
+            catch (Exception e)
+            {
+                logger.error("Gossip error", e);
+            }
+        }
+    }
+
+    public Gossiper(boolean registerJmx)
+    {
+        // half of QUARATINE_DELAY, to ensure justRemovedEndpoints has enough leeway to prevent re-gossip
+        FatClientTimeout = (long) (QUARANTINE_DELAY / 2);
+        fd = new FailureDetector();
+
+        if (registerJmx)
+        {
+            try
+            {
+                MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+                mbs.registerMBean(this, new ObjectName(MBEAN_NAME));
+            } catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    public void start(int generationNumber)
+    {
+        start(generationNumber, new HashMap<ApplicationState, VersionedValue>());
+    }
+
+    /**
+     * Start the gossiper with the generation number, preloading the map of application states before starting
+     */
+    public void start(int generationNbr, Map<ApplicationState, VersionedValue> preloadLocalStates)
+    {
+        /* register with the Failure Detector for receiving Failure detector events */
+        fd.registerFailureDetectionEventListener(this);
+        buildSeedsList();
+        /* initialize the heartbeat state for this localEndpoint */
+        maybeInitializeLocalState(generationNbr);
+        EndpointState localState = endpointStateMap.get(FBUtilities.getBroadcastAddress());
+        for (Map.Entry<ApplicationState, VersionedValue> entry : preloadLocalStates.entrySet())
+            localState.addApplicationState(entry.getKey(), entry.getValue());
+
+        //notify snitches that Gossiper is about to start
+        DatabaseDescriptor.getEndpointSnitch().gossiperStarting();
+        if (logger.isTraceEnabled())
+            logger.trace("gossip started with generation {}", localState.getHeartBeatState().getGeneration());
+
+        scheduledGossipTask = executor.scheduleWithFixedDelay(new GossipTask(),
+                Gossiper.intervalInMillis,
+                Gossiper.intervalInMillis,
+                TimeUnit.MILLISECONDS);
+    }
+
+    protected void startNextRound()
+    {
+        //wait on messaging service to start listening
+        MessagingService.instance().waitUntilListening();
 
                 /* Update the local heartbeat counter. */
-                endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().updateHeartBeat();
-                if (logger.isTraceEnabled())
-                    logger.trace("My heartbeat is now {}", endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().getHeartBeatVersion());
-                final List<GossipDigest> gDigests = new ArrayList<GossipDigest>();
-                Gossiper.instance.makeRandomGossipDigest(gDigests);
+        endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().updateHeartBeat(versionGenerator.getNextVersion());
+        if (logger.isTraceEnabled())
+            logger.trace("My heartbeat is now {}", endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().getHeartBeatVersion());
+        final List<GossipDigest> gDigests = new ArrayList<>();
+        makeRandomGossipDigest(gDigests);
 
-                if (gDigests.size() > 0)
-                {
-                    GossipDigestSyn digestSynMessage = new GossipDigestSyn(DatabaseDescriptor.getClusterName(),
-                                                                           DatabaseDescriptor.getPartitionerName(),
-                                                                           gDigests);
-                    MessageOut<GossipDigestSyn> message = new MessageOut<GossipDigestSyn>(MessagingService.Verb.GOSSIP_DIGEST_SYN,
-                                                                                          digestSynMessage,
-                                                                                          GossipDigestSyn.serializer);
+        if (gDigests.size() > 0)
+        {
+            GossipDigestSyn digestSynMessage = new GossipDigestSyn(DatabaseDescriptor.getClusterName(),
+                    DatabaseDescriptor.getPartitionerName(),
+                    gDigests);
+            MessageOut<GossipDigestSyn> message = new MessageOut<GossipDigestSyn>(MessagingService.Verb.GOSSIP_DIGEST_SYN,
+                    digestSynMessage,
+                    GossipDigestSyn.serializer);
                     /* Gossip to some random live member */
-                    boolean gossipedToSeed = doGossipToLiveMember(message);
+            boolean gossipedToSeed = doGossipToLiveMember(message);
 
                     /* Gossip to some unreachable member with some probability to check if he is back up */
-                    doGossipToUnreachableMember(message);
+            doGossipToUnreachableMember(message);
 
                     /* Gossip to a seed if we did not do so above, or we have seen less nodes
                        than there are seeds.  This prevents partitions where each group of nodes
@@ -161,38 +227,13 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                        gossipedToSeed check.
 
                        See CASSANDRA-150 for more exposition. */
-                    if (!gossipedToSeed || liveEndpoints.size() < seeds.size())
-                        doGossipToSeed(message);
+            if (!gossipedToSeed || liveEndpoints.size() < seeds.size())
+                doGossipToSeed(message);
 
-                    doStatusCheck();
-                }
-            }
-            catch (Exception e)
-            {
-                logger.error("Gossip error", e);
-            }
+            doStatusCheck();
         }
     }
-
-    private Gossiper()
-    {
-        // half of QUARATINE_DELAY, to ensure justRemovedEndpoints has enough leeway to prevent re-gossip
-        FatClientTimeout = (long) (QUARANTINE_DELAY / 2);
-        /* register with the Failure Detector for receiving Failure detector events */
-        FailureDetector.instance.registerFailureDetectionEventListener(this);
-
-        // Register this instance with JMX
-        try
-        {
-            MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
-            mbs.registerMBean(this, new ObjectName(MBEAN_NAME));
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException(e);
-        }
-    }
-
+    
     public void setLastProcessedMessageAt(long timeInMillis)
     {
         this.lastProcessedMessageAt = timeInMillis;
@@ -354,7 +395,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         liveEndpoints.remove(endpoint);
         unreachableEndpoints.remove(endpoint);
         // do not remove endpointState until the quarantine expires
-        FailureDetector.instance.remove(endpoint);
+        fd.remove(endpoint);
         MessagingService.instance().resetVersion(endpoint);
         quarantineEndpoint(endpoint);
         MessagingService.instance().destroyConnectionPool(endpoint);
@@ -645,7 +686,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             if (endpoint.equals(FBUtilities.getBroadcastAddress()))
                 continue;
 
-            FailureDetector.instance.interpret(endpoint);
+            fd.interpret(endpoint);
             EndpointState epState = endpointStateMap.get(endpoint);
             if (epState != null)
             {
@@ -804,7 +845,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         */
         if (localEndpointState != null)
         {
-            IFailureDetector fd = FailureDetector.instance;
             int localGeneration = localEndpointState.getHeartBeatState().getGeneration();
             int remoteGeneration = remoteEndpointState.getHeartBeatState().getGeneration();
             if (remoteGeneration > localGeneration)
@@ -1002,7 +1042,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             else
             {
                 // this is a new node, report it to the FD in case it is the first time we are seeing it AND it's not alive
-                FailureDetector.instance.report(ep);
+                fd.report(ep);
                 handleMajorStateChange(ep, remoteState);
             }
         }
@@ -1139,34 +1179,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 requestAll(gDigest, deltaGossipDigestList, remoteGeneration);
             }
         }
-    }
-
-    public void start(int generationNumber)
-    {
-        start(generationNumber, new HashMap<ApplicationState, VersionedValue>());
-    }
-
-    /**
-     * Start the gossiper with the generation number, preloading the map of application states before starting
-     */
-    public void start(int generationNbr, Map<ApplicationState, VersionedValue> preloadLocalStates)
-    {
-        buildSeedsList();
-        /* initialize the heartbeat state for this localEndpoint */
-        maybeInitializeLocalState(generationNbr);
-        EndpointState localState = endpointStateMap.get(FBUtilities.getBroadcastAddress());
-        for (Map.Entry<ApplicationState, VersionedValue> entry : preloadLocalStates.entrySet())
-            localState.addApplicationState(entry.getKey(), entry.getValue());
-
-        //notify snitches that Gossiper is about to start
-        DatabaseDescriptor.getEndpointSnitch().gossiperStarting();
-        if (logger.isTraceEnabled())
-            logger.trace("gossip started with generation {}", localState.getHeartBeatState().getGeneration());
-
-        scheduledGossipTask = executor.scheduleWithFixedDelay(new GossipTask(),
-                                                              Gossiper.intervalInMillis,
-                                                              Gossiper.intervalInMillis,
-                                                              TimeUnit.MILLISECONDS);
     }
 
     /**

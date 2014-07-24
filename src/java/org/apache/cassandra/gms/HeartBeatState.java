@@ -49,9 +49,9 @@ class HeartBeatState
         return generation;
     }
 
-    void updateHeartBeat()
+    void updateHeartBeat(int version)
     {
-        version = VersionGenerator.getNextVersion();
+        this.version = version;
     }
 
     int getHeartBeatVersion()
