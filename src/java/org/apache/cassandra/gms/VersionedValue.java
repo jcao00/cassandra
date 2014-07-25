@@ -47,7 +47,7 @@ import org.apache.commons.lang3.StringUtils;
  * e.g. if we want to disseminate load information for node A do the following:
  * <p/>
  * ApplicationState loadState = new ApplicationState(<string representation of load>);
- * Gossiper.instance.addApplicationState("LOAD STATE", loadState);
+ * StorageService.instance.peerStatusService.gossiper.addApplicationState("LOAD STATE", loadState);
  */
 
 public class VersionedValue implements Comparable<VersionedValue>

@@ -78,8 +78,9 @@ public class EC2SnitchTest
         InetAddress local = InetAddress.getByName("127.0.0.1");
         InetAddress nonlocal = InetAddress.getByName("127.0.0.7");
 
-        Gossiper.instance.addSavedEndpoint(nonlocal);
-        Map<ApplicationState,VersionedValue> stateMap = Gossiper.instance.getEndpointStateForEndpoint(nonlocal).getApplicationStateMap();
+        Gossiper gossiper = new Gossiper(false);
+        gossiper.addSavedEndpoint(nonlocal);
+        Map<ApplicationState,VersionedValue> stateMap = gossiper.getEndpointStateForEndpoint(nonlocal).getApplicationStateMap();
         stateMap.put(ApplicationState.DC, StorageService.instance.valueFactory.datacenter("us-west"));
         stateMap.put(ApplicationState.RACK, StorageService.instance.valueFactory.datacenter("1a"));
 

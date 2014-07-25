@@ -34,10 +34,17 @@ public class GossipDigestAckVerbHandler implements IVerbHandler<GossipDigestAck>
 {
     private static final Logger logger = LoggerFactory.getLogger(GossipDigestAckVerbHandler.class);
     private final Gossiper gossiper;
+    private final GossipDigestMessageSender messageSender;
 
     public GossipDigestAckVerbHandler(Gossiper gossiper)
     {
+        this(gossiper, new StandardMessageSender());
+    }
+
+    public GossipDigestAckVerbHandler(Gossiper gossiper, GossipDigestMessageSender messageSender)
+    {
         this.gossiper = gossiper;
+        this.messageSender = messageSender;
     }
 
     public void doVerb(MessageIn<GossipDigestAck> message, int id)
@@ -87,6 +94,6 @@ public class GossipDigestAckVerbHandler implements IVerbHandler<GossipDigestAck>
                                                                                            GossipDigestAck2.serializer);
         if (logger.isTraceEnabled())
             logger.trace("Sending a GossipDigestAck2Message to {}", from);
-        MessagingService.instance().sendOneWay(gDigestAck2Message, from);
+        messageSender.sendOneWay(gDigestAck2Message, from, gossiper);
     }
 }

@@ -122,14 +122,14 @@ public class GossipChangeListener implements IEndpointStateChangeSubscriber
         rangeCalculator.update(tokenMetadata);
 
         if (gossiper.usesHostId(endpoint))
-            tokenMetadata.updateHostId(Gossiper.instance.getHostId(endpoint), endpoint);
+            tokenMetadata.updateHostId(StorageService.instance.peerStatusService.gossiper.getHostId(endpoint), endpoint);
     }
 
     private Collection<Token> getTokensFor(InetAddress endpoint)
     {
         try
         {
-            String vvalue = Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.TOKENS).value;
+            String vvalue = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.TOKENS).value;
             byte[] bytes = vvalue.getBytes(ISO_8859_1);
             return TokenSerializer.deserialize(partitioner, new DataInputStream(new ByteArrayInputStream(bytes)));
         }
@@ -177,9 +177,9 @@ public class GossipChangeListener implements IEndpointStateChangeSubscriber
         // Order Matters, TM.updateHostID() should be called before TM.updateNormalToken(), (see CASSANDRA-4300).
         if (gossiper.usesHostId(endpoint))
         {
-            UUID hostId = Gossiper.instance.getHostId(endpoint);
+            UUID hostId = StorageService.instance.peerStatusService.gossiper.getHostId(endpoint);
             InetAddress existing = tokenMetadata.getEndpointForHostId(hostId);
-            if (DatabaseDescriptor.isReplacing() && Gossiper.instance.getEndpointStateForEndpoint(DatabaseDescriptor.getReplaceAddress()) != null && (hostId.equals(Gossiper.instance.getHostId(DatabaseDescriptor.getReplaceAddress()))))
+            if (DatabaseDescriptor.isReplacing() && StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(DatabaseDescriptor.getReplaceAddress()) != null && (hostId.equals(StorageService.instance.peerStatusService.gossiper.getHostId(DatabaseDescriptor.getReplaceAddress()))))
                 logger.warn("Not updating token metadata for {} because I am replacing it", endpoint);
             else
             {

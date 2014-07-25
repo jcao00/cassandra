@@ -33,10 +33,17 @@ public class GossipDigestSynVerbHandler implements IVerbHandler<GossipDigestSyn>
 {
     private static final Logger logger = LoggerFactory.getLogger(GossipDigestSynVerbHandler.class);
     private final Gossiper gossiper;
+    private final GossipDigestMessageSender messageSender;
 
     public GossipDigestSynVerbHandler(Gossiper gossiper)
     {
+        this(gossiper, new StandardMessageSender());
+    }
+
+    public GossipDigestSynVerbHandler(Gossiper gossiper, GossipDigestMessageSender messageSender)
+    {
         this.gossiper = gossiper;
+        this.messageSender = messageSender;
     }
 
     public void doVerb(MessageIn<GossipDigestSyn> message, int id)
@@ -44,7 +51,7 @@ public class GossipDigestSynVerbHandler implements IVerbHandler<GossipDigestSyn>
         InetAddress from = message.from;
         if (logger.isTraceEnabled())
             logger.trace("Received a GossipDigestSynMessage from {}", from);
-        if (gossiper.isEnabled())
+        if (!gossiper.isEnabled())
         {
             if (logger.isTraceEnabled())
                 logger.trace("Ignoring GossipDigestSynMessage because gossip is disabled");
@@ -88,7 +95,7 @@ public class GossipDigestSynVerbHandler implements IVerbHandler<GossipDigestSyn>
                                                                                         GossipDigestAck.serializer);
         if (logger.isTraceEnabled())
             logger.trace("Sending a GossipDigestAckMessage to {}", from);
-        MessagingService.instance().sendOneWay(gDigestAckMessage, from);
+        messageSender.sendOneWay(gDigestAckMessage, from, gossiper);
     }
 
     /*

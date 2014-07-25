@@ -104,7 +104,7 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
         if (endpoint.equals(FBUtilities.getBroadcastAddress()))
             return myDC;
 
-        EndpointState epState = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+        EndpointState epState = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint);
         if (epState == null || epState.getApplicationState(ApplicationState.DC) == null)
         {
             if (psnitch == null)
@@ -132,7 +132,7 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
         if (endpoint.equals(FBUtilities.getBroadcastAddress()))
             return myRack;
 
-        EndpointState epState = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+        EndpointState epState = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint);
         if (epState == null || epState.getApplicationState(ApplicationState.RACK) == null)
         {
             if (psnitch == null)
@@ -153,7 +153,7 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
     {
         super.gossiperStarting();
 
-        Gossiper.instance.addLocalApplicationState(ApplicationState.INTERNAL_IP,
+        StorageService.instance.peerStatusService.gossiper.addLocalApplicationState(ApplicationState.INTERNAL_IP,
                 StorageService.instance.valueFactory.internalIP(FBUtilities.getLocalAddress().getHostAddress()));
 
         reloadGossiperState();
@@ -192,14 +192,14 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
 
     private void reloadGossiperState()
     {
-        if (Gossiper.instance != null)
+        if (StorageService.instance.peerStatusService.gossiper != null)
         {
             ReconnectableSnitchHelper pendingHelper = new ReconnectableSnitchHelper(this, myDC, preferLocal);
-            Gossiper.instance.register(pendingHelper);
+            StorageService.instance.peerStatusService.gossiper.register(pendingHelper);
             
             pendingHelper = snitchHelperReference.getAndSet(pendingHelper);
             if (pendingHelper != null)
-                Gossiper.instance.unregister(pendingHelper);
+                StorageService.instance.peerStatusService.gossiper.unregister(pendingHelper);
         }
         // else this will eventually rerun at gossiperStarting()
     }

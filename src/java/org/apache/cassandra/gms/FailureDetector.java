@@ -68,7 +68,8 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
             {
                 MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
                 mbs.registerMBean(this, new ObjectName(MBEAN_NAME));
-            } catch (Exception e)
+            }
+            catch (Exception e)
             {
                 throw new RuntimeException(e);
             }

@@ -20,9 +20,14 @@ public class PeerStatusService
 
     public PeerStatusService(IPartitioner partitioner, boolean registerJmx)
     {
-        gossiper = new Gossiper(registerJmx);
+        this(new Gossiper(registerJmx), partitioner, registerJmx);
+    }
+
+    protected PeerStatusService(Gossiper gossiper, IPartitioner partitioner, boolean registerJmx)
+    {
+        this.gossiper = gossiper;
         versionedValueFactory = new VersionedValue.VersionedValueFactory(partitioner, gossiper.versionGenerator);
-        fd = new FailureDetector(gossiper, registerJmx);
+        fd = gossiper.fd;
         tokenMetadata = new TokenMetadata(fd);
         rangeCalculator = new PendingRangeCalculatorService(registerJmx);
 

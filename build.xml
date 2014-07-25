@@ -745,6 +745,32 @@
         </javac>
     </target>
 
+    <!-- simulator build file -->
+    <property name="simulator.build.src" value="${basedir}/tools/simulator/src/java" />
+    <property name="simulator.build.classes" value="${build.classes}/simulator" />
+	<property name="simulator.manifest" value="${simulator.build.classes}/MANIFEST.MF" />
+    <path id="cassandra.classes">
+        <pathelement location="${basedir}/build/classes/main" />
+        <pathelement location="${basedir}/build/classes/thrift" />
+    </path>
+    <target name="simulator-build" depends="" description="build simulator tool">
+    	<mkdir dir="${simulator.build.classes}" />
+        <javac debug="true" debuglevel="${debuglevel}" destdir="${simulator.build.classes}" includeantruntime="true" source="${source.version}" target="${target.version}">
+            <src path="${simulator.build.src}" />
+            <classpath>
+                <path refid="cassandra.classes" />
+                <path>
+                    <fileset dir="${build.lib}">
+                        <include name="**/*.jar" />
+                    </fileset>
+                    <fileset dir="${build.tools.lib}">
+                        <include name="**/*.jar" />
+                    </fileset>
+                </path>
+            </classpath>
+        </javac>
+    </target>
+
 	<target name="_write-poms" depends="maven-declare-dependencies">
 	    <artifact:writepom pomRefId="parent-pom" file="${build.dir}/${final.name}-parent.pom"/>
 	    <artifact:writepom pomRefId="thrift-pom"
@@ -762,7 +788,7 @@
         The jar target makes cassandra.jar output.
     -->
     <target name="jar"
-            depends="build, build-test, stress-build, write-poms"
+            depends="build, build-test, stress-build, simulator-build, write-poms"
             description="Assemble Cassandra JAR files">
       <mkdir dir="${build.classes.main}/META-INF" />
       <mkdir dir="${build.classes.thrift}/META-INF" />
@@ -836,6 +862,17 @@
       <mkdir dir="${build.dir}/tools/lib/" />
       <jar destfile="${build.dir}/tools/lib/stress.jar" manifest="${stress.manifest}">
         <fileset dir="${stress.build.classes}"/>
+      </jar>
+
+      <!-- gossip-simulator jar -->
+      <manifest file="${simulator.manifest}">
+        <attribute name="Built-By" value="Jason Brown"/>
+        <attribute name="Main-Class" value="org.apache.cassandra.gms.Simulator"/>
+      </manifest>
+      <mkdir dir="${simulator.build.classes}/META-INF" />
+      <mkdir dir="${build.dir}/tools/lib/" />
+      <jar destfile="${build.dir}/tools/lib/gossip-simulator.jar" manifest="${simulator.manifest}">
+        <fileset dir="${simulator.build.classes}"/>
       </jar>
     </target>
 

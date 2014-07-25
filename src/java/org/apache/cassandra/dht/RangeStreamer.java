@@ -230,8 +230,8 @@ public class RangeStreamer
                 throw new IllegalStateException("Multiple endpoints found for " + desiredRange);
 
             InetAddress sourceIp = addressList.iterator().next();
-            EndpointState sourceState = Gossiper.instance.getEndpointStateForEndpoint(sourceIp);
-            if (Gossiper.instance.isEnabled() && (sourceState == null || !sourceState.isAlive()))
+            EndpointState sourceState = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(sourceIp);
+            if (StorageService.instance.peerStatusService.gossiper.isEnabled() && (sourceState == null || !sourceState.isAlive()))
                 throw new RuntimeException("A node required to move the data consistently is down ("+sourceIp+").  If you wish to move the data from a potentially inconsistent replica, restart the node with -Dconsistent.rangemovement=false");
         }
 

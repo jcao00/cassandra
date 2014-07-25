@@ -19,6 +19,7 @@ package org.apache.cassandra.net;
 
 import java.util.EnumSet;
 
+import org.apache.cassandra.service.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -73,7 +74,7 @@ public class MessageDeliveryTask implements Runnable
             throw t;
         }
         if (GOSSIP_VERBS.contains(message.verb))
-            Gossiper.instance.setLastProcessedMessageAt(constructionTime);
+            StorageService.instance.peerStatusService.gossiper.setLastProcessedMessageAt(constructionTime);
     }
 
     EnumSet<MessagingService.Verb> GOSSIP_VERBS = EnumSet.of(MessagingService.Verb.GOSSIP_DIGEST_ACK,

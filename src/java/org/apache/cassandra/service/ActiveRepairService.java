@@ -129,13 +129,13 @@ public class ActiveRepairService
     public void addToActiveSessions(RepairSession session)
     {
         sessions.put(session.getId(), session);
-        Gossiper.instance.register(session);
+        StorageService.instance.peerStatusService.gossiper.register(session);
         StorageService.instance.peerStatusService.fd.registerFailureDetectionEventListener(session);
     }
 
     public void removeFromActiveSessions(RepairSession session)
     {
-        Gossiper.instance.unregister(session);
+        StorageService.instance.peerStatusService.gossiper.unregister(session);
         sessions.remove(session.getId());
     }
 

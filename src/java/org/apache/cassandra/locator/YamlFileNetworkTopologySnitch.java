@@ -363,14 +363,14 @@ public class YamlFileNetworkTopologySnitch
     {
         if (localNodeData.dcLocalAddress == null)
             return;
-        final EndpointState es = Gossiper.instance.getEndpointStateForEndpoint(FBUtilities.getBroadcastAddress());
+        final EndpointState es = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(FBUtilities.getBroadcastAddress());
         if (es == null)
             return;
         final VersionedValue vv = es.getApplicationState(ApplicationState.INTERNAL_IP);
         if ((vv != null && !vv.value.equals(localNodeData.dcLocalAddress.toString()))
             || vv == null)
         {
-            Gossiper.instance.addLocalApplicationState(ApplicationState.INTERNAL_IP,
+            StorageService.instance.peerStatusService.gossiper.addLocalApplicationState(ApplicationState.INTERNAL_IP,
                 StorageService.instance.valueFactory.internalIP(localNodeData.dcLocalAddress.toString()));
         }
     }
@@ -408,7 +408,7 @@ public class YamlFileNetworkTopologySnitch
     {
         gossiperInitialized = true;
         StorageService.instance.gossipSnitchInfo();
-        Gossiper.instance.register(new ReconnectableSnitchHelper(this, localNodeData.datacenter, true));
+        StorageService.instance.peerStatusService.gossiper.register(new ReconnectableSnitchHelper(this, localNodeData.datacenter, true));
     }
 
 }

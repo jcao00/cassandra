@@ -20,6 +20,7 @@ package org.apache.cassandra.gms;
 import org.apache.cassandra.net.IVerbHandler;
 import org.apache.cassandra.net.MessageIn;
 
+import org.apache.cassandra.service.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,7 +36,7 @@ public class GossipShutdownVerbHandler implements IVerbHandler
 
     public void doVerb(MessageIn message, int id)
     {
-        if (!Gossiper.instance.isEnabled())
+        if (!StorageService.instance.peerStatusService.gossiper.isEnabled())
         {
             logger.debug("Ignoring shutdown message from {} because gossip is disabled", message.from);
             return;

@@ -109,7 +109,7 @@ public class MigrationManager
                 public void run()
                 {
                     // grab the latest version of the schema since it may have changed again since the initial scheduling
-                    EndpointState epState = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+                    EndpointState epState = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint);
                     if (epState == null)
                     {
                         logger.debug("epState vanished for {}, not submitting migration task", endpoint);
@@ -147,7 +147,7 @@ public class MigrationManager
          */
         return MessagingService.instance().knowsVersion(endpoint)
                 && MessagingService.instance().getRawVersion(endpoint) == MessagingService.current_version
-                && !Gossiper.instance.isFatClient(endpoint);
+                && !StorageService.instance.peerStatusService.gossiper.isFatClient(endpoint);
     }
 
     public static boolean isReadyForBootstrap()
@@ -394,7 +394,7 @@ public class MigrationManager
             }
         });
 
-        for (InetAddress endpoint : Gossiper.instance.getLiveMembers())
+        for (InetAddress endpoint : StorageService.instance.peerStatusService.gossiper.getLiveMembers())
         {
             // only push schema to nodes with known and equal versions
             if (!endpoint.equals(FBUtilities.getBroadcastAddress()) &&
@@ -414,7 +414,7 @@ public class MigrationManager
      */
     public static void passiveAnnounce(UUID version)
     {
-        Gossiper.instance.addLocalApplicationState(ApplicationState.SCHEMA, StorageService.instance.valueFactory.schema(version));
+        StorageService.instance.peerStatusService.gossiper.addLocalApplicationState(ApplicationState.SCHEMA, StorageService.instance.valueFactory.schema(version));
         logger.debug("Gossiping my schema version {}", version);
     }
 
@@ -438,7 +438,7 @@ public class MigrationManager
 
         Schema.instance.clear();
 
-        Set<InetAddress> liveEndpoints = Gossiper.instance.getLiveMembers();
+        Set<InetAddress> liveEndpoints = StorageService.instance.peerStatusService.gossiper.getLiveMembers();
         liveEndpoints.remove(FBUtilities.getBroadcastAddress());
 
         // force migration if there are nodes around

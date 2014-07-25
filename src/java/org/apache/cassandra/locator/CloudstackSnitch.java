@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 
+import org.apache.cassandra.service.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.cassandra.db.SystemKeyspace;
@@ -84,7 +85,7 @@ public class CloudstackSnitch extends AbstractNetworkTopologySnitch
     {
         if (endpoint.equals(FBUtilities.getBroadcastAddress()))
             return csZoneRack;
-        EndpointState state = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+        EndpointState state = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint);
         if (state == null || state.getApplicationState(ApplicationState.RACK) == null) 
         {
             if (savedEndpoints == null)
@@ -100,7 +101,7 @@ public class CloudstackSnitch extends AbstractNetworkTopologySnitch
     {
         if (endpoint.equals(FBUtilities.getBroadcastAddress()))
             return csZoneDc;
-        EndpointState state = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+        EndpointState state = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint);
         if (state == null || state.getApplicationState(ApplicationState.DC) == null) 
         {
             if (savedEndpoints == null)

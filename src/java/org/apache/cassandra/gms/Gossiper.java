@@ -115,7 +115,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     private volatile long lastProcessedMessageAt = System.currentTimeMillis();
 
     public static final VersionGenerator versionGenerator = new VersionGenerator();
-    public final FailureDetector fd;
+    protected final FailureDetector fd;
 
     private class GossipTask implements Runnable
     {
@@ -1289,6 +1289,13 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         MessageOut message = new MessageOut(MessagingService.Verb.GOSSIP_SHUTDOWN);
         for (InetAddress ep : liveEndpoints)
             MessagingService.instance().sendOneWay(message, ep);
+    }
+
+    //should only be necessary for testing
+    @VisibleForTesting
+    public void terminate()
+    {
+        executor.shutdownNow();
     }
 
     public boolean isEnabled()

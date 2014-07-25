@@ -40,7 +40,7 @@ public class LoadBroadcaster implements IEndpointStateChangeSubscriber
 
     private LoadBroadcaster()
     {
-        Gossiper.instance.register(this);
+        StorageService.instance.peerStatusService.gossiper.register(this);
     }
 
     public void onChange(InetAddress endpoint, ApplicationState state, VersionedValue value)
@@ -87,7 +87,7 @@ public class LoadBroadcaster implements IEndpointStateChangeSubscriber
             {
                 if (logger.isDebugEnabled())
                     logger.debug("Disseminating load info ...");
-                Gossiper.instance.addLocalApplicationState(ApplicationState.LOAD,
+                StorageService.instance.peerStatusService.gossiper.addLocalApplicationState(ApplicationState.LOAD,
                                                            StorageService.instance.valueFactory.load(StorageService.instance.getLoad()));
             }
         };

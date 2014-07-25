@@ -137,7 +137,7 @@ public class BackgroundActivityMonitor
     public double getSeverity(InetAddress endpoint)
     {
         VersionedValue event;
-        EndpointState state = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+        EndpointState state = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint);
         if (state != null && (event = state.getApplicationState(ApplicationState.SEVERITY)) != null)
             return Double.parseDouble(event.value);
         return 0.0;
@@ -161,11 +161,11 @@ public class BackgroundActivityMonitor
             if (report == -1d)
                 report = compaction_severity.get();
 
-            if (!Gossiper.instance.isEnabled())
+            if (!StorageService.instance.peerStatusService.gossiper.isEnabled())
                 return;
             report += manual_severity.get(); // add manual severity setting.
             VersionedValue updated = StorageService.instance.valueFactory.severity(report);
-            Gossiper.instance.addLocalApplicationState(ApplicationState.SEVERITY, updated);
+            StorageService.instance.peerStatusService.gossiper.addLocalApplicationState(ApplicationState.SEVERITY, updated);
         }
     }
 }

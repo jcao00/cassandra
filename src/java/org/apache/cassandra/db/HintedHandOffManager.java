@@ -269,7 +269,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
     private int waitForSchemaAgreement(InetAddress endpoint) throws TimeoutException
     {
-        Gossiper gossiper = Gossiper.instance;
+        Gossiper gossiper = StorageService.instance.peerStatusService.gossiper;
         int waited = 0;
         // first, wait for schema to be gossiped.
         while (gossiper.getEndpointStateForEndpoint(endpoint) != null && gossiper.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.SCHEMA) == null)
@@ -341,7 +341,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
     private void doDeliverHintsToEndpoint(InetAddress endpoint)
     {
         // find the hints for the node using its token.
-        UUID hostId = Gossiper.instance.getHostId(endpoint);
+        UUID hostId = StorageService.instance.peerStatusService.gossiper.getHostId(endpoint);
         logger.info("Started hinted handoff for host: {} with IP: {}", hostId, endpoint);
         final ByteBuffer hostIdBytes = ByteBuffer.wrap(UUIDGen.decompose(hostId));
         DecoratedKey epkey =  StorageService.getPartitioner().decorateKey(hostIdBytes);

@@ -23,6 +23,7 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.zip.Checksum;
 
+import org.apache.cassandra.service.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -133,7 +134,7 @@ public class IncomingTcpConnection extends Thread
         if (version > MessagingService.current_version)
         {
             // save the endpoint so gossip will reconnect to it
-            Gossiper.instance.addSavedEndpoint(from);
+            StorageService.instance.peerStatusService.gossiper.addSavedEndpoint(from);
             logger.info("Received messages from newer protocol version {}. Ignoring", version);
             return;
         }

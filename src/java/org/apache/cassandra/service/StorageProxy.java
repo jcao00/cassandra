@@ -1732,7 +1732,7 @@ public class StorageProxy implements StorageProxyMBean
     {
         final String myVersion = Schema.instance.getVersion().toString();
         final Map<InetAddress, UUID> versions = new ConcurrentHashMap<InetAddress, UUID>();
-        final Set<InetAddress> liveHosts = Gossiper.instance.getLiveMembers();
+        final Set<InetAddress> liveHosts = StorageService.instance.peerStatusService.gossiper.getLiveMembers();
         final CountDownLatch latch = new CountDownLatch(liveHosts.size());
 
         IAsyncCallback<UUID> cb = new IAsyncCallback<UUID>()
@@ -1766,7 +1766,7 @@ public class StorageProxy implements StorageProxyMBean
 
         // maps versions to hosts that are on that version.
         Map<String, List<String>> results = new HashMap<String, List<String>>();
-        Iterable<InetAddress> allHosts = Iterables.concat(Gossiper.instance.getLiveMembers(), Gossiper.instance.getUnreachableMembers());
+        Iterable<InetAddress> allHosts = Iterables.concat(StorageService.instance.peerStatusService.gossiper.getLiveMembers(), StorageService.instance.peerStatusService.gossiper.getUnreachableMembers());
         for (InetAddress host : allHosts)
         {
             UUID version = versions.get(host);
@@ -1967,11 +1967,11 @@ public class StorageProxy implements StorageProxyMBean
             return false;
         }
 
-        boolean hintWindowExpired = Gossiper.instance.getEndpointDowntime(ep) > DatabaseDescriptor.getMaxHintWindow();
+        boolean hintWindowExpired = StorageService.instance.peerStatusService.gossiper.getEndpointDowntime(ep) > DatabaseDescriptor.getMaxHintWindow();
         if (hintWindowExpired)
         {
             HintedHandOffManager.instance.metrics.incrPastWindow(ep);
-            Tracing.trace("Not hinting {} which has been down {}ms", ep, Gossiper.instance.getEndpointDowntime(ep));
+            Tracing.trace("Not hinting {} which has been down {}ms", ep, StorageService.instance.peerStatusService.gossiper.getEndpointDowntime(ep));
         }
         return !hintWindowExpired;
     }
@@ -1994,11 +1994,11 @@ public class StorageProxy implements StorageProxyMBean
             // Since the truncate operation is so aggressive and is typically only
             // invoked by an admin, for simplicity we require that all nodes are up
             // to perform the operation.
-            int liveMembers = Gossiper.instance.getLiveMembers().size();
-            throw new UnavailableException(ConsistencyLevel.ALL, liveMembers + Gossiper.instance.getUnreachableMembers().size(), liveMembers);
+            int liveMembers = StorageService.instance.peerStatusService.gossiper.getLiveMembers().size();
+            throw new UnavailableException(ConsistencyLevel.ALL, liveMembers + StorageService.instance.peerStatusService.gossiper.getUnreachableMembers().size(), liveMembers);
         }
 
-        Set<InetAddress> allEndpoints = Gossiper.instance.getLiveTokenOwners();
+        Set<InetAddress> allEndpoints = StorageService.instance.peerStatusService.gossiper.getLiveTokenOwners();
         
         int blockFor = allEndpoints.size();
         final TruncateResponseHandler responseHandler = new TruncateResponseHandler(blockFor);
@@ -2028,7 +2028,7 @@ public class StorageProxy implements StorageProxyMBean
      */
     private static boolean isAnyStorageHostDown()
     {
-        return !Gossiper.instance.getUnreachableTokenOwners().isEmpty();
+        return !StorageService.instance.peerStatusService.gossiper.getUnreachableTokenOwners().isEmpty();
     }
     
     public interface WritePerformer
