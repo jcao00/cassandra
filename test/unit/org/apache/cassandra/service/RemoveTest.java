@@ -80,7 +80,7 @@ public class RemoveTest
         Util.createInitialRing(ss, partitioner, endpointTokens, keyTokens, hosts, hostIds, 6);
 
         MessagingService.instance().listen(FBUtilities.getBroadcastAddress());
-        Gossiper.instance.start(1);
+        StorageService.instance.peerStatusService.gossiper.start(1);
         removalhost = hosts.get(5);
         hosts.remove(removalhost);
         removalId = hostIds.get(5);

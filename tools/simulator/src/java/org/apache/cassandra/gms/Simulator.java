@@ -1,5 +1,6 @@
 package org.apache.cassandra.gms;
 
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.dht.Token;
@@ -16,13 +17,14 @@ import java.util.concurrent.TimeUnit;
 public class Simulator
 {
     private static final Logger logger = LoggerFactory.getLogger(Simulator.class);
-    private CustomMessagingService customMessagingService;
+    private GossipSimulatorDispatcher customMessagingService;
 
     public static void main(String[] args) throws Exception
     {
         String cwd = System.getProperty("user.dir");
-        System.setProperty("logback.configurationFile", "src/main/resources/logback.xml");
-        System.setProperty("cassandra.config", "file://" + cwd + "/src/main/resources/cassandra.yaml");
+        String path = cwd + "/tools/simulator/src/resources/";
+//        System.setProperty("logback.configurationFile", path + "logback.xml");
+        System.setProperty("cassandra.config", "file://" + path + "cassandra.yaml");
 
         Simulator simulator = new Simulator();
         simulator.runSimulation(1, 3, 10);
@@ -42,13 +44,18 @@ public class Simulator
         logger.warn("####### Running new simulation for {} nodes with {} seeds ######", nodeCnt, seedCnt);
 
         for (int i = 0; i < simulationRounds; i ++)
+        {
+            logger.warn("####### Running simulation {} ######", i);
             runSimulation(seedCnt, nodeCnt);
+        }
     }
 
     void runSimulation(int seedCnt, int nodeCnt)
     {
-        assert seedCnt > nodeCnt;
-        customMessagingService = new CustomMessagingService();
+        assert seedCnt < nodeCnt;
+        CountDownLatch latch = new CountDownLatch(1);
+        CyclicBarrier barrier = new CyclicBarrier(nodeCnt, new BarrierAction(latch));
+        customMessagingService = new GossipSimulatorDispatcher(barrier);
 
         List<InetAddress> seeds = new ArrayList<>(seedCnt);
         for (int i = 0; i < seedCnt; i++)
@@ -56,18 +63,15 @@ public class Simulator
             seeds.add(getInetAddr(i));
         }
 
-        CountDownLatch latch = new CountDownLatch(1);
-        CyclicBarrier barrier = new CyclicBarrier(nodeCnt, new BarrierAction(latch));
+        SimulatorSeedProvider.setSeeds(seeds);
 
         for (int i = 0; i < nodeCnt; i++)
         {
             InetAddress addr = getInetAddr(i);
             IPartitioner partitioner = new Murmur3Partitioner();
-            CustomGossiper gossiper = new CustomGossiper();
-            gossiper.setBarrier(barrier);
-            PeerStatusService peerStatusService = new PeerStatusService(gossiper, partitioner, false);
-            Gossiper simulator = peerStatusService.gossiper;
-            customMessagingService.register(addr, simulator);
+            Gossiper gossiper = new Gossiper(addr, customMessagingService, false);
+            PeerStatusService peerStatusService = new PeerStatusService(partitioner, false);
+            customMessagingService.register(addr, gossiper);
 
             Map<ApplicationState, VersionedValue> appStates = new HashMap<>();
             appStates.put(ApplicationState.NET_VERSION, peerStatusService.versionedValueFactory.networkVersion());
@@ -85,11 +89,12 @@ public class Simulator
 
             // some random generation value (a/k/a timestamp of last app launch)
             int gen = (int)(System.currentTimeMillis() / 1000) - (int)(1000 * Math.random());
-            simulator.start(gen, appStates);
+            gossiper.start(gen, appStates);
         }
 
         try
         {
+            logger.info("main() about to block");
             latch.await(10, TimeUnit.MINUTES);
         }
         catch (InterruptedException e)
@@ -104,14 +109,7 @@ public class Simulator
         }
 
         // wait a short while for things to die
-        try
-        {
-            Thread.sleep(1000);
-        }
-        catch (InterruptedException e)
-        {
-            //nop
-        }
+        Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
     }
 
     InetAddress getInetAddr(int i)
@@ -142,54 +140,36 @@ public class Simulator
 
         public void run()
         {
-            logger.debug("**************** ROUND {}  **************************", counter);
-            counter++;
-            if (counter <= 1)
+            int curRound = counter++;
+            if (curRound == 0)
             {
-                logger.debug("****** skipping initial round on convergence checking");
+                logger.debug("**************** Starting simulator - {}  **************************", hashCode());
                 return;
             }
 
+            logger.debug("**************** ROUND {}  **************************", curRound);
             long start = System.currentTimeMillis();
-//            boolean convergedViaGossip = hasConvergedViaGossip();
             boolean convergedByInspection = hasConvergedByInspection();
-            logger.debug("****** elapsed comparison time (ms) = " + (System.currentTimeMillis() - start));
+
+            long elapseCompTime = System.currentTimeMillis() - start;
+            if (100 < elapseCompTime)
+                logger.debug("****** elapsed comparison time (ms) = {}", elapseCompTime);
             logger.debug("****** have we converged? " + convergedByInspection);
 
             if (convergedByInspection)
             {
-                if (counter - 1 > lastConvergenceRound)
+                if (curRound - 1 > lastConvergenceRound)
                     logger.warn("****** converged after {} rounds", (counter - lastConvergenceRound));
 
-                lastConvergenceRound = counter;
+                lastConvergenceRound = curRound;
 
                 latch.countDown();
             }
             else
-                logger.debug("****** rounds since convergence = {} ", (counter - lastConvergenceRound));
+                logger.debug("****** rounds since convergence = {} ", (curRound - lastConvergenceRound));
 
             // TODO: execute new behaviors: add/remove node (and replace barrier in simulators) and other actions
             // bounce nodes
-        }
-
-        boolean hasConvergedViaGossip()
-        {
-            // hoping like hell there's a less miserable way to do this diff'ing...
-//            Map<InetAddress, Gossiper> gossipers = CustomMessagingService.instance().gossipers;
-//            for (Gossiper simulator : gossipers.values())
-//            {
-//                List<GossipDigest> digests = new ArrayList<>(gossipers.size());
-//                simulator.makeRandomGossipDigest(digests);
-//                for (GossipDigest digest : digests)
-//                {
-//                    Gossiper peer = gossipers.get(digest.getEndpoint());
-//                    if (null == peer)
-//                        return false;
-//
-//                }
-//            }
-
-            return true;
         }
 
         boolean hasConvergedByInspection()
@@ -220,8 +200,8 @@ public class Simulator
                     // as the target/source node updates it's heartbeat.version on every gossip round. thus, don't bother to compare them
                     if (localEndpointState.getHeartBeatState().getGeneration() != peerEndpointState.getHeartBeatState().getGeneration())
                     {
-                        logger.debug("hasConvergedByInspection: generations are different: local = {}, target = {}",
-                                localEndpointState.getHeartBeatState().getGeneration(), peerEndpointState.getHeartBeatState().getGeneration());
+                        logger.debug("hasConvergedByInspection: generations are different: local ({}) = {}, target ({}) = {}",
+                                new Object[]{localEndpointState.getHeartBeatState().getGeneration(), peerEndpointState.getHeartBeatState().getGeneration()});
                         return false;
                     }
 

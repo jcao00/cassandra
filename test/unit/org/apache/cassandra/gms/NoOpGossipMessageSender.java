@@ -2,24 +2,19 @@ package org.apache.cassandra.gms;
 
 import org.apache.cassandra.net.IAsyncCallback;
 import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.net.MessagingService;
+import org.junit.Ignore;
 
 import java.net.InetAddress;
 
-public class StandardMessageSender implements GossipDigestMessageSender
+@Ignore
+public class NoOpGossipMessageSender implements GossipDigestMessageSender
 {
     public void sendOneWay(MessageOut message, InetAddress to, Gossiper sender)
-    {
-        MessagingService.instance().sendOneWay(message, to);
-    }
+    {    }
 
     public void sendRR(MessageOut message, InetAddress to, IAsyncCallback callback, Gossiper sender)
-    {
-        MessagingService.instance().sendRR(message, to, callback);
-    }
+    {    }
 
     public void blockUntilReady()
-    {
-        MessagingService.instance().waitUntilListening();
-    }
+    {    }
 }

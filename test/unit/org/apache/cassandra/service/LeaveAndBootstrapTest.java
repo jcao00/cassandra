@@ -23,6 +23,8 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.*;
 
+import org.apache.cassandra.gms.PeerStatusService;
+import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -66,6 +68,14 @@ public class LeaveAndBootstrapTest
         StorageService.instance.setPartitionerUnsafe(oldPartitioner);
     }
 
+    PeerStatusService peerStatusService;
+
+    @Before
+    public void setUp()
+    {
+        peerStatusService = new PeerStatusService(new RandomPartitioner(), false);
+    }
+
     /**
      * Test whether write endpoints is correct when the node is leaving. Uses
      * StorageService.onChange and does not manipulate token metadata directly.
@@ -80,7 +90,7 @@ public class LeaveAndBootstrapTest
         TokenMetadata tmd = ss.getTokenMetadata();
         tmd.clearUnsafe();
         IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -111,7 +121,7 @@ public class LeaveAndBootstrapTest
         assertTrue(tmd.isLeaving(hosts.get(LEAVING_NODE)));
 
         Thread.sleep(100); // because there is a tight race between submit and blockUntilFinished
-        PendingRangeCalculatorService.instance.blockUntilFinished();
+        peerStatusService.rangeCalculator.blockUntilFinished();
 
         AbstractReplicationStrategy strategy;
         for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
@@ -150,8 +160,7 @@ public class LeaveAndBootstrapTest
         final int RING_SIZE = 10;
         TokenMetadata tmd = ss.getTokenMetadata();
         tmd.clearUnsafe();
-        IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -170,14 +179,14 @@ public class LeaveAndBootstrapTest
 
         // boot two new nodes with keyTokens.get(5) and keyTokens.get(7)
         InetAddress boot1 = InetAddress.getByName("127.0.1.1");
-        Gossiper.instance.initializeNodeUnsafe(boot1, UUID.randomUUID(), 1);
-        Gossiper.instance.injectApplicationState(boot1, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(5))));
+        peerStatusService.gossiper.initializeNodeUnsafe(boot1, UUID.randomUUID(), 1);
+        peerStatusService.gossiper.injectApplicationState(boot1, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(5))));
         ss.onChange(boot1,
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(5))));
         InetAddress boot2 = InetAddress.getByName("127.0.1.2");
-        Gossiper.instance.initializeNodeUnsafe(boot2, UUID.randomUUID(), 1);
-        Gossiper.instance.injectApplicationState(boot2, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(7))));
+        peerStatusService.gossiper.initializeNodeUnsafe(boot2, UUID.randomUUID(), 1);
+        peerStatusService.gossiper.injectApplicationState(boot2, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(7))));
         ss.onChange(boot2,
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(7))));
@@ -238,7 +247,7 @@ public class LeaveAndBootstrapTest
         expectedEndpoints.get(KEYSPACE4).putAll(new BigIntegerToken("85"), makeAddrs("127.0.0.10", "127.0.0.1", "127.0.0.2", "127.0.0.3"));
         expectedEndpoints.get(KEYSPACE4).putAll(new BigIntegerToken("95"), makeAddrs("127.0.0.1", "127.0.0.2", "127.0.0.3"));
 
-        PendingRangeCalculatorService.instance.blockUntilFinished();
+        peerStatusService.rangeCalculator.blockUntilFinished();
 
         for (Map.Entry<String, AbstractReplicationStrategy> keyspaceStrategy : keyspaceStrategyMap.entrySet())
         {
@@ -360,7 +369,7 @@ public class LeaveAndBootstrapTest
         expectedEndpoints.get(KEYSPACE4).get(new BigIntegerToken("75")).removeAll(makeAddrs("127.0.0.10"));
         expectedEndpoints.get(KEYSPACE4).get(new BigIntegerToken("85")).removeAll(makeAddrs("127.0.0.10"));
 
-        PendingRangeCalculatorService.instance.blockUntilFinished();
+        peerStatusService.rangeCalculator.blockUntilFinished();
 
         for (Map.Entry<String, AbstractReplicationStrategy> keyspaceStrategy : keyspaceStrategyMap.entrySet())
         {
@@ -450,8 +459,7 @@ public class LeaveAndBootstrapTest
         StorageService ss = StorageService.instance;
         TokenMetadata tmd = ss.getTokenMetadata();
         tmd.clearUnsafe();
-        IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -473,7 +481,7 @@ public class LeaveAndBootstrapTest
         assertTrue(tmd.getBootstrapTokens().isEmpty());
 
         // Bootstrap the node immedidiately to keyTokens.get(4) without going through STATE_LEFT
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(4))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(4))));
         ss.onChange(hosts.get(2),
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(4))));
@@ -483,7 +491,7 @@ public class LeaveAndBootstrapTest
         assertEquals(hosts.get(2), tmd.getBootstrapTokens().get(keyTokens.get(4)));
 
         // Bootstrap node hosts.get(3) to keyTokens.get(1)
-        Gossiper.instance.injectApplicationState(hosts.get(3), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(3), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
         ss.onChange(hosts.get(3),
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(1))));
@@ -494,7 +502,7 @@ public class LeaveAndBootstrapTest
         assertEquals(hosts.get(3), tmd.getBootstrapTokens().get(keyTokens.get(1)));
 
         // Bootstrap node hosts.get(2) further to keyTokens.get(3)
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(3))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(3))));
         ss.onChange(hosts.get(2),
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(3))));
@@ -506,8 +514,8 @@ public class LeaveAndBootstrapTest
         assertEquals(hosts.get(3), tmd.getBootstrapTokens().get(keyTokens.get(1)));
 
         // Go to normal again for both nodes
-        Gossiper.instance.injectApplicationState(hosts.get(3), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(2))));
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(3))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(3), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(2))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(3))));
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.normal(Collections.singleton(keyTokens.get(3))));
         ss.onChange(hosts.get(3), ApplicationState.STATUS, valueFactory.normal(Collections.singleton(keyTokens.get(2))));
 
@@ -527,8 +535,7 @@ public class LeaveAndBootstrapTest
         StorageService ss = StorageService.instance;
         TokenMetadata tmd = ss.getTokenMetadata();
         tmd.clearUnsafe();
-        IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -545,7 +552,7 @@ public class LeaveAndBootstrapTest
         assertEquals(endpointTokens.get(2), tmd.getToken(hosts.get(2)));
 
         // back to normal
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(2))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(2))));
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.normal(Collections.singleton(keyTokens.get(2))));
 
         assertTrue(tmd.getLeavingEndpoints().isEmpty());
@@ -555,7 +562,7 @@ public class LeaveAndBootstrapTest
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.leaving(Collections.singleton(keyTokens.get(2))));
         ss.onChange(hosts.get(2), ApplicationState.STATUS,
                 valueFactory.left(Collections.singleton(keyTokens.get(2)), Gossiper.computeExpireTime()));
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(4))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(4))));
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.normal(Collections.singleton(keyTokens.get(4))));
 
         assertTrue(tmd.getBootstrapTokens().isEmpty());
@@ -569,8 +576,7 @@ public class LeaveAndBootstrapTest
         StorageService ss = StorageService.instance;
         TokenMetadata tmd = ss.getTokenMetadata();
         tmd.clearUnsafe();
-        IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -581,7 +587,7 @@ public class LeaveAndBootstrapTest
         Util.createInitialRing(ss, partitioner, endpointTokens, keyTokens, hosts, hostIds, 6);
 
         // node 2 leaves with _different_ token
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(0))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(0))));
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.leaving(Collections.singleton(keyTokens.get(0))));
 
         assertEquals(keyTokens.get(0), tmd.getToken(hosts.get(2)));
@@ -589,7 +595,7 @@ public class LeaveAndBootstrapTest
         assertNull(tmd.getEndpoint(endpointTokens.get(2)));
 
         // go to boostrap
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
         ss.onChange(hosts.get(2),
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(1))));
@@ -619,8 +625,7 @@ public class LeaveAndBootstrapTest
         StorageService ss = StorageService.instance;
         TokenMetadata tmd = ss.getTokenMetadata();
         tmd.clearUnsafe();
-        IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -637,7 +642,7 @@ public class LeaveAndBootstrapTest
         assertFalse(tmd.isMember(hosts.get(2)));
 
         // node hosts.get(4) goes to bootstrap
-        Gossiper.instance.injectApplicationState(hosts.get(3), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(3), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
         ss.onChange(hosts.get(3), ApplicationState.STATUS, valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(1))));
 
         assertFalse(tmd.isMember(hosts.get(3)));
@@ -645,7 +650,7 @@ public class LeaveAndBootstrapTest
         assertEquals(hosts.get(3), tmd.getBootstrapTokens().get(keyTokens.get(1)));
 
         // and then directly to 'left'
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
+        peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(1))));
         ss.onChange(hosts.get(2), ApplicationState.STATUS,
                 valueFactory.left(Collections.singleton(keyTokens.get(1)), Gossiper.computeExpireTime()));
 
@@ -661,7 +666,7 @@ public class LeaveAndBootstrapTest
     public void testStateChangeOnRemovedNode() throws UnknownHostException
     {
         StorageService ss = StorageService.instance;
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
 
         // create a ring of 2 nodes
         ArrayList<Token> endpointTokens = new ArrayList<>();
@@ -674,9 +679,9 @@ public class LeaveAndBootstrapTest
         assertEquals("rack42", SystemKeyspace.loadDcRackInfo().get(toRemove).get("rack"));
 
         // mark the node as removed
-        Gossiper.instance.injectApplicationState(toRemove, ApplicationState.STATUS,
+        peerStatusService.gossiper.injectApplicationState(toRemove, ApplicationState.STATUS,
                 valueFactory.left(Collections.singleton(endpointTokens.get(1)), Gossiper.computeExpireTime()));
-        assertTrue(Gossiper.instance.isDeadState(Gossiper.instance.getEndpointStateForEndpoint(hosts.get(1))));
+        assertTrue(peerStatusService.gossiper.isDeadState(peerStatusService.gossiper.getEndpointStateForEndpoint(hosts.get(1))));
 
         // state changes made after the endpoint has left should be ignored
         ss.onChange(hosts.get(1), ApplicationState.RACK,
@@ -689,7 +694,7 @@ public class LeaveAndBootstrapTest
     {
         // create a ring of 1 node
         StorageService ss = StorageService.instance;
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = peerStatusService.versionedValueFactory;
         Util.createInitialRing(ss, partitioner, new ArrayList<Token>(), new ArrayList<Token>(),  new ArrayList<InetAddress>(), new ArrayList<UUID>(), 1);
 
         // make a REMOVING state change on a non-member endpoint; without the CASSANDRA-6564 fix, this

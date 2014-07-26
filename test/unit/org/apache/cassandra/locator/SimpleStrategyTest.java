@@ -26,6 +26,10 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 
+import org.apache.cassandra.gms.FailureDetector;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.NoOpGossipMessageSender;
+import org.apache.cassandra.gms.PeerStatusService;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -34,7 +38,6 @@ import org.apache.cassandra.config.KSMetaData;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.dht.*;
-import org.apache.cassandra.service.PendingRangeCalculatorService;
 import org.apache.cassandra.service.StorageServiceAccessor;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -93,7 +96,7 @@ public class SimpleStrategyTest
         AbstractReplicationStrategy strategy;
         for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
         {
-            tmd = new TokenMetadata();
+            tmd = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
             strategy = getStrategy(keyspaceName, tmd);
             List<InetAddress> hosts = new ArrayList<InetAddress>();
             for (int i = 0; i < endpointTokens.length; i++)
@@ -120,7 +123,7 @@ public class SimpleStrategyTest
     {
         // the token difference will be RING_SIZE * 2.
         final int RING_SIZE = 10;
-        TokenMetadata tmd = new TokenMetadata();
+        TokenMetadata tmd = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
         TokenMetadata oldTmd = StorageServiceAccessor.setTokenMetadata(tmd);
 
         Token[] endpointTokens = new Token[RING_SIZE];
@@ -146,11 +149,12 @@ public class SimpleStrategyTest
         tmd.addBootstrapToken(bsToken, bootstrapEndpoint);
 
         AbstractReplicationStrategy strategy = null;
+        PeerStatusService peerStatusService = new PeerStatusService(new Murmur3Partitioner(), false);
         for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
         {
             strategy = getStrategy(keyspaceName, tmd);
 
-            PendingRangeCalculatorService.calculatePendingRanges(strategy, keyspaceName);
+            peerStatusService.rangeCalculator.calculatePendingRanges(peerStatusService.tokenMetadata, strategy, keyspaceName);
 
             int replicationFactor = strategy.getReplicationFactor();
 

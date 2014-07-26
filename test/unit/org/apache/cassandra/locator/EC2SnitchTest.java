@@ -26,6 +26,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Map;
 
+import org.apache.cassandra.gms.NoOpGossipMessageSender;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -78,7 +79,7 @@ public class EC2SnitchTest
         InetAddress local = InetAddress.getByName("127.0.0.1");
         InetAddress nonlocal = InetAddress.getByName("127.0.0.7");
 
-        Gossiper gossiper = new Gossiper(false);
+        Gossiper gossiper = new Gossiper(local, new NoOpGossipMessageSender(), false);
         gossiper.addSavedEndpoint(nonlocal);
         Map<ApplicationState,VersionedValue> stateMap = gossiper.getEndpointStateForEndpoint(nonlocal).getApplicationStateMap();
         stateMap.put(ApplicationState.DC, StorageService.instance.valueFactory.datacenter("us-west"));

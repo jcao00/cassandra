@@ -18,6 +18,7 @@
 */
 package org.apache.cassandra.config;
 
+import org.apache.cassandra.service.StorageService;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -72,7 +73,7 @@ public class DatabaseDescriptorTest
         DatabaseDescriptor.loadSchemas();
         assertEquals(0, Schema.instance.getNonSystemKeyspaces().size());
 
-        Gossiper.instance.start((int)(System.currentTimeMillis() / 1000));
+        StorageService.instance.peerStatusService.gossiper.start((int)(System.currentTimeMillis() / 1000));
         Keyspace.setInitialized();
 
         try
@@ -97,7 +98,7 @@ public class DatabaseDescriptorTest
         }
         finally
         {
-            Gossiper.instance.stop();
+            StorageService.instance.peerStatusService.gossiper.stop();
         }
     }
 

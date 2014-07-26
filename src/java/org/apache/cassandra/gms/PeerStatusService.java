@@ -20,12 +20,12 @@ public class PeerStatusService
 
     public PeerStatusService(IPartitioner partitioner, boolean registerJmx)
     {
-        this(new Gossiper(registerJmx), partitioner, registerJmx);
+        this(FBUtilities.getBroadcastAddress(), partitioner, new StandardMessageSender(), registerJmx);
     }
 
-    protected PeerStatusService(Gossiper gossiper, IPartitioner partitioner, boolean registerJmx)
+    public PeerStatusService(InetAddress broadcastAddr, IPartitioner partitioner, GossipDigestMessageSender messageSender, boolean registerJmx)
     {
-        this.gossiper = gossiper;
+        gossiper = new Gossiper(broadcastAddr, messageSender, registerJmx);
         versionedValueFactory = new VersionedValue.VersionedValueFactory(partitioner, gossiper.versionGenerator);
         fd = gossiper.fd;
         tokenMetadata = new TokenMetadata(fd);

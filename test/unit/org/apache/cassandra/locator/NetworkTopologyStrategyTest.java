@@ -29,6 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.cassandra.gms.FailureDetector;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.NoOpGossipMessageSender;
 import org.junit.Assert;
 
 import org.junit.Test;
@@ -53,7 +56,7 @@ public class NetworkTopologyStrategyTest
     {
         IEndpointSnitch snitch = new PropertyFileSnitch();
         DatabaseDescriptor.setEndpointSnitch(snitch);
-        TokenMetadata metadata = new TokenMetadata();
+        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
         createDummyTokens(metadata, true);
 
         Map<String, String> configOptions = new HashMap<String, String>();
@@ -77,7 +80,7 @@ public class NetworkTopologyStrategyTest
     {
         IEndpointSnitch snitch = new PropertyFileSnitch();
         DatabaseDescriptor.setEndpointSnitch(snitch);
-        TokenMetadata metadata = new TokenMetadata();
+        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
         createDummyTokens(metadata, false);
 
         Map<String, String> configOptions = new HashMap<String, String>();
@@ -105,7 +108,7 @@ public class NetworkTopologyStrategyTest
 
         IEndpointSnitch snitch = new RackInferringSnitch();
         DatabaseDescriptor.setEndpointSnitch(snitch);
-        TokenMetadata metadata = new TokenMetadata();
+        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
         Map<String, String> configOptions = new HashMap<String, String>();
         Multimap<InetAddress, Token> tokens = HashMultimap.create();
 

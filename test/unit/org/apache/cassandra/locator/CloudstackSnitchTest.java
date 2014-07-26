@@ -22,6 +22,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Map;
 
+import org.apache.cassandra.gms.NoOpGossipMessageSender;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -80,8 +81,9 @@ public class CloudstackSnitchTest
         InetAddress local = InetAddress.getByName("127.0.0.1");
         InetAddress nonlocal = InetAddress.getByName("127.0.0.7");
 
-        Gossiper.instance.addSavedEndpoint(nonlocal);
-        Map<ApplicationState,VersionedValue> stateMap = Gossiper.instance.getEndpointStateForEndpoint(nonlocal).getApplicationStateMap();
+        Gossiper gossiper = new Gossiper(local, new NoOpGossipMessageSender(), false);
+        gossiper.addSavedEndpoint(nonlocal);
+        Map<ApplicationState,VersionedValue> stateMap = gossiper.getEndpointStateForEndpoint(nonlocal).getApplicationStateMap();
         stateMap.put(ApplicationState.DC, StorageService.instance.valueFactory.datacenter("ch-zrh"));
         stateMap.put(ApplicationState.RACK, StorageService.instance.valueFactory.rack("2"));
 

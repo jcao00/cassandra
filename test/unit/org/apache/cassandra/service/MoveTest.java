@@ -77,7 +77,7 @@ public class MoveTest
     @Before
     public void clearTokenMetadata()
     {
-        PendingRangeCalculatorService.instance.blockUntilFinished();
+        StorageService.instance.peerStatusService.rangeCalculator.blockUntilFinished();
         StorageService.instance.getTokenMetadata().clearUnsafe();
     }
 
@@ -93,7 +93,7 @@ public class MoveTest
         final int MOVING_NODE = 3; // index of the moving node
 
         TokenMetadata tmd = ss.getTokenMetadata();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = StorageService.instance.peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -119,7 +119,7 @@ public class MoveTest
 
         // Third node leaves
         ss.onChange(hosts.get(MOVING_NODE), ApplicationState.STATUS, valueFactory.moving(newToken));
-        PendingRangeCalculatorService.instance.blockUntilFinished();
+        StorageService.instance.peerStatusService.rangeCalculator.blockUntilFinished();
 
         assertTrue(tmd.isMoving(hosts.get(MOVING_NODE)));
 
@@ -165,7 +165,7 @@ public class MoveTest
         final int RING_SIZE = 10;
         TokenMetadata tmd = ss.getTokenMetadata();
         IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = StorageService.instance.peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -196,20 +196,20 @@ public class MoveTest
 
         // boot two new nodes with keyTokens.get(5) and keyTokens.get(7)
         InetAddress boot1 = InetAddress.getByName("127.0.1.1");
-        Gossiper.instance.initializeNodeUnsafe(boot1, UUID.randomUUID(), 1);
-        Gossiper.instance.injectApplicationState(boot1, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(5))));
+        StorageService.instance.peerStatusService.gossiper.initializeNodeUnsafe(boot1, UUID.randomUUID(), 1);
+        StorageService.instance.peerStatusService.gossiper.injectApplicationState(boot1, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(5))));
         ss.onChange(boot1,
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(5))));
-        PendingRangeCalculatorService.instance.blockUntilFinished();
+        StorageService.instance.peerStatusService.rangeCalculator.blockUntilFinished();
 
         InetAddress boot2 = InetAddress.getByName("127.0.1.2");
-        Gossiper.instance.initializeNodeUnsafe(boot2, UUID.randomUUID(), 1);
-        Gossiper.instance.injectApplicationState(boot2, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(7))));
+        StorageService.instance.peerStatusService.gossiper.initializeNodeUnsafe(boot2, UUID.randomUUID(), 1);
+        StorageService.instance.peerStatusService.gossiper.injectApplicationState(boot2, ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(keyTokens.get(7))));
         ss.onChange(boot2,
                     ApplicationState.STATUS,
                     valueFactory.bootstrapping(Collections.<Token>singleton(keyTokens.get(7))));
-        PendingRangeCalculatorService.instance.blockUntilFinished();
+        StorageService.instance.peerStatusService.rangeCalculator.blockUntilFinished();
 
         // don't require test update every time a new keyspace is added to test/conf/cassandra.yaml
         Map<String, AbstractReplicationStrategy> keyspaceStrategyMap = new HashMap<String, AbstractReplicationStrategy>();
@@ -507,7 +507,7 @@ public class MoveTest
         StorageService ss = StorageService.instance;
         TokenMetadata tmd = ss.getTokenMetadata();
         IPartitioner partitioner = new RandomPartitioner();
-        VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        VersionedValue.VersionedValueFactory valueFactory = StorageService.instance.peerStatusService.versionedValueFactory;
 
         ArrayList<Token> endpointTokens = new ArrayList<Token>();
         ArrayList<Token> keyTokens = new ArrayList<Token>();
@@ -525,7 +525,7 @@ public class MoveTest
         assertEquals(endpointTokens.get(2), tmd.getToken(hosts.get(2)));
 
         // back to normal
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(newToken)));
+        StorageService.instance.peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(newToken)));
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.normal(Collections.singleton(newToken)));
 
         assertTrue(tmd.getMovingEndpoints().isEmpty());
@@ -534,7 +534,7 @@ public class MoveTest
         newToken = positionToken(8);
         // node 2 goes through leave and left and then jumps to normal at its new token
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.moving(newToken));
-        Gossiper.instance.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(newToken)));
+        StorageService.instance.peerStatusService.gossiper.injectApplicationState(hosts.get(2), ApplicationState.TOKENS, valueFactory.tokens(Collections.singleton(newToken)));
         ss.onChange(hosts.get(2), ApplicationState.STATUS, valueFactory.normal(Collections.singleton(newToken)));
 
         assertTrue(tmd.getBootstrapTokens().isEmpty());

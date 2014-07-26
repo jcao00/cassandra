@@ -21,6 +21,7 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import org.apache.cassandra.service.StorageService;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.slf4j.Logger;
@@ -79,8 +80,8 @@ public class SchemaLoader
 
     public static void startGossiper()
     {
-        if (!Gossiper.instance.isEnabled())
-            Gossiper.instance.start((int) (System.currentTimeMillis() / 1000));
+        if (!StorageService.instance.peerStatusService.gossiper.isEnabled())
+            StorageService.instance.peerStatusService.gossiper.start((int) (System.currentTimeMillis() / 1000));
     }
 
     public static void schemaDefinition(String testName) throws ConfigurationException

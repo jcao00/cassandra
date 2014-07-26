@@ -75,7 +75,7 @@ public class RelocateTest
     {
         oldPartitioner = StorageService.instance.setPartitionerUnsafe(partitioner);
         SchemaLoader.loadSchema();
-        vvFactory = new VersionedValue.VersionedValueFactory(partitioner);
+        vvFactory = StorageService.instance.peerStatusService.versionedValueFactory;
     }
 
     @AfterClass
@@ -93,7 +93,7 @@ public class RelocateTest
         for(int i = 0; i < size; i++)
         {
             InetAddress endpoint = InetAddress.getByName("127.0.0." + String.valueOf(i + 1));
-            Gossiper.instance.initializeNodeUnsafe(endpoint, UUID.randomUUID(), 1);
+            StorageService.instance.peerStatusService.gossiper.initializeNodeUnsafe(endpoint, UUID.randomUUID(), 1);
             List<Token> tokens = new ArrayList<Token>();
 
             for (int j = 0; j < TOKENS_PER_NODE; j++)
@@ -104,7 +104,7 @@ public class RelocateTest
                 currentToken += TOKEN_STEP;
             }
 
-            Gossiper.instance.injectApplicationState(endpoint, ApplicationState.TOKENS, vvFactory.tokens(tokens));
+            StorageService.instance.peerStatusService.gossiper.injectApplicationState(endpoint, ApplicationState.TOKENS, vvFactory.tokens(tokens));
             StorageService.instance.onChange(endpoint, ApplicationState.STATUS, vvFactory.normal(tokens));
         }
 
@@ -192,7 +192,7 @@ public class RelocateTest
         tokens.add(relocatee);
 
         // Send a normal status, then ensure all is copesetic.
-        Gossiper.instance.injectApplicationState(relocator, ApplicationState.TOKENS, vvFactory.tokens(tokens));
+        StorageService.instance.peerStatusService.gossiper.injectApplicationState(relocator, ApplicationState.TOKENS, vvFactory.tokens(tokens));
         ss.onChange(relocator, ApplicationState.STATUS, vvFactory.normal(tokens));
 
         // Relocating entries are removed after RING_DELAY

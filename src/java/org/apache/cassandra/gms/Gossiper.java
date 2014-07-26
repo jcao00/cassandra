@@ -65,7 +65,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 {
     private static final String MBEAN_NAME = "org.apache.cassandra.net:type=Gossiper";
 
-    private static final DebuggableScheduledThreadPoolExecutor executor = new DebuggableScheduledThreadPoolExecutor("GossipTasks");
+    private final DebuggableScheduledThreadPoolExecutor executor;
 
     static final ApplicationState[] STATES = ApplicationState.values();
     static final List<String> DEAD_STATES = Arrays.asList(VersionedValue.REMOVING_TOKEN, VersionedValue.REMOVED_TOKEN,
@@ -114,8 +114,10 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     private volatile long lastProcessedMessageAt = System.currentTimeMillis();
 
-    public static final VersionGenerator versionGenerator = new VersionGenerator();
+    public final VersionGenerator versionGenerator = new VersionGenerator();
     protected final FailureDetector fd;
+    protected final GossipDigestMessageSender messageSender;
+    private final InetAddress broadcastAddr;
 
     private class GossipTask implements Runnable
     {
@@ -132,11 +134,14 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
     }
 
-    public Gossiper(boolean registerJmx)
+    public Gossiper(InetAddress broadcastAddr, GossipDigestMessageSender messageSender, boolean registerJmx)
     {
+        this.broadcastAddr = broadcastAddr;
+        this.messageSender = messageSender;
         // half of QUARATINE_DELAY, to ensure justRemovedEndpoints has enough leeway to prevent re-gossip
         FatClientTimeout = (long) (QUARANTINE_DELAY / 2);
         fd = new FailureDetector(this, registerJmx);
+        executor = new DebuggableScheduledThreadPoolExecutor("GossipTasks_" + broadcastAddr.toString());
 
         if (registerJmx)
         {
@@ -166,7 +171,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         buildSeedsList();
         /* initialize the heartbeat state for this localEndpoint */
         maybeInitializeLocalState(generationNbr);
-        EndpointState localState = endpointStateMap.get(FBUtilities.getBroadcastAddress());
+        EndpointState localState = endpointStateMap.get(broadcastAddr);
         for (Map.Entry<ApplicationState, VersionedValue> entry : preloadLocalStates.entrySet())
             localState.addApplicationState(entry.getKey(), entry.getValue());
 
@@ -183,13 +188,12 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     protected void startNextRound()
     {
-        //wait on messaging service to start listening
-        MessagingService.instance().waitUntilListening();
+        messageSender.blockUntilReady();
 
-                /* Update the local heartbeat counter. */
-        endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().updateHeartBeat(versionGenerator.getNextVersion());
+        /* Update the local heartbeat counter. */
+        endpointStateMap.get(broadcastAddr).getHeartBeatState().updateHeartBeat(versionGenerator.getNextVersion());
         if (logger.isTraceEnabled())
-            logger.trace("My heartbeat is now {}", endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().getHeartBeatVersion());
+            logger.trace("My heartbeat is now {}", endpointStateMap.get(broadcastAddr).getHeartBeatState().getHeartBeatVersion());
         final List<GossipDigest> gDigests = new ArrayList<>();
         makeRandomGossipDigest(gDigests);
 
@@ -277,8 +281,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public Set<InetAddress> getLiveMembers()
     {
         Set<InetAddress> liveMembers = new HashSet<InetAddress>(liveEndpoints);
-        if (!liveMembers.contains(FBUtilities.getBroadcastAddress()))
-            liveMembers.add(FBUtilities.getBroadcastAddress());
+        if (!liveMembers.contains(broadcastAddr))
+            liveMembers.add(broadcastAddr);
         return liveMembers;
     }
 
@@ -590,7 +594,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         InetAddress to = liveEndpoints.get(index);
         if (logger.isTraceEnabled())
             logger.trace("Sending a GossipDigestSyn to {} ...", to);
-        MessagingService.instance().sendOneWay(message, to);
+        messageSender.sendOneWay(message, to, this);
         return seeds.contains(to);
     }
 
@@ -624,7 +628,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         int size = seeds.size();
         if (size > 0)
         {
-            if (size == 1 && seeds.contains(FBUtilities.getBroadcastAddress()))
+            if (size == 1 && seeds.contains(broadcastAddr))
             {
                 return;
             }
@@ -679,7 +683,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         Set<InetAddress> eps = endpointStateMap.keySet();
         for (InetAddress endpoint : eps)
         {
-            if (endpoint.equals(FBUtilities.getBroadcastAddress()))
+            if (endpoint.equals(broadcastAddr))
                 continue;
 
             fd.interpret(endpoint);
@@ -896,7 +900,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 realMarkAlive(addr, localState);
             }
         };
-        MessagingService.instance().sendRR(echoMessage, addr, echoHandler);
+        messageSender.sendRR(echoMessage, addr, echoHandler, this);
     }
 
     private void realMarkAlive(final InetAddress addr, final EndpointState localState)
@@ -985,7 +989,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         for (Entry<InetAddress, EndpointState> entry : epStateMap.entrySet())
         {
             InetAddress ep = entry.getKey();
-            if ( ep.equals(FBUtilities.getBroadcastAddress()) && !isInShadowRound())
+            if ( ep.equals(broadcastAddr) && !isInShadowRound())
                 continue;
             if (justRemovedEndpoints.containsKey(ep))
             {
@@ -1194,7 +1198,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 GossipDigestSyn.serializer);
         inShadowRound = true;
         for (InetAddress seed : seeds)
-            MessagingService.instance().sendOneWay(message, seed);
+            messageSender.sendOneWay(message, seed, this);
         int slept = 0;
         try
         {
@@ -1218,7 +1222,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     {
         for (InetAddress seed : DatabaseDescriptor.getSeeds())
         {
-            if (seed.equals(FBUtilities.getBroadcastAddress()))
+            if (seed.equals(broadcastAddr))
                 continue;
             seeds.add(seed);
         }
@@ -1230,7 +1234,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         HeartBeatState hbState = new HeartBeatState(generationNbr);
         EndpointState localState = new EndpointState(hbState);
         localState.markAlive();
-        endpointStateMap.putIfAbsent(FBUtilities.getBroadcastAddress(), localState);
+        endpointStateMap.putIfAbsent(broadcastAddr, localState);
     }
 
 
@@ -1239,7 +1243,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     public void addSavedEndpoint(InetAddress ep)
     {
-        if (ep.equals(FBUtilities.getBroadcastAddress()))
+        if (ep.equals(broadcastAddr))
         {
             logger.debug("Attempt to add self as saved endpoint");
             return;
@@ -1266,8 +1270,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     public void addLocalApplicationState(ApplicationState state, VersionedValue value)
     {
-        EndpointState epState = endpointStateMap.get(FBUtilities.getBroadcastAddress());
-        InetAddress epAddr = FBUtilities.getBroadcastAddress();
+        EndpointState epState = endpointStateMap.get(broadcastAddr);
+        InetAddress epAddr = broadcastAddr;
         assert epState != null;
         // Fire "before change" notifications:
         doBeforeChangeNotifications(epAddr, epState, state, value);
@@ -1288,7 +1292,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         Uninterruptibles.sleepUninterruptibly(intervalInMillis * 2, TimeUnit.MILLISECONDS);
         MessageOut message = new MessageOut(MessagingService.Verb.GOSSIP_SHUTDOWN);
         for (InetAddress ep : liveEndpoints)
-            MessagingService.instance().sendOneWay(message, ep);
+            messageSender.sendOneWay(message, ep, this);
     }
 
     //should only be necessary for testing

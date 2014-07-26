@@ -1,26 +1,41 @@
 package org.apache.cassandra.gms;
 
+import com.google.common.util.concurrent.Uninterruptibles;
+import org.apache.cassandra.net.IAsyncCallback;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class CustomMessagingService implements GossipDigestMessageSender
+public class GossipSimulatorDispatcher implements GossipDigestMessageSender
 {
+    private static final Logger logger = LoggerFactory.getLogger(GossipSimulatorDispatcher.class);
     public static final Map<String, byte[]> parameters = new HashMap<>();
 
     public final Map<InetAddress, Gossiper> gossipers = new ConcurrentHashMap<>();
     private final Random random;
     private final AtomicInteger idGen = new AtomicInteger(0);
 
-    public CustomMessagingService()
+    private CyclicBarrier barrier;
+
+    public GossipSimulatorDispatcher(CyclicBarrier barrier)
     {
+        this.barrier = barrier;
         random = new Random(System.nanoTime());
+    }
+
+    public void setBarrier(CyclicBarrier barrier)
+    {
+        this.barrier = barrier;
     }
 
     public void sendOneWay(MessageOut message, InetAddress to, Gossiper sender)
@@ -29,19 +44,20 @@ public class CustomMessagingService implements GossipDigestMessageSender
         if (target == null)
             throw new IllegalArgumentException("unknown peer addr: " + to);
         generateDelay(sender, target);
+        int id = idGen.incrementAndGet();
 
         switch (message.verb)
         {
             case GOSSIP_DIGEST_SYN:
-                MessageIn<GossipDigestSyn> synMsg = MessageIn.create(message.from, (GossipDigestSyn)message.payload, parameters, message.verb, 0);
+                MessageIn<GossipDigestSyn> synMsg = MessageIn.create(message.from, (GossipDigestSyn)message.payload, parameters, message.verb, id);
                 new GossipDigestSynVerbHandler(sender, this).doVerb(synMsg, idGen.incrementAndGet());
                 break;
             case GOSSIP_DIGEST_ACK:
-                MessageIn<GossipDigestAck> ackMsg = MessageIn.create(message.from, (GossipDigestAck)message.payload, parameters, message.verb, 0);
+                MessageIn<GossipDigestAck> ackMsg = MessageIn.create(message.from, (GossipDigestAck)message.payload, parameters, message.verb, id);
                 new GossipDigestAckVerbHandler(sender, this).doVerb(ackMsg, idGen.incrementAndGet());
                 break;
             case GOSSIP_DIGEST_ACK2:
-                MessageIn<GossipDigestAck2> msg = MessageIn.create(message.from, (GossipDigestAck2)message.payload, parameters, message.verb, 0);
+                MessageIn<GossipDigestAck2> msg = MessageIn.create(message.from, (GossipDigestAck2)message.payload, parameters, message.verb, id);
                 new GossipDigestAck2VerbHandler(sender).doVerb(msg, idGen.incrementAndGet());
                 break;
         }
@@ -57,17 +73,26 @@ public class CustomMessagingService implements GossipDigestMessageSender
         // TODO: if nodes in different DCs, add a few millis
         // TODO: if nodes in different racks, add a few hundreds of micros
 
+        Uninterruptibles.sleepUninterruptibly(delay, TimeUnit.MICROSECONDS);
+    }
+
+    public void sendRR(MessageOut message, InetAddress to, IAsyncCallback callback, Gossiper sender)
+    {
+        MessageIn<EchoMessage> response = MessageIn.create(message.from, (EchoMessage)message.payload, parameters, message.verb, idGen.incrementAndGet());
+        callback.response(response);
+    }
+
+    public void blockUntilReady()
+    {
         try
         {
-            Thread.sleep(delay);
+            barrier.await();
         }
-        catch (InterruptedException e)
+        catch (Exception e)
         {
             //nop
         }
-//        Uninterruptibles.sleepUninterruptibly(delay, TimeUnit.MICROSECONDS);
     }
-
 
     public void register(InetAddress addr, Gossiper gossiper)
     {

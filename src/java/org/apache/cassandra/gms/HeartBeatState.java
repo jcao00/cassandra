@@ -54,6 +54,11 @@ class HeartBeatState
         this.version = version;
     }
 
+    void updateHeartBeat()
+    {
+        version++;
+    }
+
     int getHeartBeatVersion()
     {
         return version;

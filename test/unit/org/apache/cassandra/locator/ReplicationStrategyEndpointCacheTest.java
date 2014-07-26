@@ -22,6 +22,9 @@ package org.apache.cassandra.locator;
 import java.net.InetAddress;
 import java.util.*;
 
+import org.apache.cassandra.gms.FailureDetector;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.NoOpGossipMessageSender;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -51,7 +54,7 @@ public class ReplicationStrategyEndpointCacheTest
 
     public void setup(Class stratClass, Map<String, String> strategyOptions) throws Exception
     {
-        tmd = new TokenMetadata();
+        tmd = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
         searchToken = new BigIntegerToken(String.valueOf(15));
 
         strategy = getStrategyWithNewTokenMetadata(Keyspace.open(KEYSPACE).getReplicationStrategy(), tmd);
