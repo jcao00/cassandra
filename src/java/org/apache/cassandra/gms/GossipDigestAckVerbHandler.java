@@ -51,7 +51,7 @@ public class GossipDigestAckVerbHandler implements IVerbHandler<GossipDigestAck>
     {
         InetAddress from = message.from;
         if (logger.isTraceEnabled())
-            logger.trace("Received a GossipDigestAckMessage from {}", from);
+            logger.trace("{} Received a GossipDigestAckMessage from {}", gossiper.broadcastAddr, from);
         if (!gossiper.isEnabled() && !gossiper.isInShadowRound())
         {
             if (logger.isTraceEnabled())
@@ -89,11 +89,12 @@ public class GossipDigestAckVerbHandler implements IVerbHandler<GossipDigestAck>
                 deltaEpStateMap.put(addr, localEpStatePtr);
         }
 
-        MessageOut<GossipDigestAck2> gDigestAck2Message = new MessageOut<GossipDigestAck2>(MessagingService.Verb.GOSSIP_DIGEST_ACK2,
-                                                                                           new GossipDigestAck2(deltaEpStateMap),
-                                                                                           GossipDigestAck2.serializer);
+        MessageOut<GossipDigestAck2> gDigestAck2Message = new MessageOut<GossipDigestAck2>(gossiper.broadcastAddr,
+                                                                            MessagingService.Verb.GOSSIP_DIGEST_ACK2,
+                                                                            new GossipDigestAck2(deltaEpStateMap),
+                                                                            GossipDigestAck2.serializer);
         if (logger.isTraceEnabled())
-            logger.trace("Sending a GossipDigestAck2Message to {}", from);
+            logger.trace("{}|{} Sending a GossipDigestAck2Message to {}", gossiper.broadcastAddr, gDigestAck2Message.from, from);
         messageSender.sendOneWay(gDigestAck2Message, from, gossiper);
     }
 }

@@ -45,20 +45,21 @@ public class GossipSimulatorDispatcher implements GossipDigestMessageSender
             throw new IllegalArgumentException("unknown peer addr: " + to);
         generateDelay(sender, target);
         int id = idGen.incrementAndGet();
+        logger.info("sending {} from {} to {}", message.verb, message.from, to);
 
         switch (message.verb)
         {
             case GOSSIP_DIGEST_SYN:
                 MessageIn<GossipDigestSyn> synMsg = MessageIn.create(message.from, (GossipDigestSyn)message.payload, parameters, message.verb, id);
-                new GossipDigestSynVerbHandler(sender, this).doVerb(synMsg, idGen.incrementAndGet());
+                new GossipDigestSynVerbHandler(target, this).doVerb(synMsg, idGen.incrementAndGet());
                 break;
             case GOSSIP_DIGEST_ACK:
                 MessageIn<GossipDigestAck> ackMsg = MessageIn.create(message.from, (GossipDigestAck)message.payload, parameters, message.verb, id);
-                new GossipDigestAckVerbHandler(sender, this).doVerb(ackMsg, idGen.incrementAndGet());
+                new GossipDigestAckVerbHandler(target, this).doVerb(ackMsg, idGen.incrementAndGet());
                 break;
             case GOSSIP_DIGEST_ACK2:
                 MessageIn<GossipDigestAck2> msg = MessageIn.create(message.from, (GossipDigestAck2)message.payload, parameters, message.verb, id);
-                new GossipDigestAck2VerbHandler(sender).doVerb(msg, idGen.incrementAndGet());
+                new GossipDigestAck2VerbHandler(target).doVerb(msg, idGen.incrementAndGet());
                 break;
         }
     }
@@ -78,7 +79,7 @@ public class GossipSimulatorDispatcher implements GossipDigestMessageSender
 
     public void sendRR(MessageOut message, InetAddress to, IAsyncCallback callback, Gossiper sender)
     {
-        MessageIn<EchoMessage> response = MessageIn.create(message.from, (EchoMessage)message.payload, parameters, message.verb, idGen.incrementAndGet());
+        MessageIn<EchoMessage> response = MessageIn.create(to, (EchoMessage)message.payload, parameters, message.verb, idGen.incrementAndGet());
         callback.response(response);
     }
 

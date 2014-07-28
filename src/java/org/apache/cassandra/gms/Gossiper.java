@@ -117,7 +117,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public final VersionGenerator versionGenerator = new VersionGenerator();
     protected final FailureDetector fd;
     protected final GossipDigestMessageSender messageSender;
-    private final InetAddress broadcastAddr;
+    protected final InetAddress broadcastAddr;
 
     private class GossipTask implements Runnable
     {
@@ -886,7 +886,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
         localState.markDead();
 
-        MessageOut<EchoMessage> echoMessage = new MessageOut<EchoMessage>(MessagingService.Verb.ECHO, new EchoMessage(), EchoMessage.serializer);
+        MessageOut<EchoMessage> echoMessage = new MessageOut<EchoMessage>(broadcastAddr, MessagingService.Verb.ECHO, new EchoMessage(), EchoMessage.serializer);
         logger.trace("Sending a EchoMessage to {}", addr);
         IAsyncCallback echoHandler = new IAsyncCallback()
         {

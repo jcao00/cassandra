@@ -27,7 +27,7 @@ public class Simulator
         System.setProperty("cassandra.config", "file://" + path + "cassandra.yaml");
 
         Simulator simulator = new Simulator();
-        simulator.runSimulation(1, 3, 10);
+        simulator.runSimulation(1, 2, 10);
 //        simulator.runSimulation(3, 25, 10);
 //        simulator.runSimulation(3, 50, 10);
 //        simulator.runSimulation(3, 100, 10);
@@ -94,7 +94,6 @@ public class Simulator
 
         try
         {
-            logger.info("main() about to block");
             latch.await(10, TimeUnit.MINUTES);
         }
         catch (InterruptedException e)
