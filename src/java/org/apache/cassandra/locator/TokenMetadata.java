@@ -53,7 +53,7 @@ public class TokenMetadata
 
     /** Maintains endpoint to host ID map of every node in the cluster */
     private final BiMap<InetAddress, UUID> endpointToHostIdMap;
-    private final FailureDetector failureDetector;
+//    private final FailureDetector failureDetector;
 
     // Prior to CASSANDRA-603, we just had <tt>Map<Range, InetAddress> pendingRanges<tt>,
     // which was added to when a node began bootstrap and removed from when it finished.
@@ -108,6 +108,14 @@ public class TokenMetadata
     // signals replication strategies that nodes have joined or left the ring and they need to recompute ownership
     private volatile long ringVersion = 0;
 
+    public TokenMetadata()
+    {
+        this(SortedBiMultiValMap.<Token, InetAddress>create(null, inetaddressCmp),
+                HashBiMap.<InetAddress, UUID>create(),
+                new Topology(),
+                null);
+    }
+
     public TokenMetadata(FailureDetector failureDetector)
     {
         this(SortedBiMultiValMap.<Token, InetAddress>create(null, inetaddressCmp),
@@ -121,7 +129,7 @@ public class TokenMetadata
         this.tokenToEndpointMap = tokenToEndpointMap;
         this.topology = topology;
         endpointToHostIdMap = endpointsMap;
-        this.failureDetector = failureDetector;
+//        this.failureDetector = failureDetector;
         sortedTokens = sortTokens();
     }
 
@@ -234,7 +242,7 @@ public class TokenMetadata
             InetAddress storedEp = endpointToHostIdMap.inverse().get(hostId);
             if (storedEp != null)
             {
-                if (!storedEp.equals(endpoint) && (failureDetector.isAlive(storedEp)))
+                if (!storedEp.equals(endpoint) /*&& (failureDetector.isAlive(storedEp))*/)
                 {
                     throw new RuntimeException(String.format("Host ID collision between active endpoint %s and %s (id=%s)",
                                                              storedEp,

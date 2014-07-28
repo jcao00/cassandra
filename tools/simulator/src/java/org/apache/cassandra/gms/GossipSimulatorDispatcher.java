@@ -11,6 +11,7 @@ import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -45,7 +46,7 @@ public class GossipSimulatorDispatcher implements GossipDigestMessageSender
             throw new IllegalArgumentException("unknown peer addr: " + to);
         generateDelay(sender, target);
         int id = idGen.incrementAndGet();
-        logger.info("sending {} from {} to {}", message.verb, message.from, to);
+        logger.trace("sending {} from {} to {}", message.verb, message.from, to);
 
         switch (message.verb)
         {
@@ -83,16 +84,17 @@ public class GossipSimulatorDispatcher implements GossipDigestMessageSender
         callback.response(response);
     }
 
-    public void blockUntilReady()
+    public boolean blockUntilReady()
     {
         try
         {
             barrier.await();
         }
-        catch (Exception e)
+        catch (BrokenBarrierException | InterruptedException e)
         {
-            //nop
+            return false;
         }
+        return true;
     }
 
     public void register(InetAddress addr, Gossiper gossiper)

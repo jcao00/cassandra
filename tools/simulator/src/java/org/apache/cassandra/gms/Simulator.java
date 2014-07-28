@@ -27,14 +27,14 @@ public class Simulator
         System.setProperty("cassandra.config", "file://" + path + "cassandra.yaml");
 
         Simulator simulator = new Simulator();
-        simulator.runSimulation(1, 2, 10);
-//        simulator.runSimulation(3, 25, 10);
-//        simulator.runSimulation(3, 50, 10);
-//        simulator.runSimulation(3, 100, 10);
-//        simulator.runSimulation(6, 200, 10);
-//        simulator.runSimulation(6, 400, 10);
-//        simulator.runSimulation(12, 800, 10);
-//        simulator.runSimulation(20, 1200, 10);
+        simulator.runSimulation(1, 3, 10);
+        simulator.runSimulation(3, 25, 10);
+        simulator.runSimulation(3, 50, 10);
+        simulator.runSimulation(3, 100, 10);
+        simulator.runSimulation(6, 200, 10);
+        simulator.runSimulation(6, 400, 10);
+        simulator.runSimulation(12, 800, 10);
+        simulator.runSimulation(20, 1200, 10);
 
         System.exit(0);
     }
@@ -45,7 +45,7 @@ public class Simulator
 
         for (int i = 0; i < simulationRounds; i ++)
         {
-            logger.warn("####### Running simulation {} ######", i);
+            logger.warn("####### Running simulation round {} ######", i);
             runSimulation(seedCnt, nodeCnt);
         }
     }
@@ -54,7 +54,9 @@ public class Simulator
     {
         assert seedCnt < nodeCnt;
         CountDownLatch latch = new CountDownLatch(1);
-        CyclicBarrier barrier = new CyclicBarrier(nodeCnt, new BarrierAction(latch));
+        BarrierAction action = new BarrierAction(latch);
+        CyclicBarrier barrier = new CyclicBarrier(nodeCnt, action);
+        action.barrier = barrier;
         customMessagingService = new GossipSimulatorDispatcher(barrier);
 
         List<InetAddress> seeds = new ArrayList<>(seedCnt);
@@ -64,13 +66,14 @@ public class Simulator
         }
 
         SimulatorSeedProvider.setSeeds(seeds);
+        logger.info("****** seeds = {}", seeds);
 
         for (int i = 0; i < nodeCnt; i++)
         {
             InetAddress addr = getInetAddr(i);
             IPartitioner partitioner = new Murmur3Partitioner();
-            Gossiper gossiper = new Gossiper(addr, customMessagingService, false);
-            PeerStatusService peerStatusService = new PeerStatusService(partitioner, false);
+            PeerStatusService peerStatusService = new PeerStatusService(addr, partitioner, customMessagingService, false);
+            Gossiper gossiper = peerStatusService.gossiper;
             customMessagingService.register(addr, gossiper);
 
             Map<ApplicationState, VersionedValue> appStates = new HashMap<>();
@@ -94,7 +97,7 @@ public class Simulator
 
         try
         {
-            latch.await(10, TimeUnit.MINUTES);
+            latch.await(2, TimeUnit.MINUTES);
         }
         catch (InterruptedException e)
         {
@@ -128,13 +131,16 @@ public class Simulator
 
     class BarrierAction implements Runnable
     {
+        private final CountDownLatch latch;
+        CyclicBarrier barrier;
         int counter = 0;
         int lastConvergenceRound = 0;
-        private final CountDownLatch latch;
+        private long convergenceTs;
 
         public BarrierAction(CountDownLatch latch)
         {
             this.latch = latch;
+            convergenceTs = -1;
         }
 
         public void run()
@@ -142,30 +148,39 @@ public class Simulator
             int curRound = counter++;
             if (curRound == 0)
             {
-                logger.debug("**************** Starting simulator - {}  **************************", hashCode());
+                logger.debug("**************** Starting simulator **************************");
                 return;
             }
 
-            logger.debug("**************** ROUND {}  **************************", curRound);
+            logger.debug("**************** ROUND {} **************************", curRound);
             long start = System.currentTimeMillis();
             boolean convergedByInspection = hasConvergedByInspection();
-
             long elapseCompTime = System.currentTimeMillis() - start;
             if (100 < elapseCompTime)
-                logger.debug("****** elapsed comparison time (ms) = {}", elapseCompTime);
+                logger.debug("****** elapsed comparison time = {} ms", elapseCompTime);
             logger.debug("****** have we converged? " + convergedByInspection);
 
             if (convergedByInspection)
             {
-                if (curRound - 1 > lastConvergenceRound)
+                if (-1 == convergenceTs)
+                {
                     logger.warn("****** converged after {} rounds", (counter - lastConvergenceRound));
+                    convergenceTs = System.currentTimeMillis();
+                    lastConvergenceRound = curRound;
+                }
 
-                lastConvergenceRound = curRound;
-
-                latch.countDown();
+                // cycle for a few extra rounds to make sure everything did converge (and didn't start dropping out)
+                if(System.currentTimeMillis() - (60 * 1000) > convergenceTs)
+                {
+                    barrier.reset();
+                    latch.countDown();
+                }
             }
             else
+            {
                 logger.debug("****** rounds since convergence = {} ", (curRound - lastConvergenceRound));
+                convergenceTs = -1;
+            }
 
             // TODO: execute new behaviors: add/remove node (and replace barrier in simulators) and other actions
             // bounce nodes
@@ -179,7 +194,8 @@ public class Simulator
                 InetAddress localAddr = entry.getKey();
                 Gossiper gossiper = entry.getValue();
 
-                Collection<InetAddress> peerAddrs = new ArrayList<>(gossipers.keySet());
+                Collection<InetAddress> peerAddrs = new ArrayList<>();
+                peerAddrs.addAll(gossipers.keySet());
 
                 for (Map.Entry<InetAddress, EndpointState> peer : gossiper.endpointStateMap.entrySet())
                 {
@@ -192,6 +208,10 @@ public class Simulator
 
                     // simulator knows about peer, now let's compare states
                     EndpointState localEndpointState = peer.getValue();
+                    if (!localEndpointState.isAlive())
+                    {
+                        logger.debug("hasConvergedByInspection: node {} has marked peer {} as 'dead' (not alive)", localAddr, peerAddr);
+                    }
                     EndpointState peerEndpointState = gossipers.get(peerAddr).getEndpointStateForEndpoint(peerAddr);
 
                     // first compare the heartbeats
@@ -205,7 +225,8 @@ public class Simulator
                     }
 
                     // next, compare the app states
-                    Collection<ApplicationState> peerAppStates = new ArrayList<>(peerEndpointState.applicationState.keySet());
+                    Collection<ApplicationState> peerAppStates = new ArrayList<>();
+                    peerAppStates.addAll(peerEndpointState.applicationState.keySet());
                     for (Map.Entry<ApplicationState, VersionedValue> localAppStateEntry : localEndpointState.applicationState.entrySet())
                     {
                         ApplicationState appState = localAppStateEntry.getKey();
@@ -230,10 +251,10 @@ public class Simulator
 
                 if (!peerAddrs.isEmpty())
                 {
-                    if (peerAddrs.size() < 8)
-                        logger.debug("hasConvergedByInspection: unknown nodes: current node {} doesn't know about the following nodes: {}", localAddr, peerAddrs);
+                    if (peerAddrs.size() == gossipers.size() - 1)
+                        logger.debug("hasConvergedByInspection: unknown nodes: current node {} only knows about itself", localAddr);
                     else
-                        logger.debug("hasConvergedByInspection: unknown nodes: current node {} doesn't know about {} nodes (out of {} total)", new Object[]{localAddr, peerAddrs.size(), gossipers.size()});
+                        logger.debug("hasConvergedByInspection: unknown nodes: current node {} doesn't know about {}/{} nodes", new Object[]{localAddr, peerAddrs.size(), gossipers.size()});
                     return false;
                 }
             }

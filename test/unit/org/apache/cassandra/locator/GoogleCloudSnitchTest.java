@@ -79,7 +79,7 @@ public class GoogleCloudSnitchTest
         InetAddress local = InetAddress.getByName("127.0.0.1");
         InetAddress nonlocal = InetAddress.getByName("127.0.0.7");
 
-        Gossiper gossiper = new Gossiper(local, new NoOpGossipMessageSender(), false);
+        Gossiper gossiper = new Gossiper(local, new TokenMetadata(), new NoOpGossipMessageSender(), false);
         gossiper.addSavedEndpoint(nonlocal);
         Map<ApplicationState,VersionedValue> stateMap = gossiper.getEndpointStateForEndpoint(nonlocal).getApplicationStateMap();
         stateMap.put(ApplicationState.DC, StorageService.instance.valueFactory.datacenter("europe-west1"));

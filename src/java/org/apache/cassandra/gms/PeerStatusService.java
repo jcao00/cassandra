@@ -25,10 +25,10 @@ public class PeerStatusService
 
     public PeerStatusService(InetAddress broadcastAddr, IPartitioner partitioner, GossipDigestMessageSender messageSender, boolean registerJmx)
     {
-        gossiper = new Gossiper(broadcastAddr, messageSender, registerJmx);
-        versionedValueFactory = new VersionedValue.VersionedValueFactory(partitioner, gossiper.versionGenerator);
+        tokenMetadata = new TokenMetadata();
+        gossiper = new Gossiper(broadcastAddr, tokenMetadata, messageSender, registerJmx);
         fd = gossiper.fd;
-        tokenMetadata = new TokenMetadata(fd);
+        versionedValueFactory = gossiper.versionedValueFactory;
         rangeCalculator = new PendingRangeCalculatorService(registerJmx);
 
         gossipChangeListener = new GossipChangeListener(tokenMetadata, rangeCalculator, gossiper, partitioner);
@@ -48,13 +48,13 @@ public class PeerStatusService
     public void startLeaving()
     {
         gossiper.addLocalApplicationState(ApplicationState.STATUS, versionedValueFactory.leaving(StorageService.instance.getLocalTokens()));
-        tokenMetadata.addLeavingEndpoint(FBUtilities.getBroadcastAddress());
+        tokenMetadata.addLeavingEndpoint(gossiper.broadcastAddr);
         rangeCalculator.update(tokenMetadata);
     }
 
     public void leaveRing()
     {
-        tokenMetadata.removeEndpoint(FBUtilities.getBroadcastAddress());
+        tokenMetadata.removeEndpoint(gossiper.broadcastAddr);
         rangeCalculator.update(tokenMetadata);
         gossiper.addLocalApplicationState(ApplicationState.STATUS, versionedValueFactory.left(StorageService.instance.getLocalTokens(), Gossiper.computeExpireTime()));
     }

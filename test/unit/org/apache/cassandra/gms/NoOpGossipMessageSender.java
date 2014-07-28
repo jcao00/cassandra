@@ -15,6 +15,8 @@ public class NoOpGossipMessageSender implements GossipDigestMessageSender
     public void sendRR(MessageOut message, InetAddress to, IAsyncCallback callback, Gossiper sender)
     {    }
 
-    public void blockUntilReady()
-    {    }
+    public boolean blockUntilReady()
+    {
+        return true;
+    }
 }

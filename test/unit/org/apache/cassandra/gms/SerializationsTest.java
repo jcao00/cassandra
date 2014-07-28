@@ -112,13 +112,14 @@ public class SerializationsTest extends AbstractSerializationsTester
     {
         private static HeartBeatState HeartbeatSt = new HeartBeatState(101, 201);
         private static EndpointState EndpointSt = new EndpointState(HeartbeatSt);
-        private static VersionedValue.VersionedValueFactory vvFact = new VersionedValue.VersionedValueFactory(StorageService.getPartitioner(), new VersionGenerator());
+        private static VersionGenerator versionGenerator = new VersionGenerator();
+        private static VersionedValue.VersionedValueFactory vvFact = new VersionedValue.VersionedValueFactory(StorageService.getPartitioner(), versionGenerator);
         private static VersionedValue vv0 = vvFact.load(23d);
         private static VersionedValue vv1 = vvFact.bootstrapping(Collections.<Token>singleton(StorageService.getPartitioner().getRandomToken()));
         private static List<GossipDigest> Digests = new ArrayList<GossipDigest>();
 
         {
-            HeartbeatSt.updateHeartBeat();
+            HeartbeatSt = new HeartBeatState(HeartbeatSt.getGeneration(), versionGenerator.getNextVersion());
             EndpointSt.addApplicationState(ApplicationState.LOAD, vv0);
             EndpointSt.addApplicationState(ApplicationState.STATUS, vv1);
             for (int i = 0; i < 100; i++)

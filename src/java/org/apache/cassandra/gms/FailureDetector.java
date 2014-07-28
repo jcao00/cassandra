@@ -236,11 +236,18 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
 
         if (PHI_FACTOR * phi > getPhiConvictThreshold())
         {
-            logger.trace("notifying listeners that {} is down", ep);
-            logger.trace("intervals: {} mean: {}", hbWnd, hbWnd.mean());
-            for (IFailureDetectionEventListener listener : fdEvntListeners)
+            if (hbWnd.cnt > 10)
             {
-                listener.convict(ep, phi);
+                logger.trace("notifying listeners that {} is down", ep);
+                logger.trace("intervals: {} mean: {}", hbWnd, hbWnd.mean());
+                for (IFailureDetectionEventListener listener : fdEvntListeners)
+                {
+                    listener.convict(ep, phi);
+                }
+            }
+            else
+            {
+                logger.warn("not enough data points ({}) to bother convicting {}", hbWnd.cnt, ep);
             }
         }
     }
@@ -295,6 +302,7 @@ class ArrivalWindow
 {
     private static final Logger logger = LoggerFactory.getLogger(ArrivalWindow.class);
     private long tLast = 0L;
+    protected int cnt;
     private final BoundedStatsDeque arrivalIntervals;
 
     // this is useless except to provide backwards compatibility in phi_convict_threshold,
@@ -331,6 +339,7 @@ class ArrivalWindow
     synchronized void add(long value)
     {
         assert tLast >= 0;
+        cnt++;
         if (tLast > 0L)
         {
             long interArrivalTime = (value - tLast);

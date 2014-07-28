@@ -56,7 +56,7 @@ public class NetworkTopologyStrategyTest
     {
         IEndpointSnitch snitch = new PropertyFileSnitch();
         DatabaseDescriptor.setEndpointSnitch(snitch);
-        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
+        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new TokenMetadata(), new NoOpGossipMessageSender(), false), false));
         createDummyTokens(metadata, true);
 
         Map<String, String> configOptions = new HashMap<String, String>();
@@ -80,7 +80,7 @@ public class NetworkTopologyStrategyTest
     {
         IEndpointSnitch snitch = new PropertyFileSnitch();
         DatabaseDescriptor.setEndpointSnitch(snitch);
-        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
+        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new TokenMetadata(), new NoOpGossipMessageSender(), false), false));
         createDummyTokens(metadata, false);
 
         Map<String, String> configOptions = new HashMap<String, String>();
@@ -108,7 +108,7 @@ public class NetworkTopologyStrategyTest
 
         IEndpointSnitch snitch = new RackInferringSnitch();
         DatabaseDescriptor.setEndpointSnitch(snitch);
-        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
+        TokenMetadata metadata = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new TokenMetadata(), new NoOpGossipMessageSender(), false), false));
         Map<String, String> configOptions = new HashMap<String, String>();
         Multimap<InetAddress, Token> tokens = HashMultimap.create();
 

@@ -39,7 +39,7 @@ public class EndpointState
 
     public final static IVersionedSerializer<EndpointState> serializer = new EndpointStateSerializer();
 
-    private volatile HeartBeatState hbState;
+    private final HeartBeatState hbState;
     final Map<ApplicationState, VersionedValue> applicationState = new NonBlockingHashMap<>();
 
     /* fields below do not get serialized */
@@ -53,16 +53,24 @@ public class EndpointState
         isAlive = true;
     }
 
+    EndpointState(HeartBeatState initialHbState, Map<ApplicationState, VersionedValue> appState)
+    {
+        hbState = initialHbState;
+        updateTimestamp = System.nanoTime();
+        isAlive = true;
+        applicationState.putAll(appState);
+    }
+
     HeartBeatState getHeartBeatState()
     {
         return hbState;
     }
 
-    void setHeartBeatState(HeartBeatState newHbState)
-    {
-        updateTimestamp();
-        hbState = newHbState;
-    }
+//    void setHeartBeatState(HeartBeatState newHbState)
+//    {
+//        updateTimestamp();
+//        hbState = newHbState;
+//    }
 
     public VersionedValue getApplicationState(ApplicationState key)
     {

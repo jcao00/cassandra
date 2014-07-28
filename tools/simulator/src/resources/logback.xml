@@ -9,7 +9,7 @@
         </rollingPolicy>
 
         <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
-            <maxFileSize>20MB</maxFileSize>
+            <maxFileSize>200MB</maxFileSize>
         </triggeringPolicy>
         <encoder>
             <pattern>%-5level [%thread] %date{ISO8601} %F:%L - %msg%n</pattern>
@@ -19,11 +19,11 @@
         </encoder>
     </appender>
 
-    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <!--appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%-5level [%thread] %date{ISO8601} %F:%L - %msg%n</pattern>
         </encoder>
-    </appender>
+    </appender-->
 
     <root level="INFO">
         <appender-ref ref="FILE" />
@@ -31,6 +31,8 @@
     </root>
 
     <logger name="com.thinkaurelius.thrift" level="ERROR"/>
-    <logger name="org.apache.cassandra.gms" level="TRACE"/>
+    <logger name="org.apache.cassandra.gms" level="WARN"/>
+    <!--logger name="org.apache.cassandra.gms.FailureDetector" level="TRACE"/-->
+    <!--logger name="org.apache.cassandra.gms.GossipDigestAckVerbHandler" level="TRACE"/-->
     <logger name="org.apache.cassandra.gms.Simulator" level="DEBUG"/>
 </configuration>

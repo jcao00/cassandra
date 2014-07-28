@@ -26,10 +26,10 @@ public class SimulatorSeedProvider implements SeedProvider
     }
 
     //hate this, but don't want to fuck w/ DD right now....
-    public static void setSeeds(List<InetAddress> seeds)
+    public static void setSeeds(List<InetAddress> newSeeds)
     {
         seeds.clear();
-        seeds.addAll(seeds);
+        seeds.addAll(newSeeds);
     }
 
     public List<InetAddress> getSeeds()

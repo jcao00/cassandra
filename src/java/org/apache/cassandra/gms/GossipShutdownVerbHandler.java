@@ -20,23 +20,24 @@ package org.apache.cassandra.gms;
 import org.apache.cassandra.net.IVerbHandler;
 import org.apache.cassandra.net.MessageIn;
 
-import org.apache.cassandra.service.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class GossipShutdownVerbHandler implements IVerbHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(GossipShutdownVerbHandler.class);
+    private final Gossiper gossiper;
     private final FailureDetector failureDetector;
 
-    public GossipShutdownVerbHandler(FailureDetector failureDetector)
+    public GossipShutdownVerbHandler(Gossiper gossiper, FailureDetector failureDetector)
     {
+        this.gossiper = gossiper;
         this.failureDetector = failureDetector;
     }
 
     public void doVerb(MessageIn message, int id)
     {
-        if (!StorageService.instance.peerStatusService.gossiper.isEnabled())
+        if (!gossiper.isEnabled())
         {
             logger.debug("Ignoring shutdown message from {} because gossip is disabled", message.from);
             return;

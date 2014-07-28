@@ -30,8 +30,8 @@ class HeartBeatState
 {
     public static final IVersionedSerializer<HeartBeatState> serializer = new HeartBeatStateSerializer();
 
-    private int generation;
-    private int version;
+    private final int generation;
+    private final int version;
 
     HeartBeatState(int gen)
     {
@@ -49,25 +49,25 @@ class HeartBeatState
         return generation;
     }
 
-    void updateHeartBeat(int version)
-    {
-        this.version = version;
-    }
-
-    void updateHeartBeat()
-    {
-        version++;
-    }
+//    void updateHeartBeat(int version)
+//    {
+//        this.version = version;
+//    }
+//
+//    void updateHeartBeat()
+//    {
+//        version++;
+//    }
 
     int getHeartBeatVersion()
     {
         return version;
     }
 
-    void forceNewerGenerationUnsafe()
-    {
-        generation += 1;
-    }
+//    void forceNewerGenerationUnsafe()
+//    {
+//        generation += 1;
+//    }
 
     public String toString()
     {

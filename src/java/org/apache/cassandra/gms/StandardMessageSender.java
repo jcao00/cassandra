@@ -18,8 +18,9 @@ public class StandardMessageSender implements GossipDigestMessageSender
         MessagingService.instance().sendRR(message, to, callback);
     }
 
-    public void blockUntilReady()
+    public boolean blockUntilReady()
     {
         MessagingService.instance().waitUntilListening();
+        return true;
     }
 }

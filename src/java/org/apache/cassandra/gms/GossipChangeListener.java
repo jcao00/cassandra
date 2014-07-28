@@ -2,12 +2,9 @@ package org.apache.cassandra.gms;
 
 import com.google.common.collect.Multimap;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.db.HintedHandOffManager;
-import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.TokenMetadata;
-import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
 import org.apache.cassandra.service.PendingRangeCalculatorService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
@@ -122,14 +119,14 @@ public class GossipChangeListener implements IEndpointStateChangeSubscriber
         rangeCalculator.update(tokenMetadata);
 
         if (gossiper.usesHostId(endpoint))
-            tokenMetadata.updateHostId(StorageService.instance.peerStatusService.gossiper.getHostId(endpoint), endpoint);
+            tokenMetadata.updateHostId(gossiper.getHostId(endpoint), endpoint);
     }
 
     private Collection<Token> getTokensFor(InetAddress endpoint)
     {
         try
         {
-            String vvalue = StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.TOKENS).value;
+            String vvalue = gossiper.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.TOKENS).value;
             byte[] bytes = vvalue.getBytes(ISO_8859_1);
             return TokenSerializer.deserialize(partitioner, new DataInputStream(new ByteArrayInputStream(bytes)));
         }
@@ -177,9 +174,9 @@ public class GossipChangeListener implements IEndpointStateChangeSubscriber
         // Order Matters, TM.updateHostID() should be called before TM.updateNormalToken(), (see CASSANDRA-4300).
         if (gossiper.usesHostId(endpoint))
         {
-            UUID hostId = StorageService.instance.peerStatusService.gossiper.getHostId(endpoint);
+            UUID hostId = gossiper.getHostId(endpoint);
             InetAddress existing = tokenMetadata.getEndpointForHostId(hostId);
-            if (DatabaseDescriptor.isReplacing() && StorageService.instance.peerStatusService.gossiper.getEndpointStateForEndpoint(DatabaseDescriptor.getReplaceAddress()) != null && (hostId.equals(StorageService.instance.peerStatusService.gossiper.getHostId(DatabaseDescriptor.getReplaceAddress()))))
+            if (DatabaseDescriptor.isReplacing() && gossiper.getEndpointStateForEndpoint(DatabaseDescriptor.getReplaceAddress()) != null && (hostId.equals(gossiper.getHostId(DatabaseDescriptor.getReplaceAddress()))))
                 logger.warn("Not updating token metadata for {} because I am replacing it", endpoint);
             else
             {

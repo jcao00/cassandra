@@ -11,5 +11,5 @@ public interface GossipDigestMessageSender
 
     void sendRR(MessageOut message, InetAddress to, IAsyncCallback callback, Gossiper sender);
 
-    void blockUntilReady();
+    boolean blockUntilReady();
 }

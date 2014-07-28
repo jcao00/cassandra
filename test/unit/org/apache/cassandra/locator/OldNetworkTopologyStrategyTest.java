@@ -53,7 +53,7 @@ public class OldNetworkTopologyStrategyTest
     public void init() throws UnknownHostException
     {
         keyTokens = new ArrayList<Token>();
-        tmd = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
+        tmd = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new TokenMetadata(), new NoOpGossipMessageSender(), false), false));
         expectedResults = new HashMap<String, ArrayList<InetAddress>>();
     }
 
@@ -329,7 +329,7 @@ public class OldNetworkTopologyStrategyTest
     private TokenMetadata initTokenMetadata(BigIntegerToken[] tokens)
             throws UnknownHostException
     {
-        TokenMetadata tokenMetadataCurrent = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
+        TokenMetadata tokenMetadataCurrent = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new TokenMetadata(), new NoOpGossipMessageSender(), false), false));
 
         int lastIPPart = 1;
         for (BigIntegerToken token : tokens)

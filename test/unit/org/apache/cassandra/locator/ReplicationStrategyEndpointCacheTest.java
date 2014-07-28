@@ -54,7 +54,7 @@ public class ReplicationStrategyEndpointCacheTest
 
     public void setup(Class stratClass, Map<String, String> strategyOptions) throws Exception
     {
-        tmd = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new NoOpGossipMessageSender(), false), false));
+        tmd = new TokenMetadata(new FailureDetector(new Gossiper(InetAddress.getByName("127.0.0.1"), new TokenMetadata(), new NoOpGossipMessageSender(), false), false));
         searchToken = new BigIntegerToken(String.valueOf(15));
 
         strategy = getStrategyWithNewTokenMetadata(Keyspace.open(KEYSPACE).getReplicationStrategy(), tmd);
