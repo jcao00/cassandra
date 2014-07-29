@@ -42,4 +42,4 @@ if [ "x$JAVA" = "x" ]; then
     exit 1
 fi
 
-$JAVA -Xmx4G -Dlogback.configurationFile=/usr/local/src/cassandra/tools/simulator/src/resources/logback.xml  -server -ea -cp $CLASSPATH org.apache.cassandra.gms.Simulator $@
+$JAVA -Xmx4G -Dlogback.configurationFile=./tools/simulator/src/resources/logback.xml  -server -ea -cp $CLASSPATH org.apache.cassandra.gms.Simulator $@
