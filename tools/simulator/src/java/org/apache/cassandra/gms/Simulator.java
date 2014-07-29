@@ -87,7 +87,26 @@ public class Simulator
 
         for (int i = 0; i < nodeCnt; i++)
         {
-            if (i > 0 && i % increment != 0)
+            if (i > 0 && i % increment == 0)
+            {
+                logger.info("launched {} instances, waiting for convergence", i);
+                // wait for convergence
+                long start = System.currentTimeMillis();
+                do
+                {
+                    if (System.currentTimeMillis() - start > 60000)
+                        throw new RuntimeException("cluster failed to reach a convergent state be fore launching more instances. current node count = " + i);
+                    Uninterruptibles.sleepUninterruptibly(250, TimeUnit.MILLISECONDS);
+                } while (!action.hasConverged());
+
+                // now update the barrier
+                int newCnt = i + increment;
+                if (newCnt > nodeCnt)
+                    newCnt = nodeCnt;
+                barrier = new CyclicBarrier(newCnt, action);
+                customMessagingService.setBarrier(barrier);
+            }
+            else
             {
                 InetAddress addr = getInetAddr(i);
                 IPartitioner partitioner = new Murmur3Partitioner();
@@ -112,25 +131,6 @@ public class Simulator
                 // some random generation value (a/k/a timestamp of last app launch)
                 int gen = (int) (System.currentTimeMillis() / 1000) - (int) (1000 * Math.random());
                 gossiper.start(gen, appStates);
-            }
-            else
-            {
-                logger.info("launched {} instances, waiting for convergence", i);
-                // wait for convergence
-                long start = System.currentTimeMillis();
-                do
-                {
-                    if (System.currentTimeMillis() - start > 60000)
-                        throw new RuntimeException("cluster failed to reach a convergent state be fore launching more instances. current node count = " + i);
-                    Uninterruptibles.sleepUninterruptibly(250, TimeUnit.MILLISECONDS);
-                } while (!action.hasConverged());
-
-                // now update the barrier
-                int newCnt = i + increment;
-                if (newCnt > nodeCnt)
-                    newCnt = nodeCnt;
-                barrier = new CyclicBarrier(newCnt, action);
-                customMessagingService.setBarrier(barrier);
             }
         }
 
