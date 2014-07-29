@@ -265,7 +265,7 @@ public class Simulator
 
         public boolean hasConverged()
         {
-            return convergedByInspection == null;
+            return convergedByInspection != null;
         }
     }
 
