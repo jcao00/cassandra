@@ -25,7 +25,6 @@ public class GossipSimulatorDispatcher implements GossipDigestMessageSender
     public final Map<InetAddress, Gossiper> gossipers = new ConcurrentHashMap<>();
     private final Random random;
     private final AtomicInteger idGen = new AtomicInteger(0);
-
     private CyclicBarrier barrier;
 
     public GossipSimulatorDispatcher(CyclicBarrier barrier)

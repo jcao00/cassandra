@@ -1322,8 +1322,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public void terminate()
     {
         if (scheduledGossipTask != null)
-            scheduledGossipTask.cancel(true);
-        Uninterruptibles.sleepUninterruptibly(intervalInMillis * 2, TimeUnit.MILLISECONDS);
+            scheduledGossipTask.cancel(false);
+        Uninterruptibles.sleepUninterruptibly(200, TimeUnit.MILLISECONDS);
         executor.shutdownNow();
     }
 

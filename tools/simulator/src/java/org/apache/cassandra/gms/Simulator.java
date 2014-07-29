@@ -83,37 +83,61 @@ public class Simulator
 
         SimulatorSeedProvider.setSeeds(seeds);
         logger.info("****** seeds = {}", seeds);
+        final int increment = 32;
 
         for (int i = 0; i < nodeCnt; i++)
         {
-            InetAddress addr = getInetAddr(i);
-            IPartitioner partitioner = new Murmur3Partitioner();
-            PeerStatusService peerStatusService = new PeerStatusService(addr, partitioner, customMessagingService, false);
-            Gossiper gossiper = peerStatusService.gossiper;
-            customMessagingService.register(addr, gossiper);
+            if (i % increment != 0)
+            {
+                InetAddress addr = getInetAddr(i);
+                IPartitioner partitioner = new Murmur3Partitioner();
+                PeerStatusService peerStatusService = new PeerStatusService(addr, partitioner, customMessagingService, false);
+                Gossiper gossiper = peerStatusService.gossiper;
+                customMessagingService.register(addr, gossiper);
 
-            Map<ApplicationState, VersionedValue> appStates = new HashMap<>();
-            appStates.put(ApplicationState.NET_VERSION, peerStatusService.versionedValueFactory.networkVersion());
-            appStates.put(ApplicationState.HOST_ID, peerStatusService.versionedValueFactory.hostId(UUID.randomUUID()));
-            appStates.put(ApplicationState.RPC_ADDRESS, peerStatusService.versionedValueFactory.rpcaddress(addr));
-            appStates.put(ApplicationState.RELEASE_VERSION, peerStatusService.versionedValueFactory.releaseVersion());
-            appStates.put(ApplicationState.DC, peerStatusService.versionedValueFactory.datacenter("dc" + (i % 2)));
-            appStates.put(ApplicationState.RACK, peerStatusService.versionedValueFactory.rack("rack" + (i % 3)));
+                Map<ApplicationState, VersionedValue> appStates = new HashMap<>();
+                appStates.put(ApplicationState.NET_VERSION, peerStatusService.versionedValueFactory.networkVersion());
+                appStates.put(ApplicationState.HOST_ID, peerStatusService.versionedValueFactory.hostId(UUID.randomUUID()));
+                appStates.put(ApplicationState.RPC_ADDRESS, peerStatusService.versionedValueFactory.rpcaddress(addr));
+                appStates.put(ApplicationState.RELEASE_VERSION, peerStatusService.versionedValueFactory.releaseVersion());
+                appStates.put(ApplicationState.DC, peerStatusService.versionedValueFactory.datacenter("dc" + (i % 2)));
+                appStates.put(ApplicationState.RACK, peerStatusService.versionedValueFactory.rack("rack" + (i % 3)));
 
-            Collection<Token> localTokens = new ArrayList<>();
-            for (int j = 0; j < 3; j++)
-                localTokens.add(partitioner.getRandomToken());
-            appStates.put(ApplicationState.TOKENS, peerStatusService.versionedValueFactory.tokens(localTokens));
-            appStates.put(ApplicationState.STATUS, peerStatusService.versionedValueFactory.normal(localTokens));
+                Collection<Token> localTokens = new ArrayList<>();
+                for (int j = 0; j < 3; j++)
+                    localTokens.add(partitioner.getRandomToken());
+                appStates.put(ApplicationState.TOKENS, peerStatusService.versionedValueFactory.tokens(localTokens));
+                appStates.put(ApplicationState.STATUS, peerStatusService.versionedValueFactory.normal(localTokens));
 
-            // some random generation value (a/k/a timestamp of last app launch)
-            int gen = (int) (System.currentTimeMillis() / 1000) - (int) (1000 * Math.random());
-            gossiper.start(gen, appStates);
+                // some random generation value (a/k/a timestamp of last app launch)
+                int gen = (int) (System.currentTimeMillis() / 1000) - (int) (1000 * Math.random());
+                gossiper.start(gen, appStates);
+            }
+            else
+            {
+                logger.info("launched {} instances, waiting for convergence", i);
+                // wait for convergence
+                long start = System.currentTimeMillis();
+                do
+                {
+                    if (System.currentTimeMillis() - start > 60000)
+                        throw new RuntimeException("cluster failed to reach a convergent state be fore launching more instances. current node count = " + i);
+                    Uninterruptibles.sleepUninterruptibly(250, TimeUnit.MILLISECONDS);
+                } while (!action.hasConverged());
+
+                // now update the barrier
+                int newCnt = i + increment;
+                if (newCnt > nodeCnt)
+                    newCnt = nodeCnt;
+                barrier = new CyclicBarrier(newCnt, action);
+                customMessagingService.setBarrier(barrier);
+            }
         }
 
         try
         {
-            latch.await(6, TimeUnit.MINUTES);
+            logger.info("finished launching all initial instances");
+            latch.await(10, TimeUnit.MINUTES);
         } catch (InterruptedException e)
         {
             logger.error("test with {} seeds and {} nodes timed out before completion", seedCnt, nodeCnt);
@@ -150,6 +174,7 @@ public class Simulator
         int counter = 0;
         int lastConvergenceRound = 0;
         private long convergenceTs;
+        private String convergedByInspection;
 
         public BarrierAction(CountDownLatch latch)
         {
@@ -168,7 +193,7 @@ public class Simulator
 
             logger.debug("**************** ROUND {} **************************", curRound);
             long start = System.currentTimeMillis();
-            String convergedByInspection = hasConvergedByInspection();
+            convergedByInspection = hasConvergedByInspection();
             long elapseCompTime = System.currentTimeMillis() - start;
 
             if (50 < elapseCompTime)
@@ -236,6 +261,11 @@ public class Simulator
                 logger.warn("Problem while checking for convergence", e);
             }
             return ret;
+        }
+
+        public boolean hasConverged()
+        {
+            return convergedByInspection == null;
         }
     }
 
