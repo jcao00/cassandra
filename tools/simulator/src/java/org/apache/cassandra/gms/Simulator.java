@@ -87,7 +87,7 @@ public class Simulator
 
         for (int i = 0; i < nodeCnt; i++)
         {
-            if (i % increment != 0)
+            if (i > 0 && i % increment != 0)
             {
                 InetAddress addr = getInetAddr(i);
                 IPartitioner partitioner = new Murmur3Partitioner();
