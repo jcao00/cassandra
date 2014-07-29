@@ -25,7 +25,7 @@ public class Simulator
     {
         String cwd = System.getProperty("user.dir");
         String path = cwd + "/tools/simulator/src/resources/";
-        System.setProperty("logback.configurationFile", path + "logback.xml");
+//        System.setProperty("logback.configurationFile", path + "logback.xml");
         System.setProperty("cassandra.config", "file://" + path + "cassandra.yaml");
 
         if (args.length < 3)
