@@ -19,7 +19,7 @@ public class Simulator
     private final int nodeCnt;
     private final int simulationRounds;
     private GossipSimulatorDispatcher customMessagingService;
-    private final ExecutorService executor;
+    private static final ExecutorService executor = Executors.newFixedThreadPool(128);
 
     public static void main(String[] args) throws Exception
     {
@@ -53,8 +53,6 @@ public class Simulator
         this.seedCnt = seedCnt;
         this.nodeCnt = nodeCnt;
         this.simulationRounds = simulationRounds;
-        int poolSize = 128 > nodeCnt ? nodeCnt : 128;
-        executor = Executors.newFixedThreadPool(poolSize);
     }
 
     void runSimulation()
@@ -66,8 +64,6 @@ public class Simulator
             logger.warn("####### Running simulation round {} ######", i);
             runSimulation(seedCnt, nodeCnt);
         }
-
-        executor.shutdownNow();
     }
 
     void runSimulation(int seedCnt, int nodeCnt)
@@ -219,14 +215,19 @@ public class Simulator
                 // rip through the list of futures looking for any failures. if we do find a failure, don't bother running any other tasks
                 for (Future<String> future : futures)
                 {
-
-                    if (ret == null)
+                    try
                     {
-                        ret = future.get(2, TimeUnit.MINUTES);
+                        if (ret == null)
+                        {
+                            ret = future.get(2, TimeUnit.MINUTES);
+                        } else
+                        {
+                            future.cancel(true);
+                        }
                     }
-                    else
+                    catch (Exception e)
                     {
-                        future.cancel(true);
+                        //ignore
                     }
                 }
             }
