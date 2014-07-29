@@ -19,7 +19,7 @@ public class Simulator
     private final int nodeCnt;
     private final int simulationRounds;
     private GossipSimulatorDispatcher customMessagingService;
-    private final AbstractExecutorService executor;
+    private final ExecutorService executor;
 
     public static void main(String[] args) throws Exception
     {
@@ -53,8 +53,8 @@ public class Simulator
         this.seedCnt = seedCnt;
         this.nodeCnt = nodeCnt;
         this.simulationRounds = simulationRounds;
-        int poolSize = 32 > nodeCnt ? nodeCnt : 32;
-        executor = new ForkJoinPool(poolSize)  ;//new ThreadPoolExecutor(poolSize, poolSize, Integer.MAX_VALUE, TimeUnit.SECONDS, new LinkedBlockingQueue<ConvergenceChecker>());
+        int poolSize = 128 > nodeCnt ? nodeCnt : 128;
+        executor = Executors.newFixedThreadPool(poolSize);
     }
 
     void runSimulation()
