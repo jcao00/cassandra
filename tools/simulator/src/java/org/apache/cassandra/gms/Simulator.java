@@ -10,14 +10,16 @@ import org.slf4j.LoggerFactory;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class Simulator
 {
     private static final Logger logger = LoggerFactory.getLogger(Simulator.class);
+    private final int seedCnt;
+    private final int nodeCnt;
+    private final int simulationRounds;
     private GossipSimulatorDispatcher customMessagingService;
+    private final AbstractExecutorService executor;
 
     public static void main(String[] args) throws Exception
     {
@@ -26,28 +28,38 @@ public class Simulator
 //        System.setProperty("logback.configurationFile", path + "logback.xml");
         System.setProperty("cassandra.config", "file://" + path + "cassandra.yaml");
 
-        Simulator simulator = new Simulator();
-        simulator.runSimulation(1, 3, 10);
-        simulator.runSimulation(3, 25, 10);
-        simulator.runSimulation(3, 50, 10);
-        simulator.runSimulation(3, 100, 10);
-        simulator.runSimulation(6, 200, 10);
-        simulator.runSimulation(6, 400, 10);
-        simulator.runSimulation(12, 800, 10);
-        simulator.runSimulation(20, 1200, 10);
+//        new Simulator(1, 3, 10).runSimulation();
+//        new Simulator(3, 25, 10).runSimulation();
+//        new Simulator(3, 50, 10).runSimulation();
+//        new Simulator(3, 100, 10).runSimulation();
+//        new Simulator(6, 200, 10).runSimulation();
+        new Simulator(6, 400, 10).runSimulation();
+        new Simulator(12, 800, 10).runSimulation();
+        new Simulator(20, 1200, 10).runSimulation();
 
         System.exit(0);
     }
+    
+    Simulator(int seedCnt, int nodeCnt, int simulationRounds)
+    {
+        this.seedCnt = seedCnt;
+        this.nodeCnt = nodeCnt;
+        this.simulationRounds = simulationRounds;
+        int poolSize = 32 > nodeCnt ? nodeCnt : 32;
+        executor = new ForkJoinPool(poolSize)  ;//new ThreadPoolExecutor(poolSize, poolSize, Integer.MAX_VALUE, TimeUnit.SECONDS, new LinkedBlockingQueue<ConvergenceChecker>());
+    }
 
-    void runSimulation(int seedCnt, int nodeCnt, int simulationRounds)
+    void runSimulation()
     {
         logger.warn("####### Running new simulation for {} nodes with {} seeds ######", nodeCnt, seedCnt);
 
-        for (int i = 0; i < simulationRounds; i ++)
+        for (int i = 0; i < simulationRounds; i++)
         {
             logger.warn("####### Running simulation round {} ######", i);
             runSimulation(seedCnt, nodeCnt);
         }
+
+        executor.shutdownNow();
     }
 
     void runSimulation(int seedCnt, int nodeCnt)
@@ -91,15 +103,14 @@ public class Simulator
             appStates.put(ApplicationState.STATUS, peerStatusService.versionedValueFactory.normal(localTokens));
 
             // some random generation value (a/k/a timestamp of last app launch)
-            int gen = (int)(System.currentTimeMillis() / 1000) - (int)(1000 * Math.random());
+            int gen = (int) (System.currentTimeMillis() / 1000) - (int) (1000 * Math.random());
             gossiper.start(gen, appStates);
         }
 
         try
         {
-            latch.await(2, TimeUnit.MINUTES);
-        }
-        catch (InterruptedException e)
+            latch.await(6, TimeUnit.MINUTES);
+        } catch (InterruptedException e)
         {
             logger.error("test with {} seeds and {} nodes timed out before completion", seedCnt, nodeCnt);
         }
@@ -122,8 +133,7 @@ public class Simulator
         try
         {
             return InetAddress.getByName(ipAddr);
-        }
-        catch (UnknownHostException e)
+        } catch (UnknownHostException e)
         {
             throw new RuntimeException("couldn't translate name to ip addr, input = " + i, e);
         }
@@ -154,13 +164,14 @@ public class Simulator
 
             logger.debug("**************** ROUND {} **************************", curRound);
             long start = System.currentTimeMillis();
-            boolean convergedByInspection = hasConvergedByInspection();
+            String convergedByInspection = hasConvergedByInspection();
             long elapseCompTime = System.currentTimeMillis() - start;
-            if (100 < elapseCompTime)
-                logger.debug("****** elapsed comparison time = {} ms", elapseCompTime);
-            logger.debug("****** have we converged? " + convergedByInspection);
 
-            if (convergedByInspection)
+            if (50 < elapseCompTime)
+                logger.debug("****** elapsed comparison time = {} ms", elapseCompTime);
+            logger.debug("****** have we converged? " + (convergedByInspection == null));
+
+            if (convergedByInspection == null)
             {
                 if (-1 == convergenceTs)
                 {
@@ -170,14 +181,14 @@ public class Simulator
                 }
 
                 // cycle for a few extra rounds to make sure everything did converge (and didn't start dropping out)
-                if(System.currentTimeMillis() - (60 * 1000) > convergenceTs)
+                if (System.currentTimeMillis() - (60 * 1000) > convergenceTs)
                 {
                     barrier.reset();
                     latch.countDown();
                 }
-            }
-            else
+            } else
             {
+                logger.debug(convergedByInspection);
                 logger.debug("****** rounds since convergence = {} ", (curRound - lastConvergenceRound));
                 convergenceTs = -1;
             }
@@ -186,79 +197,118 @@ public class Simulator
             // bounce nodes
         }
 
-        boolean hasConvergedByInspection()
+        String hasConvergedByInspection()
         {
-            Map<InetAddress, Gossiper> gossipers = customMessagingService.gossipers;
-            for (Map.Entry<InetAddress, Gossiper> entry : gossipers.entrySet())
+            List<Future<String>> futures = new ArrayList<>();
+            for (Map.Entry<InetAddress, Gossiper> entry : customMessagingService.gossipers.entrySet())
             {
-                InetAddress localAddr = entry.getKey();
-                Gossiper gossiper = entry.getValue();
+                futures.add(executor.submit(new ConvergenceChecker(entry.getValue(), customMessagingService.gossipers)));
+            }
 
-                Collection<InetAddress> peerAddrs = new ArrayList<>();
-                peerAddrs.addAll(gossipers.keySet());
-
-                for (Map.Entry<InetAddress, EndpointState> peer : gossiper.endpointStateMap.entrySet())
+            String ret = null;
+            try
+            {
+                // rip through the list of futures looking for any failures. if we do find a failure, don't bother running any other tasks
+                for (Future<String> future : futures)
                 {
-                    InetAddress peerAddr = peer.getKey();
-                    //this case *really* shouldn't fail - would seem to be more of my error than anything else
-                    if (!peerAddrs.remove(peerAddr))
-                        return false;
-                    if (peerAddr.equals(entry.getKey()))
-                        continue;
 
-                    // simulator knows about peer, now let's compare states
-                    EndpointState localEndpointState = peer.getValue();
-                    if (!localEndpointState.isAlive())
+                    if (ret == null)
                     {
-                        logger.debug("hasConvergedByInspection: node {} has marked peer {} as 'dead' (not alive)", localAddr, peerAddr);
+                        ret = future.get(2, TimeUnit.MINUTES);
                     }
-                    EndpointState peerEndpointState = gossipers.get(peerAddr).getEndpointStateForEndpoint(peerAddr);
-
-                    // first compare the heartbeats
-                    //NOTE: the heartBeat.version is almost guaranteed to be different (non-convergent), especially in anything larger than a very small cluster,
-                    // as the target/source node updates it's heartbeat.version on every gossip round. thus, don't bother to compare them
-                    if (localEndpointState.getHeartBeatState().getGeneration() != peerEndpointState.getHeartBeatState().getGeneration())
-                    {
-                        logger.debug("hasConvergedByInspection: generations are different: local ({}) = {}, target ({}) = {}",
-                                new Object[]{localEndpointState.getHeartBeatState().getGeneration(), peerEndpointState.getHeartBeatState().getGeneration()});
-                        return false;
-                    }
-
-                    // next, compare the app states
-                    Collection<ApplicationState> peerAppStates = new ArrayList<>();
-                    peerAppStates.addAll(peerEndpointState.applicationState.keySet());
-                    for (Map.Entry<ApplicationState, VersionedValue> localAppStateEntry : localEndpointState.applicationState.entrySet())
-                    {
-                        ApplicationState appState = localAppStateEntry.getKey();
-                        if (!peerAppStates.remove(appState))
-                        {
-                            logger.debug("hasConvergedByInspection: unknown app state: peer {} does not have AppState {} that local does", new Object[]{peerAddr, appState, localAddr});
-                            return false;
-                        }
-                        if (localAppStateEntry.getValue().compareTo(peerEndpointState.getApplicationState(appState)) != 0)
-                        {
-                            logger.debug("hasConvergedByInspection: divergent app state: AppState {} has local({}) version {} and peer({}) version {}",
-                                    new Object[]{appState, localAddr, localAppStateEntry.getValue().value, peerAddr, peerEndpointState.getApplicationState(appState).value});
-                            return false;
-                        }
-                    }
-                    if (!peerAppStates.isEmpty())
-                    {
-                        logger.debug("hasConvergedByInspection: unknown app states: current node {} doesn't know about the following app states from {}: {}", new Object[]{localAddr, peerAddr, peerAppStates});
-                        return false;
-                    }
-                }
-
-                if (!peerAddrs.isEmpty())
-                {
-                    if (peerAddrs.size() == gossipers.size() - 1)
-                        logger.debug("hasConvergedByInspection: unknown nodes: current node {} only knows about itself", localAddr);
                     else
-                        logger.debug("hasConvergedByInspection: unknown nodes: current node {} doesn't know about {}/{} nodes", new Object[]{localAddr, peerAddrs.size(), gossipers.size()});
-                    return false;
+                    {
+                        future.cancel(true);
+                    }
                 }
             }
-            return true;
+            catch(Exception e)
+            {
+                logger.warn("Problem while checking for convergence", e);
+            }
+            return ret;
+        }
+    }
+
+    protected class ConvergenceChecker implements Callable<String>
+    {
+        private final InetAddress localAddr;
+        private final Gossiper gossiper;
+        private final Map<InetAddress, Gossiper> gossipers;
+
+        ConvergenceChecker(Gossiper gossiper, Map<InetAddress, Gossiper> gossipers)
+        {
+            this.gossiper = gossiper;
+            this.localAddr = gossiper.broadcastAddr;
+            this.gossipers = gossipers;
+        }
+
+        /*
+          Yes, this is lame to simply use the nullness of a string to determine if we've actually converged, but I'm feeling lazy today ....
+         */
+        public String call() throws Exception
+        {
+            Collection<InetAddress> peerAddrs = new ArrayList<>();
+            peerAddrs.addAll(gossipers.keySet());
+
+            for (Map.Entry<InetAddress, EndpointState> peer : gossiper.endpointStateMap.entrySet())
+            {
+                InetAddress peerAddr = peer.getKey();
+                //this case *really* shouldn't fail - would seem to be more of my error than anything else
+                if (!peerAddrs.remove(peerAddr))
+                    return String.format("hasConvergedByInspection: node %s didn't find itself in the list of gossipers (peers) - huh?", localAddr);
+                if (peerAddr.equals(localAddr))
+                    continue;
+
+                // simulator knows about peer, now let's compare states
+                EndpointState localEndpointState = peer.getValue();
+                if (!localEndpointState.isAlive())
+                {
+                    return String.format("hasConvergedByInspection: node %s has marked peer %s as 'dead' (not alive)", localAddr, peerAddr);
+                }
+                EndpointState peerEndpointState = gossipers.get(peerAddr).getEndpointStateForEndpoint(peerAddr);
+
+                // first compare the heartbeats
+                //NOTE: the heartBeat.version is almost guaranteed to be different (non-convergent), especially in anything larger than a very small cluster,
+                // as the target/source node updates it's heartbeat.version on every gossip round. thus, don't bother to compare them
+                if (localEndpointState.getHeartBeatState().getGeneration() != peerEndpointState.getHeartBeatState().getGeneration())
+                {
+                    return String.format("hasConvergedByInspection: generations are different: local ({}) = %d, target ({}) = %d",
+                            localEndpointState.getHeartBeatState().getGeneration(), peerEndpointState.getHeartBeatState().getGeneration());
+                }
+
+                // next, compare the app states
+                Collection<ApplicationState> peerAppStates = new ArrayList<>();
+                peerAppStates.addAll(peerEndpointState.applicationState.keySet());
+                for (Map.Entry<ApplicationState, VersionedValue> localAppStateEntry : localEndpointState.applicationState.entrySet())
+                {
+                    ApplicationState appState = localAppStateEntry.getKey();
+                    if (!peerAppStates.remove(appState))
+                    {
+                        return String.format("hasConvergedByInspection: unknown app state: peer %s does not have AppState %s that local does",
+                                peerAddr, appState, localAddr);
+                    }
+                    if (localAppStateEntry.getValue().compareTo(peerEndpointState.getApplicationState(appState)) != 0)
+                    {
+                        return String.format("hasConvergedByInspection: divergent app state: AppState %s has local(%s) version %s and peer(%s) version %s",
+                                appState, localAddr, localAppStateEntry.getValue().value, peerAddr, peerEndpointState.getApplicationState(appState).value);
+                    }
+                }
+                if (!peerAppStates.isEmpty())
+                {
+                    return String.format("hasConvergedByInspection: unknown app states: current node %s doesn't know about the following app states from %s: %s", localAddr, peerAddr, peerAppStates);
+                }
+            }
+
+            if (!peerAddrs.isEmpty())
+            {
+                if (peerAddrs.size() == gossipers.size() - 1)
+                    return String.format("hasConvergedByInspection: unknown nodes: current node %s only knows about itself", localAddr);
+                else
+                    return String.format("hasConvergedByInspection: unknown nodes: current node %s doesn't know about %d/%d nodes",
+                            localAddr, peerAddrs.size(), gossipers.size());
+            }
+            return null;
         }
     }
 }
