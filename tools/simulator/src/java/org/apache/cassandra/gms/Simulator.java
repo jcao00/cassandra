@@ -28,14 +28,22 @@ public class Simulator
 //        System.setProperty("logback.configurationFile", path + "logback.xml");
         System.setProperty("cassandra.config", "file://" + path + "cassandra.yaml");
 
-//        new Simulator(1, 3, 10).runSimulation();
-//        new Simulator(3, 25, 10).runSimulation();
-//        new Simulator(3, 50, 10).runSimulation();
-//        new Simulator(3, 100, 10).runSimulation();
-//        new Simulator(6, 200, 10).runSimulation();
-        new Simulator(6, 400, 10).runSimulation();
-        new Simulator(12, 800, 10).runSimulation();
-        new Simulator(20, 1200, 10).runSimulation();
+        if (args.length < 3)
+        {
+            logger.info("running simulator with default config");
+            new Simulator(1, 3, 10).runSimulation();
+            new Simulator(3, 25, 10).runSimulation();
+            new Simulator(3, 50, 10).runSimulation();
+            new Simulator(3, 100, 10).runSimulation();
+            new Simulator(6, 200, 10).runSimulation();
+            new Simulator(6, 400, 10).runSimulation();
+            new Simulator(12, 800, 10).runSimulation();
+            new Simulator(20, 1200, 10).runSimulation();
+        }
+        else
+        {
+            new Simulator(Integer.parseInt(args[0]), Integer.parseInt(args[1]), Integer.parseInt(args[2])).runSimulation();
+        }
 
         System.exit(0);
     }
