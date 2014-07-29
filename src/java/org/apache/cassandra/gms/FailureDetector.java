@@ -35,7 +35,6 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.BoundedStatsDeque;
-import org.apache.cassandra.utils.FBUtilities;
 
 /**
  * This FailureDetector is an implementation of the paper titled
@@ -191,7 +190,7 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
 
     public boolean isAlive(InetAddress ep)
     {
-        if (ep.equals(FBUtilities.getBroadcastAddress()))
+        if (ep.equals(gossiper.broadcastAddr))
             return true;
 
         EndpointState epState = gossiper.getEndpointStateForEndpoint(ep);

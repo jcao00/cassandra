@@ -7,7 +7,6 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.service.PendingRangeCalculatorService;
 import org.apache.cassandra.service.StorageService;
-import org.apache.cassandra.utils.FBUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -182,7 +181,7 @@ public class GossipChangeListener implements IEndpointStateChangeSubscriber
             {
                 if (existing != null && !existing.equals(endpoint))
                 {
-                    if (existing.equals(FBUtilities.getBroadcastAddress()))
+                    if (existing.equals(gossiper.broadcastAddr))
                     {
                         logger.warn("Not updating host ID {} for {} because it's mine", hostId, endpoint);
                         tokenMetadata.removeEndpoint(endpoint);
