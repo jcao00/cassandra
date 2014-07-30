@@ -69,9 +69,10 @@ public class Simulator
     void runSimulation(int seedCnt, int nodeCnt)
     {
         assert seedCnt < nodeCnt;
+        final int increment = 32;
         CountDownLatch latch = new CountDownLatch(1);
         BarrierAction action = new BarrierAction(latch);
-        CyclicBarrier barrier = new CyclicBarrier(nodeCnt, action);
+        CyclicBarrier barrier = new CyclicBarrier(increment, action);
         action.barrier = barrier;
         customMessagingService = new GossipSimulatorDispatcher(barrier);
 
@@ -83,64 +84,69 @@ public class Simulator
 
         SimulatorSeedProvider.setSeeds(seeds);
         logger.info("****** seeds = {}", seeds);
-        final int increment = 32;
 
         for (int i = 0; i < nodeCnt; i++)
         {
+            InetAddress addr = getInetAddr(i);
+            IPartitioner partitioner = new Murmur3Partitioner();
+            PeerStatusService peerStatusService = new PeerStatusService(addr, partitioner, customMessagingService, false);
+            Gossiper gossiper = peerStatusService.gossiper;
+            customMessagingService.register(addr, gossiper);
+
+            Map<ApplicationState, VersionedValue> appStates = new HashMap<>();
+            appStates.put(ApplicationState.NET_VERSION, peerStatusService.versionedValueFactory.networkVersion());
+            appStates.put(ApplicationState.HOST_ID, peerStatusService.versionedValueFactory.hostId(UUID.randomUUID()));
+            appStates.put(ApplicationState.RPC_ADDRESS, peerStatusService.versionedValueFactory.rpcaddress(addr));
+            appStates.put(ApplicationState.RELEASE_VERSION, peerStatusService.versionedValueFactory.releaseVersion());
+            appStates.put(ApplicationState.DC, peerStatusService.versionedValueFactory.datacenter("dc" + (i % 2)));
+            appStates.put(ApplicationState.RACK, peerStatusService.versionedValueFactory.rack("rack" + (i % 3)));
+
+            Collection<Token> localTokens = new ArrayList<>();
+            for (int j = 0; j < 3; j++)
+                localTokens.add(partitioner.getRandomToken());
+            appStates.put(ApplicationState.TOKENS, peerStatusService.versionedValueFactory.tokens(localTokens));
+            appStates.put(ApplicationState.STATUS, peerStatusService.versionedValueFactory.normal(localTokens));
+
+            // some random generation value (a/k/a timestamp of last app launch)
+            int gen = (int) (System.currentTimeMillis() / 1000) - (int) (1000 * Math.random());
+            gossiper.start(gen, appStates);
+
             if (i > 0 && i % increment == 0)
             {
-                logger.info("launched {} instances, waiting for convergence", i);
                 // wait for convergence
-                long start = System.currentTimeMillis();
-                do
+                try
                 {
-                    if (System.currentTimeMillis() - start > 60000)
-                        throw new RuntimeException("cluster failed to reach a convergent state be fore launching more instances. current node count = " + i);
-                    Uninterruptibles.sleepUninterruptibly(250, TimeUnit.MILLISECONDS);
-                } while (!action.hasConverged());
+                    logger.info("launched {} instances, waiting for convergence", i);
+                    latch.await(1, TimeUnit.MINUTES);
+                }
+                catch (InterruptedException e)
+                {
+                    throw new RuntimeException("instances would not converge with node count = " + i);
+                }
 
                 // now update the barrier
                 int newCnt = i + increment;
                 if (newCnt > nodeCnt)
                     newCnt = nodeCnt;
+                latch = new CountDownLatch(1);
+                action = new BarrierAction(latch);
                 barrier = new CyclicBarrier(newCnt, action);
                 customMessagingService.setBarrier(barrier);
             }
-            else
-            {
-                InetAddress addr = getInetAddr(i);
-                IPartitioner partitioner = new Murmur3Partitioner();
-                PeerStatusService peerStatusService = new PeerStatusService(addr, partitioner, customMessagingService, false);
-                Gossiper gossiper = peerStatusService.gossiper;
-                customMessagingService.register(addr, gossiper);
-
-                Map<ApplicationState, VersionedValue> appStates = new HashMap<>();
-                appStates.put(ApplicationState.NET_VERSION, peerStatusService.versionedValueFactory.networkVersion());
-                appStates.put(ApplicationState.HOST_ID, peerStatusService.versionedValueFactory.hostId(UUID.randomUUID()));
-                appStates.put(ApplicationState.RPC_ADDRESS, peerStatusService.versionedValueFactory.rpcaddress(addr));
-                appStates.put(ApplicationState.RELEASE_VERSION, peerStatusService.versionedValueFactory.releaseVersion());
-                appStates.put(ApplicationState.DC, peerStatusService.versionedValueFactory.datacenter("dc" + (i % 2)));
-                appStates.put(ApplicationState.RACK, peerStatusService.versionedValueFactory.rack("rack" + (i % 3)));
-
-                Collection<Token> localTokens = new ArrayList<>();
-                for (int j = 0; j < 3; j++)
-                    localTokens.add(partitioner.getRandomToken());
-                appStates.put(ApplicationState.TOKENS, peerStatusService.versionedValueFactory.tokens(localTokens));
-                appStates.put(ApplicationState.STATUS, peerStatusService.versionedValueFactory.normal(localTokens));
-
-                // some random generation value (a/k/a timestamp of last app launch)
-                int gen = (int) (System.currentTimeMillis() / 1000) - (int) (1000 * Math.random());
-                gossiper.start(gen, appStates);
-            }
         }
 
+//        latch = new CountDownLatch(1);
+//        action = new BarrierAction(latch);
+//        barrier = new CyclicBarrier(nodeCnt, action);
+//        customMessagingService.setBarrier(barrier);
         try
         {
-            logger.info("finished launching all initial instances");
-            latch.await(10, TimeUnit.MINUTES);
-        } catch (InterruptedException e)
+            logger.info("launched {} instances, waiting for convergence", nodeCnt);
+            latch.await(1, TimeUnit.MINUTES);
+        }
+        catch (InterruptedException e)
         {
-            logger.error("test with {} seeds and {} nodes timed out before completion", seedCnt, nodeCnt);
+            throw new RuntimeException("instances would not converge with node count = " + nodeCnt);
         }
 
         //shut down everything - might be some noisy errors?
@@ -210,12 +216,13 @@ public class Simulator
                 }
 
                 // cycle for a few extra rounds to make sure everything did converge (and didn't start dropping out)
-                if (System.currentTimeMillis() - (60 * 1000) > convergenceTs)
+//                if (System.currentTimeMillis() - (60 * 1000) > convergenceTs)
                 {
                     barrier.reset();
                     latch.countDown();
                 }
-            } else
+            }
+            else
             {
                 logger.debug(convergedByInspection);
                 logger.debug("****** rounds since convergence = {} ", (curRound - lastConvergenceRound));
@@ -265,7 +272,7 @@ public class Simulator
 
         public boolean hasConverged()
         {
-            return convergedByInspection != null;
+            return convergedByInspection == null;
         }
     }
 
