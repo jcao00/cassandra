@@ -2771,10 +2771,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                         sendNotification("repair", message, new int[]{cmd, ActiveRepairService.Status.SESSION_FAILED.ordinal()});
                     }
                 }
-                //TODO:JEB
-//                if (!fullRepair)
-//                    ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors, successful);
-                ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors);
+                ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors, successful);
                 sendNotification("repair", String.format("Repair command #%d finished", cmd), new int[]{cmd, ActiveRepairService.Status.FINISHED.ordinal()});
             }
         }, null);

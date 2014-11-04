@@ -74,7 +74,7 @@ public class AntiCompactionTest extends SchemaLoader
         Map<UUID, Set<SSTableReader>> sstablesToRepair = new HashMap<>();
         sstablesToRepair.put(store.metadata.cfId, new HashSet<>(sstables));
         ActiveRepairService.ParentRepairSession prs = new ActiveRepairService.IncrementalRepairSession(Collections.singletonList(store), ranges, sstablesToRepair, repairedAt);
-        CompactionManager.instance.performAnticompaction(store, sstables, prs);
+        CompactionManager.instance.performAnticompaction(store, ranges, sstables, prs, repairedAt);
 
         assertEquals(2, store.getSSTables().size());
         int repairedKeys = 0;
@@ -113,7 +113,11 @@ public class AntiCompactionTest extends SchemaLoader
         Range<Token> range = new Range<Token>(new BytesToken(ByteBufferUtil.bytes(0)), new BytesToken(ByteBufferUtil.bytes(500)));
         Collection<SSTableReader> sstables = cfs.getSSTables();
         SSTableReader.acquireReferences(sstables);
-        CompactionManager.instance.performAnticompaction(cfs, Arrays.asList(range), sstables, 12345);
+
+        Map<UUID, Set<SSTableReader>> sstablesToRepair = new HashMap<>();
+        sstablesToRepair.put(cfs.metadata.cfId, new HashSet<>(sstables));
+        ActiveRepairService.ParentRepairSession prs = new ActiveRepairService.IncrementalRepairSession(Collections.singletonList(cfs), Arrays.asList(range), sstablesToRepair, 12345);
+        CompactionManager.instance.performAnticompaction(cfs, Arrays.asList(range), sstables, prs, 12345);
         long sum = 0;
         for (SSTableReader x : cfs.getSSTables())
             sum += x.bytesOnDisk();
@@ -146,13 +150,16 @@ public class AntiCompactionTest extends SchemaLoader
     public void shouldSkipAntiCompactionForNonIntersectingRange() throws InterruptedException, ExecutionException, IOException
     {
         ColumnFamilyStore store = prepareColumnFamilyStore();
-        Collection<SSTableReader> sstables = store.getUnrepairedSSTables();
+        List<SSTableReader> sstables = new ArrayList<>(store.getUnrepairedSSTables());
         assertEquals(store.getSSTables().size(), sstables.size());
         Range<Token> range = new Range<Token>(new BytesToken("-10".getBytes()), new BytesToken("-1".getBytes()));
         List<Range<Token>> ranges = Arrays.asList(range);
 
         SSTableReader.acquireReferences(sstables);
-        CompactionManager.instance.performAnticompaction(store, ranges, sstables, 0);
+        Map<UUID, Set<SSTableReader>> sstablesToRepair = new HashMap<>();
+        sstablesToRepair.put(store.metadata.cfId, new HashSet<>(sstables));
+        ActiveRepairService.ParentRepairSession prs = new ActiveRepairService.IncrementalRepairSession(Collections.singletonList(store), Arrays.asList(range), sstablesToRepair, 0);
+        CompactionManager.instance.performAnticompaction(store, ranges, sstables, prs, 0);
 
         assertThat(store.getSSTables().size(), is(1));
         assertThat(Iterables.get(store.getSSTables(), 0).isRepaired(), is(false));

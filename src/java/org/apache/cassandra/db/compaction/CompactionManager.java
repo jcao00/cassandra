@@ -375,15 +375,17 @@ public class CompactionManager implements CompactionManagerMBean
     }
 
     public Future<?> submitAntiCompaction(final ColumnFamilyStore cfs,
+                                          final Collection<Range<Token>> ranges,
                                           final Collection<SSTableReader> validatedForRepair,
-                                          final ParentRepairSession prs)
+                                          final ParentRepairSession prs,
+                                          final long repairedAt)
     {
         Runnable runnable = new WrappedRunnable() {
 
             @Override
             public void runMayThrow() throws Exception
             {
-                performAnticompaction(cfs, validatedForRepair, prs);
+                performAnticompaction(cfs, ranges, validatedForRepair, prs, repairedAt);
             }
         };
         return executor.submit(runnable);
@@ -398,8 +400,10 @@ public class CompactionManager implements CompactionManagerMBean
      * @throws InterruptedException, ExecutionException, IOException
      */
     public void performAnticompaction(ColumnFamilyStore cfs,
+                                      Collection<Range<Token>> ranges,
                                       Collection<SSTableReader> validatedForRepair,
-                                      ParentRepairSession prs) throws InterruptedException, ExecutionException, IOException
+                                      ParentRepairSession prs,
+                                      long repairedAt) throws InterruptedException, ExecutionException, IOException
     {
         logger.info("Starting anticompaction");
         logger.debug("Starting anticompaction for ranges {}", ranges);
@@ -438,7 +442,7 @@ public class CompactionManager implements CompactionManagerMBean
         cfs.getDataTracker().notifySSTableRepairedStatusChanged(mutatedRepairStatuses);
         cfs.getDataTracker().unmarkCompacting(Sets.union(nonAnticompacting, mutatedRepairStatuses));
         if (!sstables.isEmpty())
-            doAntiCompaction(cfs, sstables, prs);
+            doAntiCompaction(cfs, sstables, prs, repairedAt);
         SSTableReader.releaseReferences(sstables);
         cfs.getDataTracker().unmarkCompacting(sstables);
         logger.info(String.format("Completed anticompaction successfully"));
@@ -870,16 +874,6 @@ public class CompactionManager implements CompactionManagerMBean
         Collection<SSTableReader> sstables = null;
         try
         {
-            //TODO:JEB
-            // flush first so everyone is validating data that is as similar as possible
-//            StorageService.instance.forceKeyspaceFlush(cfs.keyspace.getName(), cfs.name);
-            // we don't mark validating sstables as compacting in DataTracker, so we have to mark them referenced
-            // instead so they won't be cleaned up if they do get compacted during the validation
-//            if (validator.desc.parentSessionId == null || ActiveRepairService.instance.getParentRepairSession(validator.desc.parentSessionId) == null)
-//                sstables = cfs.markCurrentSSTablesReferenced();
-//            else
-//                sstables = ActiveRepairService.instance.getParentRepairSession(validator.desc.parentSessionId).getAndReferenceSSTables(cfs);
-
             String snapshotName = validator.desc.sessionId.toString();
             int gcBefore;
             boolean isSnapshotValidation = cfs.snapshotExists(snapshotName);
@@ -903,16 +897,13 @@ public class CompactionManager implements CompactionManagerMBean
                 if (validator.desc.parentSessionId == null || ActiveRepairService.instance.getParentRepairSession(validator.desc.parentSessionId) == null)
                     sstables = cfs.markCurrentSSTablesReferenced();
                 else
-                    sstables = ActiveRepairService.instance.getParentRepairSession(validator.desc.parentSessionId).getAndReferenceSSTables(cfs.metadata.cfId);
+                    sstables = ActiveRepairService.instance.getParentRepairSession(validator.desc.parentSessionId).getAndReferenceSSTables(cfs);
 
                 if (validator.gcBefore > 0)
                     gcBefore = validator.gcBefore;
                 else
                     gcBefore = getDefaultGcBefore(cfs);
             }
-
-            CompactionIterable ci = new ValidationCompactionIterable(cfs, sstables, validator, gcBefore);
-            CloseableIterator<AbstractCompactedRow> iter = ci.iterator();
 
             // Create Merkle tree suitable to hold estimated partitions for given range.
             // We blindly assume that partition is evenly distributed on all sstables for now.
@@ -928,7 +919,7 @@ public class CompactionManager implements CompactionManagerMBean
             long start = System.nanoTime();
             try (AbstractCompactionStrategy.ScannerList scanners = cfs.getCompactionStrategy().getScanners(sstables, validator.desc.range))
             {
-                CompactionIterable ci = new ValidationCompactionIterable(cfs, scanners.scanners, gcBefore);
+                CompactionIterable ci = new ValidationCompactionIterable(cfs, scanners.scanners, validator, gcBefore);
                 Iterator<AbstractCompactedRow> iter = ci.iterator();
                 metrics.beginCompaction(ci);
                 try
@@ -983,7 +974,7 @@ public class CompactionManager implements CompactionManagerMBean
      * @param prs includes repaired ranges to be placed into one of the new sstables. The repaired table will be tracked via
      * the {@link org.apache.cassandra.io.sstable.metadata.StatsMetadata#repairedAt} field.
      */
-    private Collection<SSTableReader> doAntiCompaction(ColumnFamilyStore cfs, Collection<SSTableReader> repairedSSTables, ParentRepairSession prs)
+    private Collection<SSTableReader> doAntiCompaction(ColumnFamilyStore cfs, Collection<SSTableReader> repairedSSTables, ParentRepairSession prs, long repairedAt)
     {
         List<SSTableReader> anticompactedSSTables = new ArrayList<>();
         int repairedKeyCount = 0;
@@ -1020,7 +1011,6 @@ public class CompactionManager implements CompactionManagerMBean
                 CompactionIterable ci = new AntiCompactionIterable(scanners, controller, prs);
                 try (CloseableIterator<AbstractCompactedRow> iter = ci.iterator())
                 {
-                    AbstractCompactedRow row = iter.next();
                     // if current range from sstable is repaired, save it into the new repaired sstable
                     if (ci.isStopRequested())
                         throw new CompactionInterruptedException(ci.getCompactionInfo());
@@ -1065,9 +1055,9 @@ public class CompactionManager implements CompactionManagerMBean
     {
         private final ParentRepairSession prs;
 
-        public AntiCompactionIterable(List<ICompactionScanner> scanners, CompactionController controller, ParentRepairSession prs)
+        public AntiCompactionIterable(AbstractCompactionStrategy.ScannerList scanners, CompactionController controller, ParentRepairSession prs)
         {
-            super(OperationType.ANTICOMPACTION, scanners, controller);
+            super(OperationType.ANTICOMPACTION, scanners.scanners, controller);
             this.prs = prs;
         }
 
