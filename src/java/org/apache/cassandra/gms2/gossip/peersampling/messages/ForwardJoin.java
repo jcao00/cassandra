@@ -48,7 +48,7 @@ public class ForwardJoin implements HyParViewMessage
     {
         public ForwardJoin deserialize(DataInput in) throws IOException
         {
-//            return new ForwardJoin(Utils.deserialize(dis), dis.readByte(), dis.readByte(), dis.readByte());
+            return new ForwardJoin(Utils.deserialize(in), in.readByte(), in.readByte(), in.readByte());
         }
 
         public void serialize(ForwardJoin msg, DataOutputPlus out) throws IOException

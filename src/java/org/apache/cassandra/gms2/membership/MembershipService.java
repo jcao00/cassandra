@@ -1,5 +1,6 @@
 package org.apache.cassandra.gms2.membership;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -13,14 +14,14 @@ import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
 public class MembershipService
 {
     // TODO: in the future, this will be the ORSWOT CRDT, but a placeholder for now
-    private final Orswot<> members;
+    private final Orswot<? extends Object> members;
 
     private final Map<InetSocketAddress, PeerState> peerStateMap;
     private final List<IEndpointLifecycleSubscriber> lifecycleSubscribers;
 
-    public MembershipService()
+    public MembershipService(InetAddress localAddr)
     {
-//        members = new HashSet<>();
+        members = new Orswot(localAddr);
         lifecycleSubscribers = new ArrayList<>(4);
         peerStateMap = new ConcurrentHashMap<>();
     }

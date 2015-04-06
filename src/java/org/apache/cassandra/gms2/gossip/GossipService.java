@@ -6,6 +6,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import org.apache.cassandra.gms.IFailureDetector;
 import org.apache.cassandra.gms2.gossip.peersampling.HPVConfig;
 import org.apache.cassandra.gms2.gossip.peersampling.HyParViewService;
+import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService;
+import org.apache.cassandra.gms2.gossip.thicket.ThicketConfig;
 
 public class GossipService
 {
@@ -24,7 +26,8 @@ public class GossipService
         scheduledService = Executors.newSingleThreadScheduledExecutor();
 
         hyParViewService = new HyParViewService(hpvConfig, dispatcher);
-        hyParViewService.init(scheduledService);
+        //TODO: figure out the FD to pass into init()
+        hyParViewService.init(scheduledService, null);
 
         plumtreeService = new ThicketBroadcastService(plumtreeConfig, dispatcher);
         plumtreeService.init(scheduledService);

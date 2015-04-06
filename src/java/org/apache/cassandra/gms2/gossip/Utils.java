@@ -1,8 +1,9 @@
 package org.apache.cassandra.gms2.gossip;
 
+import java.io.DataInput;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -13,7 +14,7 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
-import io.netty.buffer.ByteBuf;
+import org.apache.cassandra.io.util.DataOutputPlus;
 
 public class Utils
 {
@@ -77,12 +78,12 @@ public class Utils
         }
     }
 
-    public static void serialize(InetSocketAddress addr, ByteBuf buf)
+    public static void serialize(InetSocketAddress addr, DataOutputPlus out) throws IOException
     {
         byte[] b = addr.getAddress().getAddress();
-        buf.writeByte(b.length);
-        buf.writeBytes(b);
-        buf.writeShort(addr.getPort());
+        out.writeByte(b.length);
+        out.write(b);
+        out.writeShort(addr.getPort());
     }
 
     public static int serializeSize(InetSocketAddress addr)
@@ -91,10 +92,10 @@ public class Utils
         return 1 + addr.getAddress().getAddress().length + 2;
     }
 
-    public static InetSocketAddress deserialize(ByteBuf buf) throws UnknownHostException
+    public static InetSocketAddress deserialize(DataInput in) throws IOException
     {
-        byte[] b = new byte[buf.readByte()];
-        buf.readBytes(b);
-        return new InetSocketAddress(InetAddress.getByAddress(b), buf.readShort());
+        byte[] b = new byte[in.readByte()];
+        in.readFully(b);
+        return new InetSocketAddress(InetAddress.getByAddress(b), in.readShort());
     }
 }

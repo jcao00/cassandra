@@ -107,6 +107,11 @@ public class Orswot<T>
     {
         SetAndClock<T> localWrapper = wrapper.get();
         Iterable<TaggedElement<T>> intersection = Sets.intersection(localWrapper.elements, orswot.getElements());
+
+
+
+
+        return null;
     }
 
     /**
