@@ -1,6 +1,6 @@
 package org.apache.cassandra.gms2.gossip;
 
-import java.net.InetSocketAddress;
+import java.net.InetAddress;
 
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
 
@@ -16,7 +16,7 @@ public interface GossipBroadcaster
      */
     void registered(PeerSamplingService peerSamplingService);
 
-    void neighborUp(InetSocketAddress peer);
+    void neighborUp(InetAddress peer);
 
-    void neighborDown(InetSocketAddress peer);
+    void neighborDown(InetAddress peer);
 }

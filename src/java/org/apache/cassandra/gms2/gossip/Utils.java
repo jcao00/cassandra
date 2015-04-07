@@ -3,7 +3,6 @@ package org.apache.cassandra.gms2.gossip;
 import java.io.DataInput;
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -78,24 +77,23 @@ public class Utils
         }
     }
 
-    public static void serialize(InetSocketAddress addr, DataOutputPlus out) throws IOException
+    public static void serialize(InetAddress addr, DataOutputPlus out) throws IOException
     {
-        byte[] b = addr.getAddress().getAddress();
+        byte[] b = addr.getAddress();
         out.writeByte(b.length);
         out.write(b);
-        out.writeShort(addr.getPort());
     }
 
-    public static int serializeSize(InetSocketAddress addr)
+    public static int serializeSize(InetAddress addr)
     {
-        // ipAddr len (byte) + ipAddr bytes + port (short)
-        return 1 + addr.getAddress().getAddress().length + 2;
+        // ipAddr len (byte) + ipAddr bytes
+        return 1 + addr.getAddress().length;
     }
 
-    public static InetSocketAddress deserialize(DataInput in) throws IOException
+    public static InetAddress deserialize(DataInput in) throws IOException
     {
         byte[] b = new byte[in.readByte()];
         in.readFully(b);
-        return new InetSocketAddress(InetAddress.getByAddress(b), in.readShort());
+        return InetAddress.getByAddress(b);
     }
 }

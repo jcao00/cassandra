@@ -2,7 +2,7 @@ package org.apache.cassandra.gms2.gossip.peersampling.messages;
 
 import java.io.DataInput;
 import java.io.IOException;
-import java.net.InetSocketAddress;
+import java.net.InetAddress;
 
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.gms2.gossip.Utils;
@@ -13,12 +13,12 @@ public class ForwardJoin implements HyParViewMessage
 {
     private static final ISerializer<ForwardJoin> serializer = new Serializer();
 
-    public final InetSocketAddress originator;
+    public final InetAddress originator;
     public final byte timeToLive;
     public final byte activeRandomWalkLength;
     public final byte passiveRandomWalkLength;
 
-    public ForwardJoin(InetSocketAddress originator, byte timeToLive, byte activeRandomWalkLength, byte passiveRandomWalkLength)
+    public ForwardJoin(InetAddress originator, byte timeToLive, byte activeRandomWalkLength, byte passiveRandomWalkLength)
     {
         this.originator = originator;
         this.timeToLive = timeToLive;

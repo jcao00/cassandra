@@ -2,7 +2,7 @@ package org.apache.cassandra.gms2.gossip.peersampling.messages;
 
 import java.io.DataInput;
 import java.io.IOException;
-import java.net.InetSocketAddress;
+import java.net.InetAddress;
 import java.util.Collection;
 
 import org.apache.cassandra.db.TypeSizes;
@@ -13,21 +13,21 @@ public class ShuffleResponse implements HyParViewMessage
 {
     private static final ISerializer<ShuffleResponse> serializer = new Serializer();
 
-    private final Collection<InetSocketAddress> nodes;
-    private final Collection<InetSocketAddress> sentNodes;
+    private final Collection<InetAddress> nodes;
+    private final Collection<InetAddress> sentNodes;
 
-    public ShuffleResponse(Collection<InetSocketAddress> peers, Collection<InetSocketAddress> sentNodes)
+    public ShuffleResponse(Collection<InetAddress> peers, Collection<InetAddress> sentNodes)
     {
         this.nodes = peers;
         this.sentNodes = sentNodes;
     }
 
-    public Collection<InetSocketAddress> getNodes()
+    public Collection<InetAddress> getNodes()
     {
         return nodes;
     }
 
-    public Collection<InetSocketAddress> getSentNodes()
+    public Collection<InetAddress> getSentNodes()
     {
         return sentNodes;
     }

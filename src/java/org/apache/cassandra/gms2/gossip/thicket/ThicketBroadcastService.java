@@ -1,6 +1,6 @@
 package org.apache.cassandra.gms2.gossip.thicket;
 
-import java.net.InetSocketAddress;
+import java.net.InetAddress;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
@@ -20,8 +20,8 @@ public class ThicketBroadcastService implements GossipBroadcaster
     private final ThicketConfig config;
     private final GossipDispatcher dispatcher;
 
-    private final List<InetSocketAddress> eagerPushPeers;
-    private final List<InetSocketAddress> lazyPushPeers;
+    private final List<InetAddress> eagerPushPeers;
+    private final List<InetAddress> lazyPushPeers;
     private PeerSamplingService peerSamplingService;
 
     public ThicketBroadcastService(ThicketConfig config, GossipDispatcher dispatcher)
@@ -37,7 +37,7 @@ public class ThicketBroadcastService implements GossipBroadcaster
         // TODO: set up background timer events
     }
 
-    public void handle(ThicketMessage msg, InetSocketAddress sender)
+    public void handle(ThicketMessage msg, InetAddress sender)
     {
 
     }
@@ -48,12 +48,12 @@ public class ThicketBroadcastService implements GossipBroadcaster
         eagerPushPeers.addAll(peerSamplingService.getPeers());
     }
 
-    public void neighborUp(InetSocketAddress peer)
+    public void neighborUp(InetAddress peer)
     {
 
     }
 
-    public void neighborDown(InetSocketAddress peer)
+    public void neighborDown(InetAddress peer)
     {
 
     }

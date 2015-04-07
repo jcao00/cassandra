@@ -4,10 +4,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.cassandra.gms.IFailureDetector;
+import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyService;
 import org.apache.cassandra.gms2.gossip.peersampling.HPVConfig;
 import org.apache.cassandra.gms2.gossip.peersampling.HyParViewService;
 import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService;
 import org.apache.cassandra.gms2.gossip.thicket.ThicketConfig;
+import org.apache.cassandra.gms2.membership.MembershipService;
 
 public class GossipService
 {
@@ -33,5 +35,8 @@ public class GossipService
         plumtreeService.init(scheduledService);
         hyParViewService.register(plumtreeService);
 
+        MembershipService membershipService = new MembershipService(hpvConfig.getLocalAddr());
+        AntiEntropyService antiEntropyService = new AntiEntropyService(membershipService, hyParViewService);
+        membershipService.init(antiEntropyService);
     }
 }

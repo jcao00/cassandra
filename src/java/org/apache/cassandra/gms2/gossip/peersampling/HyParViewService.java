@@ -1,7 +1,7 @@
 package org.apache.cassandra.gms2.gossip.peersampling;
 
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
+import java.net.InetAddress;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -39,8 +39,8 @@ import org.apache.cassandra.gms2.gossip.peersampling.messages.NeighborResponse.R
 public class HyParViewService implements PeerSamplingService
 {
     private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
-    private final List<InetSocketAddress> activeView;
-    private final List<InetSocketAddress> passiveView;
+    private final List<InetAddress> activeView;
+    private final List<InetAddress> passiveView;
     private final HPVConfig config;
     private final GossipDispatcher dispatcher;
 
@@ -77,13 +77,13 @@ public class HyParViewService implements PeerSamplingService
 
         public void convict(InetAddress ep, double phi)
         {
-            service.handlePeerFailure(new InetSocketAddress(ep, DEFAULT_PEER_PORT));
+            service.handlePeerFailure(ep);
         }
     }
 
     public void join()
     {
-        InetSocketAddress seed = Utils.selectRandom(config.getSeeds());
+        InetAddress seed = Utils.selectRandom(config.getSeeds());
 
         if (seed == null)
         {
@@ -95,7 +95,7 @@ public class HyParViewService implements PeerSamplingService
         dispatcher.send(this, new Join(), seed);
     }
 
-    public void handle(HyParViewMessage msg, InetSocketAddress sender)
+    public void handle(HyParViewMessage msg, InetAddress sender)
     {
         switch (msg.getMessageType())
         {
@@ -112,7 +112,7 @@ public class HyParViewService implements PeerSamplingService
         }
     }
 
-    public void handleJoin(Join msg, InetSocketAddress sender)
+    public void handleJoin(Join msg, InetAddress sender)
     {
         if (sender.equals(config.getLocalAddr()))
         {
@@ -121,7 +121,7 @@ public class HyParViewService implements PeerSamplingService
 
         // now send the forward join to everyone in my active view
         String id = UUID.randomUUID().toString();
-        for (InetSocketAddress peer : Utils.filter(activeView, sender))
+        for (InetAddress peer : Utils.filter(activeView, sender))
         {
             logger.info("sending new FJ to {} about originator {} from seed {}, {}", peer, sender, config.getLocalAddr(), id);
             ForwardJoin forwardJoin = new ForwardJoin(sender, config.getActiveRandomWalkLength(),
@@ -134,7 +134,7 @@ public class HyParViewService implements PeerSamplingService
         dispatcher.send(this, new JoinAck(), sender);
     }
 
-    void addToActiveView(InetSocketAddress peer)
+    void addToActiveView(InetAddress peer)
     {
         if (peer.equals(config.getLocalAddr()))
         {
@@ -157,7 +157,7 @@ public class HyParViewService implements PeerSamplingService
         passiveView.remove(peer);
     }
 
-    void removeFromActiveView(InetSocketAddress peer, boolean addToPassiveView)
+    void removeFromActiveView(InetAddress peer, boolean addToPassiveView)
     {
         if (!activeView.remove(peer))
         {
@@ -174,7 +174,7 @@ public class HyParViewService implements PeerSamplingService
             broadcaster.neighborDown(peer);
     }
 
-    void addToPassiveView(InetSocketAddress peer)
+    void addToPassiveView(InetAddress peer)
     {
         if (peer.equals(config.getLocalAddr()) || passiveView.contains(peer))
             return;
@@ -184,7 +184,7 @@ public class HyParViewService implements PeerSamplingService
             passiveView.remove(0);
     }
 
-    public void handleForwardJoin(final ForwardJoin msg, InetSocketAddress sender)
+    public void handleForwardJoin(final ForwardJoin msg, InetAddress sender)
     {
         int ttl = msg.timeToLive > 0 ? msg.timeToLive - 1 : 0;
 
@@ -201,7 +201,7 @@ public class HyParViewService implements PeerSamplingService
         if (ttl == msg.passiveRandomWalkLength)
             addToPassiveView(msg.originator);
 
-        InetSocketAddress peer = Utils.selectRandom(activeView, sender, msg.originator);
+        InetAddress peer = Utils.selectRandom(activeView, sender, msg.originator);
         if (peer == null)
             peer = sender;
 
@@ -210,12 +210,12 @@ public class HyParViewService implements PeerSamplingService
     }
 
 
-    public void handleJoinACk(JoinAck msg, InetSocketAddress sender)
+    public void handleJoinACk(JoinAck msg, InetAddress sender)
     {
         addToActiveView(sender);
     }
 
-    public void handleDisconnect(Disconnect msg, InetSocketAddress sender)
+    public void handleDisconnect(Disconnect msg, InetAddress sender)
     {
         logger.info("{} received disconnect from {}", config.getLocalAddr(), sender);
         if (activeView.contains(sender))
@@ -225,7 +225,7 @@ public class HyParViewService implements PeerSamplingService
         }
     }
 
-    private void sendNeighborRequest(final InetSocketAddress lastAddr)
+    private void sendNeighborRequest(final InetAddress lastAddr)
     {
         if (passiveView.isEmpty())
         {
@@ -253,9 +253,9 @@ public class HyParViewService implements PeerSamplingService
         int idx = 0;
         if (lastAddr != null)
         {
-            idx = Iterables.indexOf(passiveView, new Predicate<InetSocketAddress>()
+            idx = Iterables.indexOf(passiveView, new Predicate<InetAddress>()
             {
-                public boolean apply(InetSocketAddress input)
+                public boolean apply(InetAddress input)
                 {
                     return lastAddr.equals(input);
                 }
@@ -288,12 +288,12 @@ public class HyParViewService implements PeerSamplingService
         }
 
 
-        InetSocketAddress peer = passiveView.get(idx);
+        InetAddress peer = passiveView.get(idx);
         logger.info("NR {} -- idx {}, peer {}, priority {}", config.getLocalAddr(), idx, peer, priority);
         dispatcher.send(this, new NeighborRequest(priority), peer);
     }
 
-    public void handleNeighborRequest(NeighborRequest msg, InetSocketAddress sender)
+    public void handleNeighborRequest(NeighborRequest msg, InetAddress sender)
     {
         if (msg.getPriority() == Priority.LOW && activeView.size() == config.getActiveViewLength())
         {
@@ -305,7 +305,7 @@ public class HyParViewService implements PeerSamplingService
         dispatcher.send(this, new NeighborResponse(Result.ACCEPT), sender);
     }
 
-    public void handleNeighborResponse(NeighborResponse msg, InetSocketAddress sender)
+    public void handleNeighborResponse(NeighborResponse msg, InetAddress sender)
     {
         logger.info("NRes {} -- peer {}, result {}", config.getLocalAddr(), sender, msg.getResult());
         if (msg.getResult() == Result.ACCEPT)
@@ -335,14 +335,14 @@ public class HyParViewService implements PeerSamplingService
             return;
         }
 
-        InetSocketAddress peer = Utils.selectRandom(activeView);
+        InetAddress peer = Utils.selectRandom(activeView);
         if (peer == null)
         {
             logger.warn("pre-condition check of at least one peer in the active view failed. skipping shuffle round");
             return;
         }
 
-        Collection<InetSocketAddress> shufflePeers = buildShuffleGroup(activeView, passiveView);
+        Collection<InetAddress> shufflePeers = buildShuffleGroup(activeView, passiveView);
         Shuffle msg = new Shuffle(config.getLocalAddr(), shufflePeers, config.getShuffleWalkLength());
         dispatcher.send(this, msg, peer);
 
@@ -351,7 +351,7 @@ public class HyParViewService implements PeerSamplingService
         int rnd = ThreadLocalRandom.current().nextInt(0, percentage);
         if (rnd % percentage == 0)
         {
-            InetSocketAddress seed = Utils.selectRandom(config.getSeeds(), peer, config.getLocalAddr());
+            InetAddress seed = Utils.selectRandom(config.getSeeds(), peer, config.getLocalAddr());
             if (seed == null)
                 return;
             dispatcher.send(this, msg, seed);
@@ -359,9 +359,9 @@ public class HyParViewService implements PeerSamplingService
     }
 
     @VisibleForTesting
-    Collection<InetSocketAddress> buildShuffleGroup(Collection<InetSocketAddress> activeViewFiltered, Collection<InetSocketAddress> passiveViewFiltered)
+    Collection<InetAddress> buildShuffleGroup(Collection<InetAddress> activeViewFiltered, Collection<InetAddress> passiveViewFiltered)
     {
-        Collection<InetSocketAddress> nodes = new HashSet<>();
+        Collection<InetAddress> nodes = new HashSet<>();
         nodes.add(config.getLocalAddr());
         Utils.selectMultipleRandom(activeViewFiltered, nodes, config.getShuffleActiveViewCount());
         Utils.selectMultipleRandom(passiveViewFiltered, nodes, config.getShufflePassiveViewCount());
@@ -369,14 +369,14 @@ public class HyParViewService implements PeerSamplingService
         return nodes;
     }
 
-    public void handleShuffle(Shuffle msg, InetSocketAddress sender)
+    public void handleShuffle(Shuffle msg, InetAddress sender)
     {
         // consume this shuffle message in case this node's active view is somehow zero, else forward along
         if (msg.getTimeToLive() > 0 && activeView.size() > 1)
         {
             logger.debug("in handle_shuffle, going to forward the request from {} on behalf of {}", sender, msg.getOriginator());
             // avoid forwarding the shuffle back to the sender, but if there's nowhere else to send it, return to the sender
-            InetSocketAddress peer = Utils.selectRandom(activeView, sender, msg.getOriginator());
+            InetAddress peer = Utils.selectRandom(activeView, sender, msg.getOriginator());
             if (peer == null)
                 peer = sender;
 
@@ -385,20 +385,20 @@ public class HyParViewService implements PeerSamplingService
         }
 
         // build up our response shuffle list before applying the originator's shuffle list
-        Collection<InetSocketAddress> shufflePeers = buildShuffleGroup(Utils.filter(activeView, msg.getOriginator()), Utils.filter(passiveView, msg.getOriginator()));
-        applyShuffle(msg.getNodes(), Collections.<InetSocketAddress>emptyList());
+        Collection<InetAddress> shufflePeers = buildShuffleGroup(Utils.filter(activeView, msg.getOriginator()), Utils.filter(passiveView, msg.getOriginator()));
+        applyShuffle(msg.getNodes(), Collections.<InetAddress>emptyList());
         dispatcher.send(this, new ShuffleResponse(shufflePeers, msg.getNodes()), msg.getOriginator());
     }
 
-    void applyShuffle(Collection<InetSocketAddress> nodes, Collection<InetSocketAddress> filter)
+    void applyShuffle(Collection<InetAddress> nodes, Collection<InetAddress> filter)
     {
         // first, filter out any entries that are currently in the active or passive views
-        Collection<InetSocketAddress> filtered = Utils.filter(nodes, activeView.toArray(new InetSocketAddress[0]));
-        filtered = Utils.filter(filtered, passiveView.toArray(new InetSocketAddress[0]));
+        Collection<InetAddress> filtered = Utils.filter(nodes, activeView.toArray(new InetAddress[0]));
+        filtered = Utils.filter(filtered, passiveView.toArray(new InetAddress[0]));
         filtered.remove(config.getLocalAddr());
 
         // next, add any remaining nodes to the passive view
-        for (InetSocketAddress peer : filtered)
+        for (InetAddress peer : filtered)
         {
             if (filter.contains(peer))
                 continue;
@@ -406,12 +406,12 @@ public class HyParViewService implements PeerSamplingService
         }
     }
 
-    public void handleShuffleReply(ShuffleResponse msg, InetSocketAddress sender)
+    public void handleShuffleReply(ShuffleResponse msg, InetAddress sender)
     {
         applyShuffle(msg.getNodes(), msg.getSentNodes());
     }
 
-    public void handlePeerFailure(InetSocketAddress peer)
+    public void handlePeerFailure(InetAddress peer)
     {
         removeFromActiveView(peer, false);
         sendNeighborRequest(null);
@@ -419,9 +419,9 @@ public class HyParViewService implements PeerSamplingService
 
     @VisibleForTesting
     // never use outside of testing!!!
-    public void addToActiveView(List<InetSocketAddress> nodes)
+    public void addToActiveView(List<InetAddress> nodes)
     {
-        for (InetSocketAddress addr : nodes)
+        for (InetAddress addr : nodes)
         {
             if (!activeView.contains(addr))
                 activeView.add(addr);
@@ -430,9 +430,9 @@ public class HyParViewService implements PeerSamplingService
 
     @VisibleForTesting
     // never use outside of testing!!!
-    public void addToPassiveView(List<InetSocketAddress> nodes)
+    public void addToPassiveView(List<InetAddress> nodes)
     {
-        for (InetSocketAddress addr : nodes)
+        for (InetAddress addr : nodes)
         {
             if (!passiveView.contains(addr))
                 passiveView.add(addr);
@@ -454,13 +454,13 @@ public class HyParViewService implements PeerSamplingService
     }
 
     @VisibleForTesting
-    List<InetSocketAddress> getActiveView()
+    List<InetAddress> getActiveView()
     {
         return ImmutableList.copyOf(activeView);
     }
 
     @VisibleForTesting
-    List<InetSocketAddress> getPassiveView()
+    List<InetAddress> getPassiveView()
     {
         return ImmutableList.copyOf(passiveView);
     }
@@ -484,7 +484,7 @@ public class HyParViewService implements PeerSamplingService
         broadcaster.registered(this);
     }
 
-    public Collection<InetSocketAddress> getPeers()
+    public Collection<InetAddress> getPeers()
     {
         return ImmutableList.copyOf(activeView);
     }

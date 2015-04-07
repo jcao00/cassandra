@@ -1,15 +1,15 @@
 package org.apache.cassandra.gms2.gossip.peersampling;
 
-import java.net.InetSocketAddress;
+import java.net.InetAddress;
 import java.util.List;
 
 public interface HPVConfig
 {
     int getShuffleInterval();
 
-    List<InetSocketAddress> getSeeds();
+    List<InetAddress> getSeeds();
 
-    InetSocketAddress getLocalAddr();
+    InetAddress getLocalAddr();
 
     byte getActiveViewLength();
 
