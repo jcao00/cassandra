@@ -17,20 +17,16 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 
 public class Utils
 {
-    public static <T> T selectRandom(List<T> source,  final T... toFilter)
+    public static <T> T selectRandom(Collection<T> source,  final T... toFilter)
     {
         if (source == null || source.isEmpty())
             return null;
 
         List<T> filtered;
         if (toFilter.length == 0)
-        {
-            filtered = source;
-        }
+            filtered = new ArrayList<>(source);
         else
-        {
             filtered = filter(source, toFilter);
-        }
 
         if (filtered.size() == 0)
             return null;
@@ -59,6 +55,11 @@ public class Utils
 
     public static <T> void selectMultipleRandom(Collection<T> source, Collection<T> dest, int maxCount)
     {
+        selectMultipleRandom(source, dest, Collections.<T>emptyList(), maxCount);
+    }
+
+    public static <T> void selectMultipleRandom(Collection<T> source, Collection<T> dest, Collection<T> filter, int maxCount)
+    {
         if (dest == null || dest.isEmpty())
             return;
         List<T> copy = new ArrayList<>(source);
@@ -67,7 +68,7 @@ public class Utils
         int cnt = 0;
         for (T t : copy)
         {
-            if (!dest.contains(t))
+            if (!dest.contains(t) && !filter.contains(t))
             {
                 dest.add(t);
                 cnt++;

@@ -9,11 +9,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
-import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
-import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyService;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
-import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
 
 /**
@@ -23,13 +21,16 @@ import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
  * if not only due to historical reasons, but also the anti-entropy part of gossip prefers
  * peers not already being used by the broadcast/peer sampling services.
  */
-public class MembershipService implements PeerSamplingService, AntiEntropyClient
+public class MembershipService implements PeerSamplingService, BroadcastClient
 {
-    // TODO: in the future, this will be the ORSWOT CRDT, but a placeholder for now
+    private static final String ID = "membership_svc";
+
     private final Orswot<? extends Object> members;
 
     private final Map<InetSocketAddress, PeerState> peerStateMap;
     private final List<IEndpointLifecycleSubscriber> lifecycleSubscribers;
+
+    private GossipBroadcaster broadcaster;
 
     public MembershipService(InetAddress localAddr)
     {
@@ -40,11 +41,6 @@ public class MembershipService implements PeerSamplingService, AntiEntropyClient
 
     //TODO: when size of membership changes, callback to the Broadcast service (HPV)
     // so it can adjust it's active/passive view size, ARWL/PRLW, and so on
-
-    public void init(AntiEntropyService antiEntropy)
-    {
-        antiEntropy.register(this);
-    }
 
     public void register(GossipBroadcaster broadcaster)
     {
@@ -57,13 +53,23 @@ public class MembershipService implements PeerSamplingService, AntiEntropyClient
         return null;
     }
 
-    public void receive(ISerializer iSerializer) throws IOException
+    public String getClientId()
     {
-
+        return ID;
     }
 
-    public ISerializer getDataToSend()
+    public boolean receiveBroadcast(Object messageId, Object message) throws IOException
+    {
+        return true;
+    }
+
+    public Object prepareSummary()
     {
         return null;
+    }
+
+    public void receiveSummary(Object summary)
+    {
+
     }
 }
