@@ -12,6 +12,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,7 +35,7 @@ import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
  * <a html="http://asc.di.fct.unl.pt/~jleitao/pdf/srds10-mario.pdf">
  * Thicket: A Protocol for Building and Maintaining Multiple Trees in a P2P Overlay</a> paper.
  */
-public class ThicketBroadcastService implements GossipBroadcaster
+public class ThicketBroadcastService<M extends ThicketMessage> implements GossipBroadcaster, GossipDispatcher.GossipReceiver<M>
 {
     private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastService.class);
     private final ThicketConfig config;
@@ -48,10 +50,9 @@ public class ThicketBroadcastService implements GossipBroadcaster
      * Collection of peers from which to draw when contacted by a new {sender/tree root} combination.
      * These entries would become the target peers for broadcasting.
      */
-    // TODO could use a set instead of a list, but then lose FIFO properties (does that matter?), although Utils
     // TODO: should peer sampling service be the only source for backups? especially in the case of anti-entropy --
     // plus we want dc-weighting for anti-entropy
-    private final List<InetAddress> backupPeers;
+    private final Collection<InetAddress> backupPeers;
 
     private final ConcurrentMap<String, BroadcastClient> clients;
 
@@ -68,6 +69,8 @@ public class ThicketBroadcastService implements GossipBroadcaster
         this.config = config;
         this.dispatcher = dispatcher;
         activePeers = new ConcurrentHashMap<>();
+
+        //TODO: should this be a set instead? not sure if we care about FIFO properties... (we don't)
         backupPeers = new CopyOnWriteArrayList<>();
         clients = new ConcurrentHashMap<>();
     }
@@ -81,13 +84,17 @@ public class ThicketBroadcastService implements GossipBroadcaster
     {
         InetAddress localAddr = config.getLocalAddr();
         Collection<InetAddress> targets = getTargets(localAddr, localAddr);
+        System.out.println(String.format("target for %s = %s", getAddress(), targets));
 
         if (!targets.isEmpty())
         {
             ThicketDataMessage dataMessage = new ThicketDataMessage(localAddr, clientId, messageId, message, new byte[0]);
 
             for (InetAddress addr : targets)
+            {
+                System.out.println(String.format("%s is dispatching to %s", getAddress(), addr));
                 dispatcher.send(this, dataMessage, addr);
+            }
         }
         else
         {
@@ -113,11 +120,11 @@ public class ThicketBroadcastService implements GossipBroadcaster
         return targets;
     }
 
-    final List<InetAddress> buildActivePeers(InetAddress sender, InetAddress treeRoot)
+    List<InetAddress> buildActivePeers(InetAddress sender, InetAddress treeRoot)
     {
         // if this node is already interior to some other tree, the activePeers for the new tree (for this node)
         // will only contain the sender (so this node acts as a leaf)
-        if (isInterior())
+        if (!sender.equals(treeRoot) && isInterior())
         {
             List<InetAddress> peers = new ArrayList<>(1);
             peers.add(sender);
@@ -125,7 +132,9 @@ public class ThicketBroadcastService implements GossipBroadcaster
         }
 
         List<InetAddress> peers = new ArrayList<>(fanout);
-        peers.add(sender);
+        // always include the sender, unless it's the tree root (itself)
+        if (!sender.equals(treeRoot))
+            peers.add(sender);
 
         List<InetAddress> filter = new ArrayList<>(1);
         peers.add(treeRoot);
@@ -183,7 +192,7 @@ public class ThicketBroadcastService implements GossipBroadcaster
         BroadcastClient client = clients.get(msg.getClientId());
         if (client == null)
         {
-            logger.warn("received a message for unknown client component: {}; ignoring message", msg.getClientId());
+            System.out.println(String.format("%s, received a message for unknown client component: %s; ignoring message", getAddress(), msg.getClientId()));
             return;
         }
 
@@ -281,7 +290,7 @@ public class ThicketBroadcastService implements GossipBroadcaster
 
     public void neighborUp(InetAddress peer)
     {
-        if (!backupPeers.contains(peer))
+        if (!backupPeers.contains(peer) && !peer.equals(getAddress()))
             backupPeers.add(peer);
     }
 
@@ -299,6 +308,17 @@ public class ThicketBroadcastService implements GossipBroadcaster
         if (clusterSize == 0)
             fanout = 1;
         fanout = (int)Math.ceil(Math.log(clusterSize));
+    }
+
+    public InetAddress getAddress()
+    {
+        return config.getLocalAddr();
+    }
+
+    @VisibleForTesting
+    public List<InetAddress> getBackupPeers()
+    {
+        return ImmutableList.copyOf(backupPeers);
     }
 
     private class SummaryTask implements Runnable

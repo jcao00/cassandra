@@ -19,7 +19,7 @@ public interface BroadcastClient
     String getClientId();
 
     /**
-     * @return true if the message was fresh; else, false, if it was stale
+     * @return true if the message has not been previously received; else, false, if it was stale
      */
     boolean receiveBroadcast(Object messageId, Object message) throws IOException;
 

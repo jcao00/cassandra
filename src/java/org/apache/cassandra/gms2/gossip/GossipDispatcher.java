@@ -8,9 +8,14 @@ import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
 
 
-public interface GossipDispatcher
+public interface GossipDispatcher<S extends GossipDispatcher.GossipReceiver, M>
 {
-    void send(HyParViewService svc, HyParViewMessage msg, InetAddress dest);
+    void send(S svc, M msg, InetAddress dest);
 
-    void send(ThicketBroadcastService svc, ThicketMessage msg, InetAddress dest);
+    interface GossipReceiver<M>
+    {
+        void handle(M msg, InetAddress sender);
+
+        InetAddress getAddress();
+    }
 }

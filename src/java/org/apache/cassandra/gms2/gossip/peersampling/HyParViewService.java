@@ -36,7 +36,7 @@ import org.apache.cassandra.gms2.gossip.peersampling.messages.NeighborResponse.R
  * Note: this class is intentionally not thread safe, and assumes a single threaded execution model.
  * This is to keep the implementation simple, and, really, this data/functionality should not be a hot spot.
  */
-public class HyParViewService implements PeerSamplingService
+public class HyParViewService<M extends HyParViewMessage> implements PeerSamplingService, GossipDispatcher.GossipReceiver<M>
 {
     private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
     private final List<InetAddress> activeView;
@@ -95,7 +95,7 @@ public class HyParViewService implements PeerSamplingService
         dispatcher.send(this, new Join(), seed);
     }
 
-    public void handle(HyParViewMessage msg, InetAddress sender)
+    public void handle(M msg, InetAddress sender)
     {
         switch (msg.getMessageType())
         {
@@ -445,6 +445,11 @@ public class HyParViewService implements PeerSamplingService
         {
             handleNextShuffleRound();
         }
+    }
+
+    public InetAddress getAddress()
+    {
+        return config.getLocalAddr();
     }
 
     @VisibleForTesting

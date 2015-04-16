@@ -8,15 +8,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
-import org.apache.cassandra.gms2.gossip.peersampling.messages.HyParViewMessage;
 
 /**
  * ... because GrandCentralDispatch was already in use ... but, hey,
  * it's still better than the Port Authority Bus Terminal!
+ *
+ * @param <S> service type
+*  @param <M> message type
  */
-public class PennStationDispatcher implements GossipDispatcher
+public class PennStationDispatcher<S extends GossipDispatcher.GossipReceiver, M> implements GossipDispatcher<S, M>
 {
-    private final ConcurrentHashMap<InetAddress, HyParViewService> nodes;
+    private final ConcurrentHashMap<InetAddress, S> nodes;
     private final ThreadPoolExecutor executor;
     private final AtomicInteger cnt = new AtomicInteger(0);
 
@@ -26,33 +28,33 @@ public class PennStationDispatcher implements GossipDispatcher
         executor = new ThreadPoolExecutor(2, 32, 30, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
     }
 
-    public void register(InetAddress addr, HyParViewService svc)
+    public void register(InetAddress addr, S svc)
     {
         nodes.put(addr, svc);
     }
 
-    public ConcurrentHashMap<InetAddress, HyParViewService> getNodes()
+    public ConcurrentHashMap<InetAddress, S> getNodes()
     {
         return nodes;
     }
 
-    public void send(HyParViewService svc, HyParViewMessage msg, InetAddress dest)
+    public void send(S svc, M msg, InetAddress dest)
     {
-        HyParViewService destSvc = nodes.get(dest);
+        S destSvc = nodes.get(dest);
         if (destSvc == null)
             throw new IllegalArgumentException("no registered destination service with addr " + dest);
 
         cnt.incrementAndGet();
-        executor.submit(new WorkTask(destSvc, msg, svc.getConfig().getLocalAddr()));
+        executor.submit(new WorkTask(destSvc, msg, svc.getAddress()));
     }
 
-    private static class WorkTask implements Runnable
+    private  class WorkTask implements Runnable
     {
-        private final HyParViewService destination;
-        private final HyParViewMessage msg;
+        private final S destination;
+        private final M msg;
         private final InetAddress sender;
 
-        private WorkTask(HyParViewService destination, HyParViewMessage msg, InetAddress sender)
+        private WorkTask(S destination, M msg, InetAddress sender)
         {
             this.destination = destination;
             this.msg = msg;

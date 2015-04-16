@@ -4,6 +4,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,6 +16,8 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.apache.cassandra.gms2.gossip.peersampling.messages.HyParViewMessage;
 
 public class HyParViewServiceTest
 {
@@ -73,7 +76,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    @Ignore
+    //@Ignore
     public void joinManyReally() throws UnknownHostException
     {
         for (int i = 0; i < 128; i++)
@@ -88,12 +91,13 @@ public class HyParViewServiceTest
         PennStationDispatcher dispatcher = buildCluster(1, 6);
         waitForQuiesence(dispatcher);
         ConcurrentHashMap<InetAddress, HyParViewService> nodes = dispatcher.getNodes();
+
         logger.info("**** new graph ***\n{}", nodes);
         for (Map.Entry<InetAddress, HyParViewService> entry : nodes.entrySet())
         {
-            for (InetAddress peerAddr : entry.getValue().getActiveView())
+            for (Iterator<InetAddress> i = entry.getValue().getActiveView().iterator(); i.hasNext(); )
             {
-                HyParViewService peer = nodes.get(peerAddr);
+                HyParViewService peer = nodes.get(i.next());
                 Assert.assertTrue(String.format("node %s is missing reciprocating entry in %s", entry.getValue(), peer),
                                   peer.getActiveView().contains(entry.getKey()));
             }
