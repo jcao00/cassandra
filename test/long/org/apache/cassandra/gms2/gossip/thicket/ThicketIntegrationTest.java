@@ -1,4 +1,4 @@
-package org.apache.cassandra.gms2.thicket;
+package org.apache.cassandra.gms2.gossip.thicket;
 
 import java.io.IOException;
 import java.net.InetAddress;

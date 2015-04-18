@@ -8,7 +8,7 @@ public class GraftRequestMessage extends ThicketMessage
 {
     private final InetAddress treeRoot;
 
-    public GraftRequestMessage(InetAddress treeRoot, byte[] loadEstimate)
+    public GraftRequestMessage(InetAddress treeRoot, float loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.treeRoot = treeRoot;

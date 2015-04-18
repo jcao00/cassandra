@@ -8,7 +8,7 @@ public class PruneMessage extends ThicketMessage
 {
     private final InetAddress treeRoot;
 
-    public PruneMessage(InetAddress treeRoot, byte[] loadEstimate)
+    public PruneMessage(InetAddress treeRoot, float loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.treeRoot = treeRoot;

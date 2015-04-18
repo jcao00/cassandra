@@ -10,7 +10,7 @@ public class ThicketDataMessage extends ThicketMessage
     private final Object messageId;
     private final Object message;
 
-    public ThicketDataMessage(InetAddress treeRoot, String clientId, Object messageId, Object message, byte[] loadEstimate)
+    public ThicketDataMessage(InetAddress treeRoot, String clientId, Object messageId, Object message, float loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.clientId = clientId;
@@ -18,7 +18,7 @@ public class ThicketDataMessage extends ThicketMessage
         this.message = message;
     }
 
-    public ThicketDataMessage(ThicketDataMessage msg, byte[] loadEstimate)
+    public ThicketDataMessage(ThicketDataMessage msg, float loadEstimate)
     {
         this(msg.getTreeRoot(), msg.getClientId(), msg.getMessageId(), msg.getMessage(), loadEstimate);
     }

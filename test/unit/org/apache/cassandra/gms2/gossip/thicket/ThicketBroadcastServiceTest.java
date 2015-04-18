@@ -18,6 +18,9 @@ import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
 
 public class ThicketBroadcastServiceTest
 {
+    final String msgId = "msg0";
+    final String msg = "hello, thicket!";
+
     ThicketBroadcastService<ThicketMessage> thicket;
     InetAddress addr;
     InetAddress sender;
@@ -25,13 +28,19 @@ public class ThicketBroadcastServiceTest
     // an arbitrary address to use as a tree root
     InetAddress treeRoot;
 
+    SimpleClient client;
+
     @Before
     public void setup() throws UnknownHostException
     {
         addr = InetAddress.getByName("127.0.0.1");
-        thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), new EmptyDispatcher());
+        thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), new AddressRecordingDispatcher());
         sender = InetAddress.getByName("127.0.0.2");
         treeRoot = InetAddress.getByName("127.10.13.0");
+
+
+        client = new SimpleClient();
+
     }
 
     @Test
@@ -201,25 +210,45 @@ public class ThicketBroadcastServiceTest
     }
 
     @Test
+    public void broadcast_WithPeers()
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        thicket.setBackupPeers(addrs);
+
+        thicket.broadcast(client.getClientId(), msgId, msg);
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertEquals(dispatcher.destinations.toString(), 1, dispatcher.destinations.size());
+        Assert.assertTrue(dispatcher.destinations.contains(sender));
+    }
+
+    @Test
+    public void broadcast_WithNoPeers()
+    {
+        thicket.broadcast(client.getClientId(), msgId, msg);
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertEquals(dispatcher.destinations.toString(), 0, dispatcher.destinations.size());
+    }
+
+    @Test
     public void handleData() throws IOException
     {
-        SimpleClient client = new SimpleClient();
         thicket.register(client);
 
-        String msgId = "msg0";
-        String msg = "hello, thicket!";
-        ThicketDataMessage thicketMessage = new ThicketDataMessage(sender, client.getClientId(), msgId, msg, new byte[0]);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(sender, client.getClientId(), msgId, msg, 1.0f);
 
         thicket.handleDataMessage(thicketMessage, sender);
         Assert.assertEquals(client.toString(), msgId, client.lastReceivedMessageId);
         Assert.assertEquals(client.toString(), msg, client.lastReceivedMessage);
     }
 
-    static class EmptyDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
+    static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
     {
+        public List<InetAddress> destinations = new ArrayList<>();
+
         public void send(ThicketBroadcastService<ThicketMessage> svc, ThicketMessage msg, InetAddress dest)
         {
-            //nop
+            destinations.add(dest);
         }
     }
 

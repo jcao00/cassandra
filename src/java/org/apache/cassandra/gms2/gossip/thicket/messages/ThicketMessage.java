@@ -7,10 +7,10 @@ import org.apache.cassandra.io.ISerializer;
 public abstract class ThicketMessage
 {
     private final InetAddress treeRoot;
-    private final byte[] loadEstimate;
+    private final float loadEstimate;
 
     //TODO: maybe find a better representation of the loadEstimate
-    protected ThicketMessage(InetAddress treeRoot, byte[] loadEstimate)
+    protected ThicketMessage(InetAddress treeRoot, float loadEstimate)
     {
         this.treeRoot = treeRoot;
         this.loadEstimate = loadEstimate;

@@ -55,6 +55,15 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     // plus we want dc-weighting for anti-entropy
     private final Collection<InetAddress> backupPeers;
 
+    // not sure I like having yet another data structure hanging about, solely for the load estimates
+    // however, we do want to keep around load estimates after peers come and go from the active and backup lists (I think...)
+    private final ConcurrentMap<InetAddress, Float> loadEstimates;
+
+    /**
+     * The load estimate of this node; maintained in it's own field for ease of lookup.
+     */
+    private float loadEstimate;
+
     private final ConcurrentMap<String, BroadcastClient> clients;
 
     private PeerSamplingService peerSamplingService;
@@ -70,6 +79,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         this.config = config;
         this.dispatcher = dispatcher;
         activePeers = new ConcurrentHashMap<>();
+        loadEstimates = new ConcurrentHashMap<>();
 
         //TODO: should this be a set instead? not sure if we care about FIFO properties... (we don't)
         backupPeers = new CopyOnWriteArrayList<>();
@@ -84,22 +94,19 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     public void broadcast(String clientId, Object messageId, Object message)
     {
         InetAddress localAddr = config.getLocalAddr();
-        Collection<InetAddress> targets = getTargets(localAddr, localAddr);
-        System.out.println(String.format("target for %s = %s", getAddress(), targets));
+        Collection<InetAddress> targets = getTargets(null, localAddr);
 
         if (!targets.isEmpty())
         {
-            ThicketDataMessage dataMessage = new ThicketDataMessage(localAddr, clientId, messageId, message, new byte[0]);
+            //TODO: pass along better load estimate
+            ThicketDataMessage dataMessage = new ThicketDataMessage(localAddr, clientId, messageId, message, loadEstimate);
 
             for (InetAddress addr : targets)
-            {
-                System.out.println(String.format("%s is dispatching to %s", getAddress(), addr));
                 dispatcher.send(this, dataMessage, addr);
-            }
         }
         else
         {
-            // TODO: possibly queue
+            // TODO: possibly queue - unless cluster of one node (as in local testing)
         }
     }
 
@@ -216,7 +223,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         if (wasFresh)
         {
             Collection<InetAddress> targets = getTargets(sender, msg.getTreeRoot());
-            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, new byte[0]);
+            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, loadEstimate);
             for (InetAddress addr : targets)
             {
                 if (!addr.equals(sender))
@@ -227,7 +234,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         {
             // TODO: as per section 4.4, "Tree Reconfiguration", check to see if redundant msg is already in announcements from a different node
             removeActivePeer(msg.getTreeRoot(), sender);
-            dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), new byte[0]), sender);
+            dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), loadEstimate), sender);
         }
     }
 
@@ -269,7 +276,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         else
             state = State.REJECT;
 
-        dispatcher.send(this, new GraftResponseMessage(msg.getTreeRoot(), state, new byte[0]), sender);
+        dispatcher.send(this, new GraftResponseMessage(msg.getTreeRoot(), state, loadEstimate), sender);
     }
 
     void handleGraftResponse(GraftResponseMessage msg, InetAddress sender)
@@ -330,23 +337,29 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     }
 
     @VisibleForTesting
-    public List<InetAddress> getBackupPeers()
+    List<InetAddress> getBackupPeers()
     {
         return ImmutableList.copyOf(backupPeers);
     }
 
     @VisibleForTesting
     // DO NOT USE OUTSIDE OF TESTING!!!
-    public void setBackupPeers(List<InetAddress> peers)
+    void setBackupPeers(List<InetAddress> peers)
     {
         backupPeers.addAll(peers);
         fanout = backupPeers.size();
     }
 
     @VisibleForTesting
-    public int getFanout()
+    int getFanout()
     {
         return fanout;
+    }
+
+    @VisibleForTesting
+    GossipDispatcher getDispatcher()
+    {
+        return dispatcher;
     }
 
     private class SummaryTask implements Runnable

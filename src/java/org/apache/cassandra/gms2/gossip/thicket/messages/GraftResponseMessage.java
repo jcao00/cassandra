@@ -15,7 +15,7 @@ public class GraftResponseMessage extends ThicketMessage
     private final InetAddress treeRoot;
     private final State state;
 
-    public GraftResponseMessage(InetAddress treeRoot, State state, byte[] loadEstimate)
+    public GraftResponseMessage(InetAddress treeRoot, State state, float loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.treeRoot = treeRoot;

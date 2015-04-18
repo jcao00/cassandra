@@ -10,7 +10,7 @@ public class SummaryMessage extends ThicketMessage
 
     private final Object summary;
 
-    public SummaryMessage(InetAddress treeRoot, String clientId, Object summary, byte[] loadEstimate)
+    public SummaryMessage(InetAddress treeRoot, String clientId, Object summary, float loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.clientId = clientId;
