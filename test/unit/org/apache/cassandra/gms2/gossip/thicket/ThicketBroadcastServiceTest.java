@@ -62,6 +62,19 @@ public class ThicketBroadcastServiceTest
         Collection<InetAddress> peers = thicket.getTargets(null, thicket.getAddress());
         Assert.assertEquals(thicket.getFanout(), peers.size());
         Assert.assertFalse(peers.contains(thicket.getAddress()));
+
+        // now, check that fetching from cache is working properly
+        Collection<InetAddress> refetchedPeers = thicket.getTargets(null, thicket.getAddress());
+        Assert.assertTrue(peers.containsAll(refetchedPeers));
+        Assert.assertTrue(refetchedPeers.containsAll(peers));
+    }
+
+    @Test
+    public void getTargets_AtRootNode_LargePeerSet_GetFromCache() throws UnknownHostException
+    {
+        // first prime the pump
+        getTargets_AtRootNode_LargePeerSet();
+
     }
 
     /*
@@ -114,6 +127,28 @@ public class ThicketBroadcastServiceTest
         Assert.assertTrue(peers.contains(treeRoot));
     }
 
+    @Test
+    public void getTargets_FirstDegreeNode_LargePeerSet_GetFromCache() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        for (int i = 0; i < 20; i++)
+            addrs.add(InetAddress.getByName("127.0.4." + i));
+
+        thicket.setBackupPeers(addrs);
+        InetAddress sender = addrs.get(0);
+        Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
+        Assert.assertEquals(addrs.size(), peers.size());
+        Assert.assertTrue(peers.contains(treeRoot));
+
+        Collection<InetAddress> refetchedPeers = thicket.getTargets(sender, treeRoot);
+        Assert.assertTrue(peers.containsAll(refetchedPeers));
+        Assert.assertTrue(refetchedPeers.containsAll(peers));
+
+        InetAddress nextSender = addrs.get(1);
+        Collection<InetAddress> peersForSender = thicket.getTargets(nextSender, treeRoot);
+        Assert.assertTrue(peersForSender.contains(nextSender));
+        Assert.assertTrue(peersForSender.containsAll(refetchedPeers));
+    }
 
     /*
         'SecondDegree' means this node is not an immediate branch of a tree root, meaning that there is at least one intermediary branch

@@ -112,9 +112,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         CopyOnWriteArraySet<InetAddress> targets = activePeers.get(treeRoot);
         if (targets != null)
         {
-            //TODO: confirm this is totally legit (it's not)
             // this is to catch case where we get message from a node (in the same rooted tree) not from the usual sender
-            if (!targets.contains(sender) && !sender.equals(treeRoot))
+            if (sender != null && !targets.contains(sender))
                 targets.add(sender);
             return targets;
         }
