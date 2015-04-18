@@ -13,6 +13,7 @@ import org.junit.Test;
 
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
+import org.apache.cassandra.gms2.gossip.thicket.messages.MessageType;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketDataMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
 
@@ -37,10 +38,7 @@ public class ThicketBroadcastServiceTest
         thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), new AddressRecordingDispatcher());
         sender = InetAddress.getByName("127.0.0.2");
         treeRoot = InetAddress.getByName("127.10.13.0");
-
-
         client = new SimpleClient();
-
     }
 
     @Test
@@ -231,31 +229,120 @@ public class ThicketBroadcastServiceTest
     }
 
     @Test
-    public void handleData() throws IOException
+    public void handleData_FreshMessage_NoDownstreamPeers() throws IOException
     {
         thicket.register(client);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
 
-        ThicketDataMessage thicketMessage = new ThicketDataMessage(sender, client.getClientId(), msgId, msg, 1.0f);
-
-        thicket.handleDataMessage(thicketMessage, sender);
+        // first, verify the message was delivered and processed
+        thicket.handleDataMessage(thicketMessage, treeRoot);
         Assert.assertEquals(client.toString(), msgId, client.lastReceivedMessageId);
         Assert.assertEquals(client.toString(), msg, client.lastReceivedMessage);
+
+        // next, make sure it was not broadcast downstream to peers
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertEquals(dispatcher.destinations.toString(), 0, dispatcher.destinations.size());
+    }
+
+    @Test
+    public void handleData_FreshMessage_WithDownstreamPeers() throws IOException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        thicket.setBackupPeers(addrs);
+        thicket.register(client);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
+
+        // first, verify the message was delivered and processed
+        thicket.handleDataMessage(thicketMessage, treeRoot);
+        Assert.assertEquals(client.toString(), msgId, client.lastReceivedMessageId);
+        Assert.assertEquals(client.toString(), msg, client.lastReceivedMessage);
+
+        // next, make sure it was broadcast downstream to peers
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertEquals(dispatcher.destinations.toString(), 1, dispatcher.destinations.size());
+        Assert.assertTrue(dispatcher.destinations.contains(sender));
+    }
+
+    @Test
+    public void handleData_StaleMessage_NoDownstreamPeers() throws IOException
+    {
+        client.isFreshMessage(false);
+        thicket.register(client);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
+
+        // first, verify the message was delivered and processed
+        thicket.handleDataMessage(thicketMessage, treeRoot);
+        Assert.assertEquals(client.toString(), msgId, client.lastReceivedMessageId);
+        Assert.assertEquals(client.toString(), msg, client.lastReceivedMessage);
+
+        // next, make sure a prune message was sent back to the sender
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertEquals(dispatcher.messages.toString(), 1, dispatcher.messages.size());
+        Assert.assertEquals(MessageType.PRUNE, dispatcher.messages.get(0).msg.getMessageType());
+    }
+
+    @Test
+    public void handleData_StaleMessage_WithDownstreamPeers() throws IOException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        thicket.setBackupPeers(addrs);
+
+        client.isFreshMessage(false);
+        thicket.register(client);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
+
+        // first, verify the message was delivered and processed
+        thicket.handleDataMessage(thicketMessage, treeRoot);
+        Assert.assertEquals(client.toString(), msgId, client.lastReceivedMessageId);
+        Assert.assertEquals(client.toString(), msg, client.lastReceivedMessage);
+
+        // next, make sure it was not broadcast downstream to peers
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertFalse(dispatcher.destinations.contains(sender));
+
+        // last, make sure a prune message was sent back to the sender
+        Assert.assertEquals(dispatcher.messages.toString(), 1, dispatcher.messages.size());
+        Assert.assertEquals(treeRoot, dispatcher.messages.get(0).addr);
+        Assert.assertEquals(MessageType.PRUNE, dispatcher.messages.get(0).msg.getMessageType());
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
     {
         public List<InetAddress> destinations = new ArrayList<>();
+        public List<MessageWrapper> messages = new ArrayList<>();
 
         public void send(ThicketBroadcastService<ThicketMessage> svc, ThicketMessage msg, InetAddress dest)
         {
             destinations.add(dest);
+            messages.add(new MessageWrapper(dest, msg));
+        }
+    }
+
+    static class MessageWrapper
+    {
+        InetAddress addr;
+        ThicketMessage msg;
+
+        public MessageWrapper(InetAddress addr, ThicketMessage msg)
+        {
+            this.addr = addr;
+            this.msg = msg;
         }
     }
 
     static class SimpleClient implements BroadcastClient
     {
+        /** indicates if this message/messageId has been previously received */
+        boolean freshMessage = true;
         String lastReceivedMessageId;
         String lastReceivedMessage;
+
+        void isFreshMessage(boolean b)
+        {
+            freshMessage = b;
+        }
 
         public String getClientId()
         {
@@ -266,7 +353,7 @@ public class ThicketBroadcastServiceTest
         {
             lastReceivedMessageId = messageId.toString();
             lastReceivedMessage = message.toString();
-            return true;
+            return freshMessage;
         }
 
         public Object prepareSummary()

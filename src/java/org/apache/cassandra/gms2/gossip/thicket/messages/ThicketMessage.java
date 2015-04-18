@@ -21,6 +21,11 @@ public abstract class ThicketMessage
         return treeRoot;
     }
 
+    public float getLoadEstimate()
+    {
+        return loadEstimate;
+    }
+
     public abstract MessageType getMessageType();
 
     public abstract ISerializer getSerializer();

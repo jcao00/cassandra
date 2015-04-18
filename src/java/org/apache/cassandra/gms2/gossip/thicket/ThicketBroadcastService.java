@@ -177,8 +177,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     public void handle(ThicketMessage msg, InetAddress sender)
     {
-        //TODO: capture loadEst and other metrics from the message (that thicket requires us to keep around)
-        // that may require a change to the activePeers data structure
         try
         {
             switch (msg.getMessageType())
@@ -206,6 +204,11 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         {
             logger.error("Failed to handle thicket message", e);
         }
+        finally
+        {
+            // capture the load estimate, as per the thicket paper
+            loadEstimates.put(sender, msg.getLoadEstimate());
+        }
     }
 
     void handleDataMessage(ThicketDataMessage msg, InetAddress sender) throws IOException
@@ -232,6 +235,12 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
         else
         {
+            //TODO: what should we do when tree root is the same as the sender?
+            // it's possible that treeRoot broadcasted to one node (A), then paused (for whatever reason) -
+            // and during that pause node A sent the message to B (due to various graft/prune mechanics),
+            // and B is a direct target of the treeRoot. Then the treeRoot recovers, and broadcasts to B -
+            // B will see the message is a dupe, but should it really prune the treeRoot from it's own tree?
+
             // TODO: as per section 4.4, "Tree Reconfiguration", check to see if redundant msg is already in announcements from a different node
             removeActivePeer(msg.getTreeRoot(), sender);
             dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), loadEstimate), sender);
@@ -240,6 +249,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void removeActivePeer(InetAddress treeRoot, InetAddress toRemove)
     {
+        //TODO: what should we do when tree root is the same as the sender?
         CopyOnWriteArraySet<InetAddress> branches = activePeers.get(treeRoot);
         if (branches != null)
             branches.remove(toRemove);
@@ -364,6 +374,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     private class SummaryTask implements Runnable
     {
+        //TODO: publish onto the same thread that handles all of the thicket processing
         public void run()
         {
             doSummary();
