@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -102,45 +103,57 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
     }
 
+    /**
+     * @param sender May be null is we are processing for the tree root (determining the first-degree branches).
+     * @param treeRoot The node the tree is rooted at
+     */
     Collection<InetAddress> getTargets(InetAddress sender, InetAddress treeRoot)
     {
         CopyOnWriteArraySet<InetAddress> targets = activePeers.get(treeRoot);
         if (targets != null)
         {
-            //TODO: confirm this is totally legit
-            if (!targets.contains(sender))
+            //TODO: confirm this is totally legit (it's not)
+            // this is to catch case where we get message from a node (in the same rooted tree) not from the usual sender
+            if (!targets.contains(sender) && !sender.equals(treeRoot))
                 targets.add(sender);
             return targets;
         }
 
-        targets = new CopyOnWriteArraySet<>(buildActivePeers(sender, treeRoot));
+        // if sender is null, it means we're at the tree root
+        List<InetAddress> peers;
+        if (sender == null)
+        {
+            peers = new ArrayList<>(fanout);
+            Utils.selectMultipleRandom(backupPeers, peers, fanout);
+        }
+        else if (isInterior())
+        {
+            // if this node is already interior to some other tree, the activePeers for the new tree (for this node)
+            // will only contain the sender (so this node acts as a leaf)
+            peers = new ArrayList<>(1);
+            peers.add(sender);
+        }
+        else
+        {
+            peers = new ArrayList<>(fanout);
+            peers.add(sender);
+
+            // exclude tree root from the results list if the sender was not the tree root itself
+            List<InetAddress> filter;
+            if (!sender.equals(treeRoot))
+                filter = Collections.singletonList(treeRoot);
+            else
+                filter = Collections.emptyList();
+
+            // subtract one from the fanout as we've already included the sender
+            Utils.selectMultipleRandom(backupPeers, peers, filter, fanout - 1);
+        }
+
+        targets = new CopyOnWriteArraySet<>(peers);
         CopyOnWriteArraySet<InetAddress> existing = activePeers.putIfAbsent(treeRoot, targets);
         if (existing != null)
             return existing;
         return targets;
-    }
-
-    List<InetAddress> buildActivePeers(InetAddress sender, InetAddress treeRoot)
-    {
-        // if this node is already interior to some other tree, the activePeers for the new tree (for this node)
-        // will only contain the sender (so this node acts as a leaf)
-        if (!sender.equals(treeRoot) && isInterior())
-        {
-            List<InetAddress> peers = new ArrayList<>(1);
-            peers.add(sender);
-            return peers;
-        }
-
-        List<InetAddress> peers = new ArrayList<>(fanout);
-        // always include the sender, unless it's the tree root (itself)
-        if (!sender.equals(treeRoot))
-            peers.add(sender);
-
-        List<InetAddress> filter = new ArrayList<>(1);
-        peers.add(treeRoot);
-
-        Utils.selectMultipleRandom(backupPeers, peers, filter, fanout);
-        return peers;
     }
 
     boolean isInterior()
@@ -158,6 +171,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     public void handle(ThicketMessage msg, InetAddress sender)
     {
+        //TODO: capture loadEst and other metrics from the message (that thicket requires us to keep around)
+        // that may require a change to the activePeers data structure
         try
         {
             switch (msg.getMessageType())
@@ -319,6 +334,20 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     public List<InetAddress> getBackupPeers()
     {
         return ImmutableList.copyOf(backupPeers);
+    }
+
+    @VisibleForTesting
+    // DO NOT USE OUTSIDE OF TESTING!!!
+    public void setBackupPeers(List<InetAddress> peers)
+    {
+        backupPeers.addAll(peers);
+        fanout = backupPeers.size();
+    }
+
+    @VisibleForTesting
+    public int getFanout()
+    {
+        return fanout;
     }
 
     private class SummaryTask implements Runnable

@@ -60,7 +60,7 @@ public class Utils
 
     public static <T> void selectMultipleRandom(Collection<T> source, Collection<T> dest, Collection<T> filter, int maxCount)
     {
-        if (dest == null || dest.isEmpty())
+        if (dest == null)
             return;
         List<T> copy = new ArrayList<>(source);
         Collections.shuffle(copy);

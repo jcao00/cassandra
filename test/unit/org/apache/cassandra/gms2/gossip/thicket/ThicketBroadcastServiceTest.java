@@ -4,94 +4,188 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
-import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.Assert;
-import org.junit.Ignore;
+import org.junit.Before;
 import org.junit.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
-import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
-import org.apache.cassandra.gms2.gossip.peersampling.PennStationDispatcher;
+import org.apache.cassandra.gms2.gossip.GossipDispatcher;
+import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketDataMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
 
 public class ThicketBroadcastServiceTest
 {
-    private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastServiceTest.class);
+    ThicketBroadcastService<ThicketMessage> thicket;
+    InetAddress addr;
+    InetAddress sender;
 
-    @Test
-    public void simple() throws UnknownHostException
+    // an arbitrary address to use as a tree root
+    InetAddress treeRoot;
+
+    @Before
+    public void setup() throws UnknownHostException
     {
-        PennStationDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage> dispatcher = new PennStationDispatcher();
-        InetAddress addr = InetAddress.getByName("127.0.0.1");
-        ThicketBroadcastService<ThicketMessage> thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), dispatcher);
-
-        int cnt = 1;
-        PeerSamplingService peerSamplingService = createPeerSamplingService(cnt);
-        thicket.registered(peerSamplingService);
-        Assert.assertEquals(cnt, thicket.getBackupPeers().size());
-    }
-
-    MinimalPeerSamplingService createPeerSamplingService(int peerCount) throws UnknownHostException
-    {
-        List<InetAddress> peers = new ArrayList<>(peerCount);
-        for (int i = 0; i < peerCount; i++)
-            peers.add(InetAddress.getByName("127.0.0." + i));
-        return new MinimalPeerSamplingService(peers);
-    }
-
-    private void waitForQuiesence(PennStationDispatcher dispatcher)
-    {
-        while (dispatcher.stillWorking())
-            Uninterruptibles.sleepUninterruptibly(5, TimeUnit.MILLISECONDS);
-
-        Uninterruptibles.sleepUninterruptibly(50, TimeUnit.MILLISECONDS);
+        addr = InetAddress.getByName("127.0.0.1");
+        thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), new EmptyDispatcher());
+        sender = InetAddress.getByName("127.0.0.2");
+        treeRoot = InetAddress.getByName("127.10.13.0");
     }
 
     @Test
-    public void simpleBroadcast() throws UnknownHostException
+    public void getTargets_AtRootNode_EmptyPeers()
     {
-        PennStationDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage> dispatcher = new PennStationDispatcher();
-        List<ThicketBroadcastService<ThicketMessage>> thickets = createThickets(dispatcher, 2);
-        ThicketBroadcastService<ThicketMessage> sender = thickets.get(0);
-        Assert.assertEquals(InetAddress.getByName("127.0.0.0"), sender.getAddress());
-        ThicketBroadcastService<ThicketMessage> receiver = thickets.get(1);
-        Assert.assertNotSame(sender.getAddress(), receiver.getAddress());
+        Assert.assertEquals(0, thicket.getTargets(null, addr).size());
+    }
 
+    @Test
+    public void getTargets_AtRootNode_SmallPeerSet() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        addrs.add(InetAddress.getByName("127.0.0.3"));
+        thicket.setBackupPeers(addrs);
+        Collection<InetAddress> peers = thicket.getTargets(null, thicket.getAddress());
+        Assert.assertEquals(addrs.size(), peers.size());
+        Assert.assertFalse(peers.contains(thicket.getAddress()));
+    }
+
+    @Test
+    public void getTargets_AtRootNode_LargePeerSet() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        for (int i = 0; i < 20; i++)
+            addrs.add(InetAddress.getByName("127.0.4." + i));
+        thicket.setBackupPeers(addrs);
+        Collection<InetAddress> peers = thicket.getTargets(null, thicket.getAddress());
+        Assert.assertEquals(thicket.getFanout(), peers.size());
+        Assert.assertFalse(peers.contains(thicket.getAddress()));
+    }
+
+    /*
+        'FirstDegree' means this node is an immediate branch of a tree root
+     */
+    @Test
+    public void getTargets_FirstDegreeNode_EmptyPeers() throws UnknownHostException
+    {
+        Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
+        Assert.assertEquals(1, peers.size());
+        Assert.assertEquals(treeRoot, peers.iterator().next());
+    }
+
+    @Test
+    public void getTargets_FirstDegreeNode_SmallPeerSet() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        addrs.add(InetAddress.getByName("127.0.0.3"));
+        thicket.setBackupPeers(addrs);
+
+        Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
+        Assert.assertEquals(thicket.getFanout(), peers.size());
+        Assert.assertTrue(peers.contains(treeRoot));
+    }
+
+    @Test
+    public void getTargets_FirstDegreeNode_SmallPeerSetWithTreeRoot() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        addrs.add(treeRoot);
+        thicket.setBackupPeers(addrs);
+        Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
+        Assert.assertEquals(addrs.size(), peers.size());
+        Assert.assertTrue(peers.toString(), peers.contains(sender));
+        Assert.assertTrue(peers.toString(), peers.contains(treeRoot));
+    }
+
+    @Test
+    public void getTargets_FirstDegreeNode_LargePeerSet() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        for (int i = 0; i < 20; i++)
+            addrs.add(InetAddress.getByName("127.0.4." + i));
+
+        thicket.setBackupPeers(addrs);
+        Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
+        Assert.assertEquals(addrs.size(), peers.size());
+        Assert.assertTrue(peers.contains(treeRoot));
+    }
+
+
+    /*
+        'SecondDegree' means this node is not an immediate branch of a tree root, meaning that there is at least one intermediary branch
+        between the tree node and this node.
+     */
+    @Test
+    public void getTargets_SecondDegreeNode_EmptyPeers() throws UnknownHostException
+    {
+        Collection<InetAddress> peers = thicket.getTargets(sender, treeRoot);
+        Assert.assertEquals(1, peers.size());
+        Assert.assertEquals(sender, peers.iterator().next());
+    }
+
+    @Test
+    public void getTargets_SecondDegreeNode_SmallPeerSet() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        addrs.add(InetAddress.getByName("127.0.0.3"));
+        thicket.setBackupPeers(addrs);
+
+        Collection<InetAddress> peers = thicket.getTargets(sender, treeRoot);
+        Assert.assertEquals(thicket.getFanout(), peers.size());
+        Assert.assertFalse(peers.contains(treeRoot));
+    }
+
+    @Test
+    public void getTargets_SecondDegreeNode_SmallPeerSetWithTreeRoot() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        addrs.add(treeRoot);
+        thicket.setBackupPeers(addrs);
+
+        Collection<InetAddress> peers = thicket.getTargets(sender, treeRoot);
+        Assert.assertEquals(peers.toString(), thicket.getFanout() - 1, peers.size());
+        Assert.assertFalse(peers.contains(treeRoot));
+    }
+
+    @Test
+    public void getTargets_InteriorNode() throws UnknownHostException
+    {
+        // first, use an existing function to get the thicket instance already in one tree
+        getTargets_FirstDegreeNode_LargePeerSet();
+
+        // now try to get next tree for a different tree root
+        Collection<InetAddress> peers = thicket.getTargets(sender, sender);
+        Assert.assertEquals(1, peers.size());
+        Assert.assertTrue(peers.contains(sender));
+    }
+
+    @Test
+    public void handleData() throws IOException
+    {
         SimpleClient client = new SimpleClient();
-        receiver.register(client);
+        thicket.register(client);
 
         String msgId = "msg0";
         String msg = "hello, thicket!";
-        sender.broadcast(client.getClientId(), msgId, msg);
-        waitForQuiesence(dispatcher);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(sender, client.getClientId(), msgId, msg, new byte[0]);
+
+        thicket.handleDataMessage(thicketMessage, sender);
         Assert.assertEquals(client.toString(), msgId, client.lastReceivedMessageId);
         Assert.assertEquals(client.toString(), msg, client.lastReceivedMessage);
     }
 
-    List<ThicketBroadcastService<ThicketMessage>> createThickets(PennStationDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage> dispatcher, int count) throws UnknownHostException
+    static class EmptyDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
     {
-        List<ThicketBroadcastService<ThicketMessage>> thickets = new ArrayList<>(count);
-        for (int i = 0; i < count; i++)
+        public void send(ThicketBroadcastService<ThicketMessage> svc, ThicketMessage msg, InetAddress dest)
         {
-            InetAddress addr = InetAddress.getByName("127.0.0." + i);
-            ThicketBroadcastService<ThicketMessage> thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), dispatcher);
-            dispatcher.register(addr, thicket);
-
-            MinimalPeerSamplingService peerSamplingService = createPeerSamplingService(count);
-            peerSamplingService.removePeer(addr);
-            thicket.registered(peerSamplingService);
-
-            int peerCount = count - 1;
-            Assert.assertEquals(peerCount, thicket.getBackupPeers().size());
-            Assert.assertEquals(addr, thicket.getAddress());
-            thickets.add(thicket);
+            //nop
         }
-        return thickets;
     }
 
     static class SimpleClient implements BroadcastClient
