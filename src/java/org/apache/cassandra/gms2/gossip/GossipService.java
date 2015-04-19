@@ -12,7 +12,7 @@ import org.apache.cassandra.gms2.membership.MembershipService;
 public class GossipService
 {
     public final HyParViewService hyParViewService;
-    public final ThicketBroadcastService plumtreeService;
+    public final ThicketBroadcastService broadcastService;
 
     /**
      * To be used for lightweight, gossip-related event scheduling. For example,
@@ -29,12 +29,11 @@ public class GossipService
         //TODO: figure out the FD to pass into init()
         hyParViewService.init(scheduledService, null);
 
-        plumtreeService = new ThicketBroadcastService(plumtreeConfig, dispatcher);
-        plumtreeService.init(scheduledService);
-        hyParViewService.register(plumtreeService);
+        broadcastService = new ThicketBroadcastService(plumtreeConfig, dispatcher);
+        broadcastService.init(scheduledService);
+        hyParViewService.register(broadcastService);
 
         MembershipService membershipService = new MembershipService(hpvConfig.getLocalAddr());
-//        AntiEntropyService antiEntropyService = new AntiEntropyService(membershipService, hyParViewService);
-//        membershipService.init(antiEntropyService);
+        membershipService.register(broadcastService.getStateChangeSubscriber());
     }
 }

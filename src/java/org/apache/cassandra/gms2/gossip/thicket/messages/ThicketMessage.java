@@ -1,16 +1,20 @@
 package org.apache.cassandra.gms2.gossip.thicket.messages;
 
 import java.net.InetAddress;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 import org.apache.cassandra.io.ISerializer;
 
 public abstract class ThicketMessage
 {
     private final InetAddress treeRoot;
-    private final float loadEstimate;
+
+    private final Map<InetAddress, Integer> loadEstimate;
 
     //TODO: maybe find a better representation of the loadEstimate
-    protected ThicketMessage(InetAddress treeRoot, float loadEstimate)
+    protected ThicketMessage(InetAddress treeRoot, Map<InetAddress, Integer> loadEstimate)
     {
         this.treeRoot = treeRoot;
         this.loadEstimate = loadEstimate;
@@ -21,7 +25,7 @@ public abstract class ThicketMessage
         return treeRoot;
     }
 
-    public float getLoadEstimate()
+    public Map<InetAddress, Integer> getLoadEstimate()
     {
         return loadEstimate;
     }

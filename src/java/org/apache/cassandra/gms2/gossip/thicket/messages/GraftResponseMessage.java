@@ -1,6 +1,7 @@
 package org.apache.cassandra.gms2.gossip.thicket.messages;
 
 import java.net.InetAddress;
+import java.util.Map;
 
 import org.apache.cassandra.io.ISerializer;
 
@@ -15,7 +16,7 @@ public class GraftResponseMessage extends ThicketMessage
     private final InetAddress treeRoot;
     private final State state;
 
-    public GraftResponseMessage(InetAddress treeRoot, State state, float loadEstimate)
+    public GraftResponseMessage(InetAddress treeRoot, State state, Map<InetAddress, Integer> loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.treeRoot = treeRoot;

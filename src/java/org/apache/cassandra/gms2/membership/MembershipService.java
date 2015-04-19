@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
@@ -16,19 +17,15 @@ import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
 
 /**
  * A cluster membership service for cassandra.
- *
- * While not strictly a component of the gossip susbsystem, membership is a special component,
- * if not only due to historical reasons, but also the anti-entropy part of gossip prefers
- * peers not already being used by the broadcast/peer sampling services.
  */
-public class MembershipService implements PeerSamplingService, BroadcastClient
+public class MembershipService implements BroadcastClient
 {
     private static final String ID = "membership_svc";
 
     private final Orswot<? extends Object> members;
 
     private final Map<InetSocketAddress, PeerState> peerStateMap;
-    private final List<IEndpointLifecycleSubscriber> lifecycleSubscribers;
+    private final List<IEndpointStateChangeSubscriber> lifecycleSubscribers;
 
     private GossipBroadcaster broadcaster;
 
@@ -41,11 +38,6 @@ public class MembershipService implements PeerSamplingService, BroadcastClient
 
     //TODO: when size of membership changes, callback to the Broadcast service (HPV)
     // so it can adjust it's active/passive view size, ARWL/PRLW, and so on
-
-    public void register(GossipBroadcaster broadcaster)
-    {
-        // nop, for now
-    }
 
     public Collection<InetAddress> getPeers()
     {
@@ -71,5 +63,25 @@ public class MembershipService implements PeerSamplingService, BroadcastClient
     public void receiveSummary(Object summary)
     {
 
+    }
+
+    /**
+     * Register for interesting state changes.
+     *
+     * @param subscriber module which implements the IEndpointStateChangeSubscriber
+     */
+    public void register(IEndpointStateChangeSubscriber subscriber)
+    {
+        lifecycleSubscribers.add(subscriber);
+    }
+
+    /**
+     * Unregister interest for state changes.
+     *
+     * @param subscriber module which implements the IEndpointStateChangeSubscriber
+     */
+    public void unregister(IEndpointStateChangeSubscriber subscriber)
+    {
+        lifecycleSubscribers.remove(subscriber);
     }
 }

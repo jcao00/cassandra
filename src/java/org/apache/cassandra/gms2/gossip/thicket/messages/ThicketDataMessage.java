@@ -1,6 +1,7 @@
 package org.apache.cassandra.gms2.gossip.thicket.messages;
 
 import java.net.InetAddress;
+import java.util.Map;
 
 import org.apache.cassandra.io.ISerializer;
 
@@ -10,7 +11,7 @@ public class ThicketDataMessage extends ThicketMessage
     private final Object messageId;
     private final Object message;
 
-    public ThicketDataMessage(InetAddress treeRoot, String clientId, Object messageId, Object message, float loadEstimate)
+    public ThicketDataMessage(InetAddress treeRoot, String clientId, Object messageId, Object message, Map<InetAddress, Integer> loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.clientId = clientId;
@@ -18,7 +19,7 @@ public class ThicketDataMessage extends ThicketMessage
         this.message = message;
     }
 
-    public ThicketDataMessage(ThicketDataMessage msg, float loadEstimate)
+    public ThicketDataMessage(ThicketDataMessage msg, Map<InetAddress, Integer> loadEstimate)
     {
         this(msg.getTreeRoot(), msg.getClientId(), msg.getMessageId(), msg.getMessage(), loadEstimate);
     }

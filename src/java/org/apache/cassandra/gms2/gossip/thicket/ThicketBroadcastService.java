@@ -5,7 +5,9 @@ import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -18,6 +20,10 @@ import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.gms.ApplicationState;
+import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
+import org.apache.cassandra.gms.VersionedValue;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
@@ -48,31 +54,41 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     private final ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers;
 
     /**
+     * A cache of the {@code activePeers} field as needed for serialization. This does not need to be perfectly in sync,
+     * just not null when dereferencing, so it's ok if there are concurrent modifications to the {@code activePeers}
+     * not represented here when writing to the wire.
+     */
+    private Map<InetAddress, Integer> loadEstimate;
+
+    /**
      * Collection of peers from which to draw when contacted by a new {sender/tree root} combination.
      * These entries would become the target peers for broadcasting.
      */
-    // TODO: should peer sampling service be the only source for backups? especially in the case of anti-entropy --
-    // plus we want dc-weighting for anti-entropy
     private final Collection<InetAddress> backupPeers;
 
-    // not sure I like having yet another data structure hanging about, solely for the load estimates
-    // however, we do want to keep around load estimates after peers come and go from the active and backup lists (I think...)
-    private final ConcurrentMap<InetAddress, Float> loadEstimates;
-
     /**
-     * The load estimate of this node; maintained in it's own field for ease of lookup.
+     * Maintains the load estimates as broadcasted by other nodes. The key of the map is the peer's address, and the value contains
+     * a map of tree roots to the number of branches the node has in that tree. As we receive a full and complete map from each peer
+     * on every interaction, we can do a full map replacement with what deserialize off the wire, instead of maintaining a curated map
+     * in a MultiMap.
+     *
+     * For large clusters, I don't think we need to worry about this structure growing to cover the entire set of nodes as the
+     * peer sampling sampling service should give us a limited view of the cluster. However, in the face of network partitions
+     * and cluster-wide, rolling restarts on nodes that have a long uptime, YMMV.
+     *
+     * NOTE: not sure I like having yet another data structure hanging about, solely for the load estimates.
+     * however, we do want to keep around load estimates after peers come and go from the active and backup lists (I think...)
      */
-    private float loadEstimate;
+    private final ConcurrentMap<InetAddress, Map<InetAddress, Integer>> loadEstimates;
 
     private final ConcurrentMap<String, BroadcastClient> clients;
-
-    private PeerSamplingService peerSamplingService;
 
     /**
      * The maximum number of peers to add as downstream tree nodes (in an activePeers set).
      */
     private int fanout = 1;
 
+    private final AntiEntropyPeerListener stateChangeSubscriber;
 
     public ThicketBroadcastService(ThicketConfig config, GossipDispatcher dispatcher)
     {
@@ -84,6 +100,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         //TODO: should this be a set instead? not sure if we care about FIFO properties... (we don't)
         backupPeers = new CopyOnWriteArrayList<>();
         clients = new ConcurrentHashMap<>();
+        stateChangeSubscriber = new AntiEntropyPeerListener();
     }
 
     public void init(ScheduledExecutorService scheduledService)
@@ -98,8 +115,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
         if (!targets.isEmpty())
         {
-            //TODO: pass along better load estimate
-            ThicketDataMessage dataMessage = new ThicketDataMessage(localAddr, clientId, messageId, message, loadEstimate);
+            ThicketDataMessage dataMessage = new ThicketDataMessage(localAddr, clientId, messageId, message, buildLoadEstimate());
 
             for (InetAddress addr : targets)
                 dispatcher.send(this, dataMessage, addr);
@@ -108,6 +124,27 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         {
             // TODO: possibly queue - unless cluster of one node (as in local testing)
         }
+    }
+
+    private Map<InetAddress, Integer> buildLoadEstimate()
+    {
+        Map<InetAddress, Integer> loadMap = this.loadEstimate;
+        if (loadMap != null)
+            return loadMap;
+
+        loadMap = new HashMap<>();
+        for (Map.Entry<InetAddress, CopyOnWriteArraySet<InetAddress>> entry : activePeers.entrySet())
+        {
+            CopyOnWriteArraySet<InetAddress> branches = entry.getValue();
+            if (branches == null || branches.size() == 0)
+                continue;
+            loadMap.put(entry.getKey(), branches.size());
+        }
+
+        // it's ok if there's a slight race here, we assume another thread built, more or less, the same map
+        if (loadEstimate == null)
+            loadEstimate = loadMap;
+        return loadMap;
     }
 
     /**
@@ -159,6 +196,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         CopyOnWriteArraySet<InetAddress> existing = activePeers.putIfAbsent(treeRoot, targets);
         if (existing != null)
             return existing;
+        loadEstimate = null;
         return targets;
     }
 
@@ -226,7 +264,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         if (wasFresh)
         {
             Collection<InetAddress> targets = getTargets(sender, msg.getTreeRoot());
-            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, loadEstimate);
+            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, buildLoadEstimate());
             for (InetAddress addr : targets)
             {
                 if (!addr.equals(sender))
@@ -243,7 +281,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
             // TODO: as per section 4.4, "Tree Reconfiguration", check to see if redundant msg is already in announcements from a different node
             removeActivePeer(msg.getTreeRoot(), sender);
-            dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), loadEstimate), sender);
+            dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), buildLoadEstimate()), sender);
         }
     }
 
@@ -264,6 +302,34 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         removeActivePeer(msg.getTreeRoot(), sender);
     }
 
+    void doSummary()
+    {
+        Collection<InetAddress> destinations = summaryDestinations();
+
+        // TODO: might want to limit the number of open summary sessions, as well as open sessions per peer (optimizations, i guess)
+
+        // should we do a summary for *all* registered clients, ot just one? (to ease local and remote computational burden)
+        // for now, I'm just shipping out for all of them - so yeah, a total of (numberOfClients x destinations) messages
+        for (BroadcastClient client : clients.values())
+        {
+            //TODO: what tree root to use here?!?!?!?!?!  double check if we even need it for summary messaging
+            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), client.prepareSummary(), buildLoadEstimate());
+            for (InetAddress addr : destinations)
+                dispatcher.send(this, msg, addr);
+        }
+    }
+
+    private Collection<InetAddress> summaryDestinations()
+    {
+        Collection<InetAddress> peers = stateChangeSubscriber.selectNodes(fanout);
+        if (!peers.isEmpty())
+            return peers;
+
+        // if the anti-entropy list is empty (possibly a small cluster), just select from the backup peers
+        Utils.selectMultipleRandom(backupPeers, peers, fanout);
+        return peers;
+    }
+
     void handleSummary(SummaryMessage msg, InetAddress sender)
     {
         BroadcastClient client = clients.get(msg.getClientId());
@@ -274,7 +340,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
 
         client.receiveSummary(msg.getSummary());
-        //TODO: implement rest of me
+        //TODO: implement rest of me - should receiveSummary() return set of missing msgIds? should client be responsible for timers, etc??
+        // would prefer to keep the timer baggage out of the clients
     }
 
     void handleGraftRequest(GraftRequestMessage msg, InetAddress sender)
@@ -286,7 +353,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         else
             state = State.REJECT;
 
-        dispatcher.send(this, new GraftResponseMessage(msg.getTreeRoot(), state, loadEstimate), sender);
+        dispatcher.send(this, new GraftResponseMessage(msg.getTreeRoot(), state, buildLoadEstimate()), sender);
     }
 
     void handleGraftResponse(GraftResponseMessage msg, InetAddress sender)
@@ -297,17 +364,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         //TODO: handle the reject case
     }
 
-    void doSummary()
-    {
-        // TODO: might want to limit the number of open summary sessions
-
-
-
-    }
-
     public void registered(PeerSamplingService peerSamplingService)
     {
-        this.peerSamplingService = peerSamplingService;
         for (InetAddress addr : peerSamplingService.getPeers())
             neighborUp(addr);
     }
@@ -330,7 +388,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         activePeers.remove(peer);
         for (CopyOnWriteArraySet<InetAddress> branches : activePeers.values())
             branches.remove(peer);
-
+        loadEstimate = null;
         backupPeers.remove(peer);
     }
 
@@ -339,6 +397,27 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         if (clusterSize == 0)
             fanout = 1;
         fanout = (int)Math.ceil(Math.log(clusterSize));
+    }
+
+    /**
+     * check to see if address is in parent thicket views, as we want to skip nodes we already know about via the peer sampling service.
+     */
+    boolean alreadyInView(InetAddress addr)
+    {
+        if (backupPeers.contains(addr))
+            return true;
+
+        // TODO: find more efficient way of testing for existence in the active peers
+        if (activePeers.containsKey(addr))
+            return true;
+
+        for (CopyOnWriteArraySet<InetAddress> branches : activePeers.values())
+        {
+            if (branches.contains(addr))
+                return true;
+        }
+
+        return false;
     }
 
     public InetAddress getAddress()
@@ -378,6 +457,87 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         public void run()
         {
             doSummary();
+        }
+    }
+
+    public IEndpointStateChangeSubscriber getStateChangeSubscriber()
+    {
+        return stateChangeSubscriber;
+    }
+
+    /**
+     * Listen for changes in membership service, and use that as the basis for peer selection during anti-entropy sessions.
+     * We use this to get a feed of all known nodes in the cluster, and filter out the ones we already know about from the
+     * peer sampling service. This gives us a richer anti-entropy reconciliation, helps the cluster converge faster, and heal
+     * any broken parts of the broadcast tree.
+     */
+    private class AntiEntropyPeerListener implements IEndpointStateChangeSubscriber
+    {
+        /**
+         * mapping of address to datacenter
+         */
+        final ConcurrentMap<InetAddress, String> nodes;
+
+        private AntiEntropyPeerListener()
+        {
+            nodes = new ConcurrentHashMap<>();
+            // TODO: might want a way to snag all the existing entries, if any
+        }
+
+        Collection<InetAddress> selectNodes(int maxCount)
+        {
+            List<InetAddress> selected = new ArrayList<>(maxCount);
+
+            // TODO: get a better distribution of local DC vs. (possible) remote DC nodes
+            Utils.selectMultipleRandom(nodes.keySet(), selected, maxCount);
+
+            return selected;
+        }
+
+        /*
+            IEndpointStateChangeSubscriber methods
+         */
+
+        public void onJoin(InetAddress endpoint, EndpointState epState)
+        {
+            // nop - wait until node is alive
+        }
+
+        public void beforeChange(InetAddress endpoint, EndpointState currentState, ApplicationState newStateKey, VersionedValue newValue)
+        {
+            // nop
+        }
+
+        public void onChange(InetAddress endpoint, ApplicationState state, VersionedValue value)
+        {
+            if (alreadyInView(endpoint))
+                return;
+            if (state.equals(ApplicationState.DC))
+                nodes.put(endpoint, value.value);
+        }
+
+        public void onAlive(InetAddress endpoint, EndpointState state)
+        {
+            if (alreadyInView(endpoint))
+                return;
+            VersionedValue vv = state.getApplicationState(ApplicationState.DC);
+            if (vv != null)
+                nodes.put(endpoint, vv.value);
+        }
+
+        public void onDead(InetAddress endpoint, EndpointState state)
+        {
+            nodes.remove(endpoint);
+        }
+
+        public void onRemove(InetAddress endpoint)
+        {
+            nodes.remove(endpoint);
+        }
+
+        public void onRestart(InetAddress endpoint, EndpointState state)
+        {
+            // TODO: maybe notify thicket that the peer bounced, and any open anti-entopry sessions are likely dead
         }
     }
 }

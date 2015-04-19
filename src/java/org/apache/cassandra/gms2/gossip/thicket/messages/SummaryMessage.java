@@ -1,6 +1,7 @@
 package org.apache.cassandra.gms2.gossip.thicket.messages;
 
 import java.net.InetAddress;
+import java.util.Map;
 
 import org.apache.cassandra.io.ISerializer;
 
@@ -10,7 +11,7 @@ public class SummaryMessage extends ThicketMessage
 
     private final Object summary;
 
-    public SummaryMessage(InetAddress treeRoot, String clientId, Object summary, float loadEstimate)
+    public SummaryMessage(InetAddress treeRoot, String clientId, Object summary, Map<InetAddress, Integer>loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.clientId = clientId;

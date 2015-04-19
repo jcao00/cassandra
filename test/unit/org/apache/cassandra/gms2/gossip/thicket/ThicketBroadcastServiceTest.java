@@ -5,7 +5,10 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -28,8 +31,8 @@ public class ThicketBroadcastServiceTest
 
     // an arbitrary address to use as a tree root
     InetAddress treeRoot;
-
     SimpleClient client;
+    Map<InetAddress, Integer> loadEstimate;
 
     @Before
     public void setup() throws UnknownHostException
@@ -39,6 +42,7 @@ public class ThicketBroadcastServiceTest
         sender = InetAddress.getByName("127.0.0.2");
         treeRoot = InetAddress.getByName("127.10.13.0");
         client = new SimpleClient();
+        loadEstimate = new HashMap<>();
     }
 
     @Test
@@ -232,7 +236,7 @@ public class ThicketBroadcastServiceTest
     public void handleData_FreshMessage_NoDownstreamPeers() throws IOException
     {
         thicket.register(client);
-        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, loadEstimate);
 
         // first, verify the message was delivered and processed
         thicket.handleDataMessage(thicketMessage, treeRoot);
@@ -251,7 +255,7 @@ public class ThicketBroadcastServiceTest
         addrs.add(sender);
         thicket.setBackupPeers(addrs);
         thicket.register(client);
-        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, loadEstimate);
 
         // first, verify the message was delivered and processed
         thicket.handleDataMessage(thicketMessage, treeRoot);
@@ -269,7 +273,7 @@ public class ThicketBroadcastServiceTest
     {
         client.isFreshMessage(false);
         thicket.register(client);
-        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, loadEstimate);
 
         // first, verify the message was delivered and processed
         thicket.handleDataMessage(thicketMessage, treeRoot);
@@ -291,7 +295,7 @@ public class ThicketBroadcastServiceTest
 
         client.isFreshMessage(false);
         thicket.register(client);
-        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, 1.0f);
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, loadEstimate);
 
         // first, verify the message was delivered and processed
         thicket.handleDataMessage(thicketMessage, treeRoot);
@@ -306,6 +310,40 @@ public class ThicketBroadcastServiceTest
         Assert.assertEquals(dispatcher.messages.toString(), 1, dispatcher.messages.size());
         Assert.assertEquals(treeRoot, dispatcher.messages.get(0).addr);
         Assert.assertEquals(MessageType.PRUNE, dispatcher.messages.get(0).msg.getMessageType());
+    }
+
+    @Test
+    public void alreadyInView_EmptyViews()
+    {
+        Assert.assertFalse(thicket.alreadyInView(treeRoot));
+    }
+
+    @Test
+    public void alreadyInView_InBackupPeers()
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        addrs.add(sender);
+        thicket.setBackupPeers(addrs);
+        Assert.assertFalse(thicket.alreadyInView(treeRoot));
+        Assert.assertTrue(thicket.alreadyInView(sender));
+    }
+
+    @Test
+    public void alreadyInView_NotInBackupPeers() throws UnknownHostException
+    {
+        List<InetAddress> addrs = new ArrayList<>();
+        for (int i = 0; i < 20; i++)
+            addrs.add(InetAddress.getByName("127.0.4." + i));
+
+        thicket.setBackupPeers(addrs);
+        InetAddress sender = addrs.get(0);
+        thicket.getTargets(sender, treeRoot);
+
+        // reset the backup peers so we don't trigger on that
+        thicket.setBackupPeers(Collections.<InetAddress>emptyList());
+
+        Assert.assertTrue(thicket.alreadyInView(treeRoot));
+        Assert.assertTrue(thicket.alreadyInView(sender));
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
