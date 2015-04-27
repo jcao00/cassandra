@@ -1,6 +1,7 @@
 package org.apache.cassandra.gms2.gossip;
 
 import java.io.IOException;
+import java.util.Set;
 
 /**
  * A client to participate in receiving broadcasted messages. The contract for a client is two-fold:
@@ -25,6 +26,11 @@ public interface BroadcastClient
 
     Object prepareSummary();
 
+    /**
+     *
+     * @param summary
+     * @return Set of missing messageIds
+     */
     void receiveSummary(Object summary);
 }
 

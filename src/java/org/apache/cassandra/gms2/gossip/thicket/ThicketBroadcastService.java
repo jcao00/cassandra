@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,6 +17,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,12 +32,15 @@ import org.apache.cassandra.gms2.gossip.GossipDispatcher;
 import org.apache.cassandra.gms2.gossip.Utils;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
 import org.apache.cassandra.gms2.gossip.thicket.messages.GraftRequestMessage;
-import org.apache.cassandra.gms2.gossip.thicket.messages.GraftResponseMessage;
-import org.apache.cassandra.gms2.gossip.thicket.messages.GraftResponseMessage.State;
+import org.apache.cassandra.gms2.gossip.thicket.messages.GraftResponseAcceptMessage;
+import org.apache.cassandra.gms2.gossip.thicket.messages.GraftResponseRejectMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.PruneMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.SummaryMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketDataMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
+import org.apache.cassandra.utils.ExpiringMap;
+import org.apache.cassandra.utils.ExpiringMap.CacheableObject;
+import org.apache.cassandra.utils.Pair;
 
 /**
  * An implementation of the
@@ -45,6 +50,9 @@ import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
 public class ThicketBroadcastService<M extends ThicketMessage> implements GossipBroadcaster, GossipDispatcher.GossipReceiver<M>
 {
     private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastService.class);
+    private static final int MAX_GRAFT_ATTEMPTS = 2;
+    private static final long ANNOUNCEMENTS_ENTRY_TTL = TimeUnit.SECONDS.toMillis(10);
+
     private final ThicketConfig config;
     private final GossipDispatcher dispatcher;
 
@@ -84,6 +92,17 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     private final ConcurrentMap<String, BroadcastClient> clients;
 
     /**
+     * A collection of recently received broadcast messages per each {@code BroadcastClient}. These will be sent to a peer during the
+     * Summary sessions, as per the Thicket paper.
+     *
+     */
+    //TODO: might want an atomic reference around the value, so we can easily swap it out.
+    private final ConcurrentMap<String, HashSet<ReceivedMessage>> recentMessages;
+
+    // need tuple of {clientId, messageId, (treeRoot, sender)}
+    private final ExpiringMap<ExpiringMapKey, CacheableObject<ExpiringMapValue>> announcements;
+
+    /**
      * The maximum number of peers to add as downstream tree nodes (in an activePeers set).
      */
     private int fanout = 1;
@@ -101,6 +120,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         backupPeers = new CopyOnWriteArrayList<>();
         clients = new ConcurrentHashMap<>();
         stateChangeSubscriber = new AntiEntropyPeerListener();
+        recentMessages = new ConcurrentHashMap<>();
+        announcements = new ExpiringMap<>(ANNOUNCEMENTS_ENTRY_TTL, new AnnouncementTimeoutProcessor());
     }
 
     public void init(ScheduledExecutorService scheduledService)
@@ -119,11 +140,27 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
             for (InetAddress addr : targets)
                 dispatcher.send(this, dataMessage, addr);
+
+            addToRecentMessages(clientId, messageId, config.getLocalAddr());
         }
         else
         {
             // TODO: possibly queue - unless cluster of one node (as in local testing)
         }
+    }
+
+    private void addToRecentMessages(String clientId, Object messageId, InetAddress addr)
+    {
+        ReceivedMessage receivedMessage = new ReceivedMessage(messageId, addr);
+        HashSet<ReceivedMessage> msgs = recentMessages.get(clientId);
+        if (msgs == null)
+        {
+            msgs = new HashSet<>();
+            HashSet<ReceivedMessage> existing = recentMessages.putIfAbsent(clientId, msgs);
+            if (existing != null)
+                msgs = existing;
+        }
+        msgs.add(receivedMessage);
     }
 
     private Map<InetAddress, Integer> buildLoadEstimate()
@@ -158,7 +195,10 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         {
             // this is to catch case where we get message from a node (in the same rooted tree) not from the usual sender
             if (sender != null && !targets.contains(sender))
+            {
                 targets.add(sender);
+                loadEstimate = null;
+            }
             return targets;
         }
 
@@ -215,6 +255,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     public void handle(ThicketMessage msg, InetAddress sender)
     {
+        // capture the load estimate, as per the thicket paper
+        loadEstimates.put(sender, msg.getLoadEstimate());
         try
         {
             switch (msg.getMessageType())
@@ -231,8 +273,11 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
                 case GRAFT_REQUEST:
                     handleGraftRequest((GraftRequestMessage) msg, sender);
                     break;
-                case GRAFT_RESPONSE:
-                    handleGraftResponse((GraftResponseMessage) msg, sender);
+                case GRAFT_RESPONSE_ACCEPT:
+                    handleGraftResponseAccept((GraftResponseAcceptMessage) msg, sender);
+                    break;
+                case GRAFT_RESPONSE_REJECT:
+                    handleGraftResponseReject((GraftResponseRejectMessage) msg, sender);
                     break;
                 default:
                     throw new IllegalArgumentException("unknown/unhandled thicket message type: " + msg.getMessageType());
@@ -241,11 +286,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         catch (Exception e)
         {
             logger.error("Failed to handle thicket message", e);
-        }
-        finally
-        {
-            // capture the load estimate, as per the thicket paper
-            loadEstimates.put(sender, msg.getLoadEstimate());
         }
     }
 
@@ -270,6 +310,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
                 if (!addr.equals(sender))
                     dispatcher.send(this, dataMessage, addr);
             }
+            addToRecentMessages(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
         }
         else
         {
@@ -302,8 +343,16 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         removeActivePeer(msg.getTreeRoot(), sender);
     }
 
+    /**
+     * Start a new summary session. If we are at or over the maxLoad parameter, skip doing a summary.
+     * The reason being that if a peer doesn't have the updates, it's tree is broken. it will then ask
+     * this node to graft, but as we're already over the maxLoad, we'd have to deny the request. I
+     * In other words, we can't help others if we're over the maxLoad limit
+     */
     void doSummary()
     {
+        //TODO: check the maxLoad parameter (or just the known size of the cluster)
+
         Collection<InetAddress> destinations = summaryDestinations();
 
         // TODO: might want to limit the number of open summary sessions, as well as open sessions per peer (optimizations, i guess)
@@ -312,8 +361,11 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         // for now, I'm just shipping out for all of them - so yeah, a total of (numberOfClients x destinations) messages
         for (BroadcastClient client : clients.values())
         {
-            //TODO: what tree root to use here?!?!?!?!?!  double check if we even need it for summary messaging
-            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), client.prepareSummary(), buildLoadEstimate());
+            // TODO: make this better for mutli-threading
+            HashSet<ReceivedMessage> msgs = recentMessages.remove(client.getClientId());
+
+            //TODO: what tree root to use here?!?!?!?!?!
+            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), msgs, client.prepareSummary(), buildLoadEstimate());
             for (InetAddress addr : destinations)
                 dispatcher.send(this, msg, addr);
         }
@@ -327,6 +379,9 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
         // if the anti-entropy list is empty (possibly a small cluster), just select from the backup peers
         Utils.selectMultipleRandom(backupPeers, peers, fanout);
+
+        // should we handle the case where the list is *still* empty?
+
         return peers;
     }
 
@@ -339,29 +394,148 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             return;
         }
 
+        // need an ExpiringMap
+        // TODO: stash these ids into the announcements(?) member field, and setup timer
+
+
+        // perform ant anti-entropy (push-only style)
         client.receiveSummary(msg.getSummary());
-        //TODO: implement rest of me - should receiveSummary() return set of missing msgIds? should client be responsible for timers, etc??
-        // would prefer to keep the timer baggage out of the clients
+
     }
 
     void handleGraftRequest(GraftRequestMessage msg, InetAddress sender)
     {
-        // TODO: determine if we should accept this graft
-        State state;
-        if (true)
-            state = State.ACCEPT;
-        else
-            state = State.REJECT;
+        //TODO: fix this hard-coded value
+        //TODO: make sure that by accepting this graft, it won't make us interior to more than one tree
+        if (calculateForwardingLoad(loadEstimate) < 1000)
+        {
+            addToActivePeers(activePeers, msg.getTreeRoot(), sender);
 
-        dispatcher.send(this, new GraftResponseMessage(msg.getTreeRoot(), state, buildLoadEstimate()), sender);
+            // if we're bothering to accept a GRAFT, the requester was missing some data that this node already has
+            // (and that the node still wants). Thus it makes sense to send over an anti-entropy summary, as well, so the requester
+            // can converge quicker.
+            BroadcastClient client = clients.get(msg.getClientId());
+            dispatcher.send(this,
+                            new GraftResponseAcceptMessage(msg.getTreeRoot(), msg.getClientId(), client.prepareSummary(), buildLoadEstimate()),
+                           sender);
+        }
+        else
+        {
+            InetAddress alternate = null;
+            CopyOnWriteArraySet<InetAddress> branches = activePeers.get(msg.getTreeRoot());
+            if (branches != null && !branches.isEmpty())
+            {
+                List<InetAddress> peers = new ArrayList<>(branches);
+                peers.remove(sender);  // sender should not be in list, but just in case
+                alternate = findGraftAlternate(peers, loadEstimates);
+            }
+            dispatcher.send(this,
+                            new GraftResponseRejectMessage(msg.getTreeRoot(), msg.getClientId(), msg.getAttemptCount(), alternate, buildLoadEstimate()),
+                            sender);
+        }
     }
 
-    void handleGraftResponse(GraftResponseMessage msg, InetAddress sender)
+    // TODO: this is pretty similar to getTargets() - should be combined?
+    void addToActivePeers(ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers, InetAddress treeRoot, InetAddress addr)
     {
-        // we've already done the optimistic work in the summary handling, so just process the reject
-        if (msg.getState().equals(State.ACCEPT))
+        //TODO: write tests for me
+
+        if (addr == null)
             return;
-        //TODO: handle the reject case
+
+        CopyOnWriteArraySet<InetAddress> targets = activePeers.get(treeRoot);
+        if (targets != null)
+        {
+            // this is to catch case where we get message from a node (in the same rooted tree) not from the usual sender
+            if (addr != null && !targets.contains(addr))
+                targets.add(addr);
+        }
+        else
+        {
+            targets = new CopyOnWriteArraySet<>(Collections.singletonList(addr));
+            CopyOnWriteArraySet<InetAddress> existing = activePeers.putIfAbsent(treeRoot, targets);
+            if (existing != null)
+                existing.add(addr);
+        }
+        loadEstimate = null;
+    }
+
+    /**
+     * Find an alternate peer that a GRAFT requestor can contact due to a rejection from this node.
+     * A peer is determined looking at this node's branches in the rooted tree, and selecting the one
+     * with the lowest loadEstimate.
+     */
+    InetAddress findGraftAlternate(List<InetAddress> peers, ConcurrentMap<InetAddress, Map<InetAddress, Integer>> loadEstimates)
+    {
+        //TODO: write tests for me
+
+        // If, for some reason, we don't have any load information for a branch, keep it in a separate field (unknownLoad).
+        // if there's no other candidates when we're done searching, just use that node.
+        InetAddress bestAddr = null, unknownLoad = null;
+        int minLoadEstimate = Integer.MAX_VALUE;
+        for (InetAddress addr : peers)
+        {
+            int loadEst = calculateForwardingLoad(loadEstimates.get(addr));
+
+            if (loadEst == 0)
+                unknownLoad = addr;
+            else if (bestAddr ==  null || loadEst < minLoadEstimate)
+            {
+                bestAddr = addr;
+                minLoadEstimate = loadEst;
+            }
+        }
+
+        return bestAddr != null ? bestAddr : unknownLoad;
+    }
+
+    int calculateForwardingLoad(Map<InetAddress, Integer> loads)
+    {
+        if (loads == null || loads.isEmpty())
+            return 0;
+
+        int load = 0;
+        for (Integer i : loads.values())
+        {
+            if (i == null)
+                continue;
+            load += i;
+        }
+        return load;
+    }
+
+    void handleGraftResponseAccept(GraftResponseAcceptMessage msg, InetAddress sender)
+    {
+        // we've already done the optimistic work in the summary handling, so just process the summary
+        BroadcastClient client = clients.get(msg.getClientId());
+        if (client == null)
+        {
+            System.out.println(String.format("%s, received a message for unknown client component: %s; ignoring message", getAddress(), msg.getClientId()));
+            return;
+        }
+        client.receiveSummary(msg.getSummary());
+    }
+
+    void handleGraftResponseReject(GraftResponseRejectMessage msg, InetAddress sender)
+    {
+        removeActivePeer(msg.getTreeRoot(), sender);
+
+        int attemptCount = msg.getAttemptCount() + 1;
+        if (attemptCount > MAX_GRAFT_ATTEMPTS)
+        {
+            logger.debug("abandoning GRAFT attempts as we've hit the retry limit of {}", MAX_GRAFT_ATTEMPTS);
+            return;
+        }
+
+        // see if there are any other nodes in the announcements set, and send a GRAFT to one of the nodes
+        // else, we know we have a broken tree, maybe the rejecting node could send along a candidate from it's own
+        // branches (for the same tree root), one with the lowest loadEstimate
+        //TODO: look into the 'announcements' set for a peer, or maybe just stick with this
+        if (msg.getGraftAlternate() != null)
+        {
+            //NOTE: this is different from the thicket paper
+            dispatcher.send(this, new GraftRequestMessage(msg.getTreeRoot(), msg.getClientId(), attemptCount, buildLoadEstimate()), msg.getGraftAlternate());
+        }
     }
 
     public void registered(PeerSamplingService peerSamplingService)
@@ -538,6 +712,41 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         public void onRestart(InetAddress endpoint, EndpointState state)
         {
             // TODO: maybe notify thicket that the peer bounced, and any open anti-entopry sessions are likely dead
+        }
+    }
+
+    private static class AnnouncementTimeoutProcessor implements Function<Pair<ExpiringMapKey, CacheableObject<ExpiringMapValue>>, Object>
+    {
+        public Object apply(Pair<ExpiringMapKey, CacheableObject<ExpiringMapValue>> input)
+        {
+            //TODO: give this some lovin'
+
+            // this is where we send out a GRAFT request
+            return null;
+        }
+    }
+
+    private static class ExpiringMapKey
+    {
+        final String clientId;
+        final Object messageId;
+
+        private ExpiringMapKey(String clientId, Object messageId)
+        {
+            this.clientId = clientId;
+            this.messageId = messageId;
+        }
+    }
+
+    private static class ExpiringMapValue
+    {
+        final InetAddress treeRoot;
+        final InetAddress summarySender;
+
+        private ExpiringMapValue(InetAddress treeRoot, InetAddress summarySender)
+        {
+            this.treeRoot = treeRoot;
+            this.summarySender = summarySender;
         }
     }
 }

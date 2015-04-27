@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -344,6 +345,51 @@ public class ThicketBroadcastServiceTest
 
         Assert.assertTrue(thicket.alreadyInView(treeRoot));
         Assert.assertTrue(thicket.alreadyInView(sender));
+    }
+
+    @Test
+    public void calculateForwardingLoad_Null()
+    {
+        Assert.assertEquals(0, thicket.calculateForwardingLoad(null));
+    }
+
+    @Test
+    public void calculateForwardingLoad_Empty()
+    {
+        Assert.assertEquals(0, thicket.calculateForwardingLoad(new HashMap<InetAddress, Integer>()));
+    }
+
+    @Test
+    public void calculateForwardingLoad_LegitMap() throws UnknownHostException
+    {
+        Map<InetAddress, Integer> map = new HashMap<>();
+        int count = 0;
+        for (int i = 0; i < 20; i++)
+        {
+            map.put(InetAddress.getByName("127.0.4." + i), i);
+            count += i;
+        }
+        Assert.assertEquals(count, thicket.calculateForwardingLoad(map));
+    }
+
+    @Test
+    public void calculateForwardingLoad_MapWithNulls() throws UnknownHostException
+    {
+        Map<InetAddress, Integer> map = new HashMap<>();
+        int count = 0;
+        for (int i = 0; i < 20; i++)
+        {
+            if (i % 2 == 0)
+            {
+                map.put(InetAddress.getByName("127.0.4." + i), i);
+                count += i;
+            }
+            else
+            {
+                map.put(InetAddress.getByName("127.0.4." + i), null);
+            }
+        }
+        Assert.assertEquals(count, thicket.calculateForwardingLoad(map));
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>

@@ -6,5 +6,6 @@ public enum MessageType
     PRUNE,
     SUMMARY,
     GRAFT_REQUEST,
-    GRAFT_RESPONSE,
+    GRAFT_RESPONSE_ACCEPT,
+    GRAFT_RESPONSE_REJECT,
 }

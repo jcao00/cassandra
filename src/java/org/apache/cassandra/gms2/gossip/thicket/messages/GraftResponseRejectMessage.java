@@ -5,17 +5,21 @@ import java.util.Map;
 
 import org.apache.cassandra.io.ISerializer;
 
-public class GraftRequestMessage extends ThicketMessage
+public class GraftResponseRejectMessage extends ThicketMessage
 {
-    private final InetAddress treeRoot;
     private final int attemptCount;
     private final String clientId;
 
-    public GraftRequestMessage(InetAddress treeRoot, String clientId, int attemptCount, Map<InetAddress, Integer> loadEstimate)
+    /**
+     * In case of REJECT, a node may offer an alternative peer that can be contacted for the requestor for grafting.
+     */
+    private final InetAddress graftAlternate;
+
+    public GraftResponseRejectMessage(InetAddress treeRoot, String clientId, int attemptCount, InetAddress graftAlternate, Map<InetAddress, Integer> loadEstimate)
     {
         super(treeRoot, loadEstimate);
-        this.treeRoot = treeRoot;
         this.attemptCount = attemptCount;
+        this.graftAlternate = graftAlternate;
         this.clientId = clientId;
     }
 
@@ -29,18 +33,19 @@ public class GraftRequestMessage extends ThicketMessage
         return attemptCount;
     }
 
-    public InetAddress getTreeRoot()
+    public InetAddress getGraftAlternate()
     {
-        return treeRoot;
+        return graftAlternate;
     }
 
     public MessageType getMessageType()
     {
-        return MessageType.GRAFT_REQUEST;
+        return MessageType.GRAFT_RESPONSE_REJECT;
     }
 
     public ISerializer getSerializer()
     {
         return null;
     }
+
 }
