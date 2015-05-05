@@ -15,7 +15,7 @@ public class ReceivedMessage
 
     public int hashCode()
     {
-        return msgId.hashCode() + treeRoot.hashCode();
+        return 37 * msgId.hashCode() + treeRoot.hashCode();
     }
 
     public boolean equals(Object o)

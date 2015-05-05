@@ -99,10 +99,10 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      *
      */
     //TODO: might want an atomic reference around the value, so we can easily swap it out.
-    private final ConcurrentMap<String, HashSet<ReceivedMessage>> recentMessages;
+    private final ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages;
 
     // need tuple of {clientId, messageId, (treeRoot, sender)}
-    private final ExpiringMap<ExpiringMapEntry, HashSet<InetAddress>> announcements;
+    private final ExpiringMap<ExpiringMapEntry, CopyOnWriteArrayList<InetAddress>> announcements;
 
     /**
      * The maximum number of peers to add as downstream tree nodes (in an activePeers set).
@@ -118,7 +118,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         activePeers = new ConcurrentHashMap<>();
         loadEstimates = new ConcurrentHashMap<>();
 
-        //TODO: should this be a set instead? not sure if we care about FIFO properties... (we don't)
+        // should this be a set instead? not sure if we care about FIFO properties... (we don't)
         backupPeers = new CopyOnWriteArrayList<>();
         clients = new ConcurrentHashMap<>();
         stateChangeSubscriber = new AntiEntropyPeerListener();
@@ -143,7 +143,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             for (InetAddress addr : targets)
                 dispatcher.send(this, dataMessage, addr);
 
-            addToRecentMessages(clientId, messageId, config.getLocalAddr());
+            addToRecentMessages(clientId, messageId, localAddr, localAddr);
         }
         else
         {
@@ -151,18 +151,21 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
     }
 
-    private void addToRecentMessages(String clientId, Object messageId, InetAddress addr)
+    private void addToRecentMessages(String clientId, Object messageId, InetAddress treeRoot, InetAddress sender)
     {
-        ReceivedMessage receivedMessage = new ReceivedMessage(messageId, addr);
-        HashSet<ReceivedMessage> msgs = recentMessages.get(clientId);
+        HashMap<ReceivedMessage, InetAddress> msgs = recentMessages.get(clientId);
         if (msgs == null)
         {
-            msgs = new HashSet<>();
-            HashSet<ReceivedMessage> existing = recentMessages.putIfAbsent(clientId, msgs);
+            msgs = new HashMap<>();
+            HashMap<ReceivedMessage, InetAddress> existing = recentMessages.putIfAbsent(clientId, msgs);
             if (existing != null)
                 msgs = existing;
         }
-        msgs.add(receivedMessage);
+
+        // if there is a race here (two concurrent invocations from handleData()), that's ok, as long peer as one wins.
+        // soon enough, we'll get messages from the competing peers staggered enough in time that we won't race
+        // and the '4.4 Tree reconfiguration' code will kick in
+        msgs.put(new ReceivedMessage(messageId, treeRoot), sender);
     }
 
     private Map<InetAddress, Integer> buildLoadEstimate()
@@ -301,10 +304,9 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
 
         // check if there are any open timers waiting for this message; if so, cancel them, and remove from 'announcements'
-        cancelAnnouncement(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
+        CopyOnWriteArrayList<InetAddress> previousSenders = cancelAnnouncement(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
 
-        boolean wasFresh = client.receiveBroadcast(msg.getMessageId(), msg.getMessage());
-        if (wasFresh)
+        if (client.receiveBroadcast(msg.getMessageId(), msg.getMessage()))
         {
             Collection<InetAddress> targets = getTargets(sender, msg.getTreeRoot());
             ThicketDataMessage dataMessage = new ThicketDataMessage(msg, buildLoadEstimate());
@@ -313,7 +315,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
                 if (!addr.equals(sender))
                     dispatcher.send(this, dataMessage, addr);
             }
-            addToRecentMessages(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
+            maybeReconfigure(msg.getClientId(), msg.getTreeRoot(), sender, previousSenders);
+            addToRecentMessages(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot(), sender);
         }
         else
         {
@@ -323,18 +326,50 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             // and B is a direct target of the treeRoot. Then the treeRoot recovers, and broadcasts to B -
             // B will see the message is a dupe, but should it really prune the treeRoot from it's own tree?
 
-            // TODO: as per section 4.4, "Tree Reconfiguration", check to see if redundant msg is already in announcements from a different node
-                        
-
             removeActivePeer(msg.getTreeRoot(), sender);
             dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), buildLoadEstimate()), sender);
         }
     }
 
-    private void cancelAnnouncement(String clientId, Object messageId, InetAddress treeRoot)
+    /**
+     * Based on Section 4.4 of the Thicket paper, optimize the tree based on faster senders.
+     * If we receive a non-redundant message for which we already have an open announcement,
+     * maybe PRUNE the sender of the message and GRAFT the summary sender of the announcement.
+     */
+    void maybeReconfigure(String clientId, InetAddress treeRoot, InetAddress sender, CopyOnWriteArrayList<InetAddress> previousSenders)
+    {
+        //TODO: write tests for me
+
+        // check for open announcement
+        if (sender == null || previousSenders.isEmpty())
+            return;
+
+        // check if sender shipped us a summary before the message (really shouldn't happen, except in small clusters)
+        if (previousSenders.contains(sender))
+            return;
+
+        InetAddress firstSender = previousSenders.get(0);
+        Integer loadEstFirstSender = loadEstimate.get(firstSender);
+        Integer loadEstSecondSender = loadEstimate.get(sender);
+        if (loadEstFirstSender == null || loadEstSecondSender == null)
+        {
+            logger.warn("failed to capture load estimate information for a peer");
+            return;
+        }
+
+        if (loadEstSecondSender > loadEstFirstSender)
+        {
+            removeActivePeer(treeRoot, sender);
+            dispatcher.send(this, new PruneMessage(treeRoot, buildLoadEstimate()), sender);
+            addToActivePeers(activePeers, treeRoot, firstSender);
+            dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate()), firstSender);
+        }
+    }
+
+    private CopyOnWriteArrayList<InetAddress> cancelAnnouncement(String clientId, Object messageId, InetAddress treeRoot)
     {
         ExpiringMapEntry entry = new ExpiringMapEntry(clientId, messageId, treeRoot);
-        announcements.remove(entry);
+        return announcements.remove(entry);
     }
 
     void removeActivePeer(InetAddress treeRoot, InetAddress toRemove)
@@ -372,11 +407,10 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         // for now, I'm just shipping out for all of them - so yeah, a total of (numberOfClients x destinations) messages
         for (BroadcastClient client : clients.values())
         {
-            // TODO: make this better for mutli-threading
-            HashSet<ReceivedMessage> msgs = recentMessages.remove(client.getClientId());
+            HashMap<ReceivedMessage, InetAddress> msgs = recentMessages.remove(client.getClientId());
 
             //TODO: what tree root to use here?!?!?!?!?!
-            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), msgs, client.prepareSummary(), buildLoadEstimate());
+            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), msgs.keySet(), client.prepareSummary(), buildLoadEstimate());
             for (InetAddress addr : destinations)
                 dispatcher.send(this, msg, addr);
         }
@@ -527,7 +561,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      * @param summarySenders set of peers that sent this node a SUMMARY message with the given
      *                       {clientId, messageId} tuple.
      */
-    void handleExpiredAnnouncement(String clientId, Object messageId, InetAddress treeRoot, HashSet<InetAddress> summarySenders)
+    void handleExpiredAnnouncement(String clientId, Object messageId, InetAddress treeRoot, CopyOnWriteArrayList<InetAddress> summarySenders)
     {
         //TODO: add tests for me
 
@@ -780,9 +814,9 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
     }
 
-    private class AnnouncementTimeoutProcessor implements Function<Pair<ExpiringMapEntry, CacheableObject<HashSet<InetAddress>>>, Object>
+    private class AnnouncementTimeoutProcessor implements Function<Pair<ExpiringMapEntry, CacheableObject<CopyOnWriteArrayList<InetAddress>>>, Object>
     {
-        public Object apply(final Pair<ExpiringMapEntry, CacheableObject<HashSet<InetAddress>>> input)
+        public Object apply(final Pair<ExpiringMapEntry, CacheableObject<CopyOnWriteArrayList<InetAddress>>> input)
         {
             publish(new Runnable()
             {
@@ -806,6 +840,11 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             this.treeRoot = treeRoot;
             this.messageId = messageId;
             this.clientId = clientId;
+        }
+
+        public int hashCode()
+        {
+            return 37 * clientId.hashCode() + messageId.hashCode() + treeRoot.hashCode();
         }
     }
 }
