@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -432,20 +433,30 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleSummary(SummaryMessage msg, InetAddress sender)
     {
-        BroadcastClient client = clients.get(msg.getClientId());
+        String clientId = msg.getClientId();
+        BroadcastClient client = clients.get(clientId);
         if (client == null)
         {
             logger.warn("received a summary request for an unknown client component: {}, ignoring", msg.getClientId());
             return;
         }
 
-        // need an ExpiringMap
-        // TODO: stash these ids into the announcements(?) member field, and setup timer
-
-
         // perform ant anti-entropy (push-only style)
-        client.receiveSummary(msg.getSummary());
+        Set<? extends Object> missing = client.receiveSummary(msg.getSummary());
 
+        for (Object msgId : missing)
+        {
+            // double check to see if the msg has come in
+            if (client.hasReceivedMessage(msgId))
+                continue;
+            ExpiringMapEntry entry = new ExpiringMapEntry(clientId, msgId, msg.getTreeRoot());
+            CopyOnWriteArrayList<InetAddress> senders = new CopyOnWriteArrayList<>();
+            senders.add(sender);
+
+            CopyOnWriteArrayList<InetAddress> previous = announcements.putIfAbsent(entry, senders);
+            if (previous != null && !previous.contains(sender))
+                previous.add(sender);
+        }
     }
 
     void handleGraftRequest(GraftRequestMessage msg, InetAddress sender)
@@ -712,7 +723,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     private class SummaryTask implements Runnable
     {
-        // TODO: not sure this is the best way to do this (one Runnable just submitting another)
+        // not sure this is the best way to do this (one Runnable just submitting another)
         public void run()
         {
             publish(new Runnable()
@@ -810,7 +821,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
         public void onRestart(InetAddress endpoint, EndpointState state)
         {
-            // TODO: maybe notify thicket that the peer bounced, and any open anti-entopry sessions are likely dead
+            // TODO: maybe notify thicket that the peer bounced, and any open anti-entropy sessions are likely dead
         }
     }
 

@@ -31,7 +31,7 @@ public interface BroadcastClient
      * @param summary
      * @return Set of missing messageIds
      */
-    void receiveSummary(Object summary);
+    Set<? extends Object> receiveSummary(Object summary);
 
     boolean hasReceivedMessage(Object messageId);
 }
