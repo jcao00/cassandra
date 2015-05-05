@@ -22,6 +22,8 @@ import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.concurrent.Stage;
+import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
@@ -100,7 +102,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     private final ConcurrentMap<String, HashSet<ReceivedMessage>> recentMessages;
 
     // need tuple of {clientId, messageId, (treeRoot, sender)}
-    private final ExpiringMap<ExpiringMapKey, CacheableObject<ExpiringMapValue>> announcements;
+    private final ExpiringMap<ExpiringMapEntry, HashSet<InetAddress>> announcements;
 
     /**
      * The maximum number of peers to add as downstream tree nodes (in an activePeers set).
@@ -298,7 +300,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             return;
         }
 
-        //TODO: check if there are any open timers waiting for this message; if so, cancel them, and remove from 'announcements'
+        // check if there are any open timers waiting for this message; if so, cancel them, and remove from 'announcements'
+        cancelAnnouncement(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
 
         boolean wasFresh = client.receiveBroadcast(msg.getMessageId(), msg.getMessage());
         if (wasFresh)
@@ -321,9 +324,17 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             // B will see the message is a dupe, but should it really prune the treeRoot from it's own tree?
 
             // TODO: as per section 4.4, "Tree Reconfiguration", check to see if redundant msg is already in announcements from a different node
+                        
+
             removeActivePeer(msg.getTreeRoot(), sender);
             dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), buildLoadEstimate()), sender);
         }
+    }
+
+    private void cancelAnnouncement(String clientId, Object messageId, InetAddress treeRoot)
+    {
+        ExpiringMapEntry entry = new ExpiringMapEntry(clientId, messageId, treeRoot);
+        announcements.remove(entry);
     }
 
     void removeActivePeer(InetAddress treeRoot, InetAddress toRemove)
@@ -504,6 +515,46 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         return load;
     }
 
+    /**
+     * When the timer for an announcement expires, we have to assume the sender (rooted at a given
+     * tree) is down, so we need to replace it. To do that, we select one of the peers that sent
+     * a SUMMARY request with the given {client, messageId, treeRoot} tuple, optimistically add it
+     * to the local tree (for the tree root), and send a GRAFT message.
+     *
+     * @param clientId
+     * @param messageId
+     * @param treeRoot
+     * @param summarySenders set of peers that sent this node a SUMMARY message with the given
+     *                       {clientId, messageId} tuple.
+     */
+    void handleExpiredAnnouncement(String clientId, Object messageId, InetAddress treeRoot, HashSet<InetAddress> summarySenders)
+    {
+        //TODO: add tests for me
+
+        BroadcastClient client = clients.get(clientId);
+        if (client == null)
+        {
+            logger.warn(String.format("%s, processing an expired announcement for unknown client component: %s; ignoring",
+                                      getAddress(), clientId));
+            return;
+        }
+
+        // check to see if there was any race between the timer expiring and the client receiving and precessing the message
+        if (client.hasReceivedMessage(messageId))
+            return;
+
+        // now we need to send out a GRAFT message, assumming the original sender is not reachable
+        if (summarySenders.isEmpty())
+        {
+            logger.warn("wanted to send a GRAFT message in response to expired announcement, but summarySenders is empty");
+            return;
+        }
+
+        InetAddress graftTarget = Utils.selectRandom(summarySenders);
+        addToActivePeers(activePeers, treeRoot, graftTarget);
+        dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate()), graftTarget);
+    }
+
     void handleGraftResponseAccept(GraftResponseAcceptMessage msg, InetAddress sender)
     {
         // we've already done the optimistic work in the summary handling, so just process the summary
@@ -627,16 +678,30 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     private class SummaryTask implements Runnable
     {
-        //TODO: publish onto the same thread that handles all of the thicket processing
+        // TODO: not sure this is the best way to do this (one Runnable just submitting another)
         public void run()
         {
-            doSummary();
+            publish(new Runnable()
+            {
+                public void run()
+                {
+                    doSummary();
+                }
+            });
         }
     }
 
     public IEndpointStateChangeSubscriber getStateChangeSubscriber()
     {
         return stateChangeSubscriber;
+    }
+
+    /**
+     * an internal call to move processing to the GOSSIP stage
+     */
+    void publish(Runnable runnable)
+    {
+        StageManager.getStage(Stage.GOSSIP).submit(runnable);
     }
 
     /**
@@ -715,38 +780,32 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
     }
 
-    private static class AnnouncementTimeoutProcessor implements Function<Pair<ExpiringMapKey, CacheableObject<ExpiringMapValue>>, Object>
+    private class AnnouncementTimeoutProcessor implements Function<Pair<ExpiringMapEntry, CacheableObject<HashSet<InetAddress>>>, Object>
     {
-        public Object apply(Pair<ExpiringMapKey, CacheableObject<ExpiringMapValue>> input)
+        public Object apply(final Pair<ExpiringMapEntry, CacheableObject<HashSet<InetAddress>>> input)
         {
-            //TODO: give this some lovin'
-
-            // this is where we send out a GRAFT request
+            publish(new Runnable()
+            {
+                public void run()
+                {
+                    handleExpiredAnnouncement(input.left.clientId, input.left.messageId, input.left.treeRoot, input.right.value);
+                }
+            });
             return null;
         }
     }
 
-    private static class ExpiringMapKey
+    private static class ExpiringMapEntry
     {
         final String clientId;
         final Object messageId;
-
-        private ExpiringMapKey(String clientId, Object messageId)
-        {
-            this.clientId = clientId;
-            this.messageId = messageId;
-        }
-    }
-
-    private static class ExpiringMapValue
-    {
         final InetAddress treeRoot;
-        final InetAddress summarySender;
 
-        private ExpiringMapValue(InetAddress treeRoot, InetAddress summarySender)
+        private ExpiringMapEntry(String clientId, Object messageId, InetAddress treeRoot)
         {
             this.treeRoot = treeRoot;
-            this.summarySender = summarySender;
+            this.messageId = messageId;
+            this.clientId = clientId;
         }
     }
 }

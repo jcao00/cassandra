@@ -143,6 +143,25 @@ public class ExpiringMap<K, V>
         return (previous == null) ? null : previous.value;
     }
 
+    public V putIfAbsent(K key, V value)
+    {
+        return put(key, value, this.defaultExpiration);
+    }
+
+    public V putIfAbsent(K key, V value, long timeout)
+    {
+        if (shutdown)
+        {
+            // StorageProxy isn't equipped to deal with "I'm nominally alive, but I can't send any messages out."
+            // So we'll just sit on this thread until the rest of the server shutdown completes.
+            //
+            // See comments in CustomTThreadPoolServer.serve, CASSANDRA-3335, and CASSANDRA-3727.
+            Uninterruptibles.sleepUninterruptibly(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+        }
+        CacheableObject<V> previous = cache.putIfAbsent(key, new CacheableObject<V>(value, timeout));
+        return (previous == null) ? null : previous.value;
+    }
+
     public V get(K key)
     {
         CacheableObject<V> co = cache.get(key);
