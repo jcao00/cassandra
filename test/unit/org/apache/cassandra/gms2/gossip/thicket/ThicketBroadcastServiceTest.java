@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CopyOnWriteArraySet;
 
 import org.junit.Assert;
@@ -498,6 +499,60 @@ public class ThicketBroadcastServiceTest
 
         Assert.assertTrue(thicket.removeActivePeer(activePeers, treeRoot, addr));
         Assert.assertTrue(thicket.getBackupPeers().contains(addr));
+    }
+
+    @Test
+    public void maybeReconfigure_NoPreviousAnnouncement()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArrayList<InetAddress> previousSenders = new CopyOnWriteArrayList<>();
+        Map<InetAddress, Integer> loadEst = new HashMap<>();
+        Assert.assertFalse(thicket.maybeReconfigure(client.getClientId(), treeRoot, sender, activePeers, previousSenders, loadEst));
+    }
+
+    @Test
+    public void maybeReconfigure_AnnouncementFromSameSender()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArrayList<InetAddress> previousSenders = new CopyOnWriteArrayList<>();
+        previousSenders.add(sender);
+        Map<InetAddress, Integer> loadEst = new HashMap<>();
+        Assert.assertFalse(thicket.maybeReconfigure(client.getClientId(), treeRoot, sender, activePeers, previousSenders, loadEst));
+    }
+
+    @Test
+    public void maybeReconfigure_NoLoadEstimate()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArrayList<InetAddress> previousSenders = new CopyOnWriteArrayList<>();
+        previousSenders.add(addr);
+        Map<InetAddress, Integer> loadEst = new HashMap<>();
+        loadEst.put(sender, 2);
+        Assert.assertFalse(thicket.maybeReconfigure(client.getClientId(), treeRoot, sender, activePeers, previousSenders, loadEst));
+    }
+
+    @Test
+    public void maybeReconfigure_SenderLoadEstimateIsHigher()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArrayList<InetAddress> previousSenders = new CopyOnWriteArrayList<>();
+        previousSenders.add(addr);
+        Map<InetAddress, Integer> loadEst = new HashMap<>();
+        loadEst.put(sender, 4);
+        loadEst.put(addr, 2);
+        Assert.assertTrue(thicket.maybeReconfigure(client.getClientId(), treeRoot, sender, activePeers, previousSenders, loadEst));
+    }
+
+    @Test
+    public void maybeReconfigure_SenderLoadEstimateIsLower()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArrayList<InetAddress> previousSenders = new CopyOnWriteArrayList<>();
+        previousSenders.add(addr);
+        Map<InetAddress, Integer> loadEst = new HashMap<>();
+        loadEst.put(sender, 4);
+        loadEst.put(addr, 8);
+        Assert.assertFalse(thicket.maybeReconfigure(client.getClientId(), treeRoot, sender, activePeers, previousSenders, loadEst));
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>

@@ -156,6 +156,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     private void addToRecentMessages(String clientId, Object messageId, InetAddress treeRoot, InetAddress sender)
     {
+        // TODO: add tests
+
         HashMap<ReceivedMessage, InetAddress> msgs = recentMessages.get(clientId);
         if (msgs == null)
         {
@@ -167,7 +169,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
         // if there is a race here (two concurrent invocations from handleData()), that's ok, as long peer as one wins.
         // soon enough, we'll get messages from the competing peers staggered enough in time that we won't race
-        // and the '4.4 Tree reconfiguration' code will kick in
+        // and the 'Tree reconfiguration' code will kick in
         msgs.put(new ReceivedMessage(messageId, treeRoot), sender);
     }
 
@@ -307,18 +309,20 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
 
         // check if there are any open timers waiting for this message; if so, cancel them, and remove from 'announcements'
-        CopyOnWriteArrayList<InetAddress> previousSenders = cancelAnnouncement(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
+        CopyOnWriteArrayList<InetAddress> previousSummarySenders = cancelAnnouncement(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
 
+        //TODO: maybe check recentMessages for determining if a message was stale (and we should PRUNE, etc)
         if (client.receiveBroadcast(msg.getMessageId(), msg.getMessage()))
         {
             Collection<InetAddress> targets = getTargets(sender, msg.getTreeRoot());
-            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, buildLoadEstimate(activePeers));
+            Map<InetAddress, Integer> loadEst = buildLoadEstimate(activePeers);
+            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, loadEst);
             for (InetAddress addr : targets)
             {
                 if (!addr.equals(sender))
                     dispatcher.send(this, dataMessage, addr);
             }
-            maybeReconfigure(msg.getClientId(), msg.getTreeRoot(), sender, previousSenders);
+            maybeReconfigure(msg.getClientId(), msg.getTreeRoot(), sender, activePeers, previousSummarySenders, loadEst);
             addToRecentMessages(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot(), sender);
         }
         else
@@ -337,27 +341,31 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     /**
      * Based on Section 4.4 of the Thicket paper, optimize the tree based on faster senders.
      * If we receive a non-redundant message for which we already have an open announcement,
-     * maybe PRUNE the sender of the message and GRAFT the summary sender of the announcement.
+     * and the load estimate of the announcement (summary) sender is less than the load estimate
+     * of the message sender, PRUNE the sender of the message and GRAFT the announcement sender.
      */
-    void maybeReconfigure(String clientId, InetAddress treeRoot, InetAddress sender, CopyOnWriteArrayList<InetAddress> previousSenders)
+    boolean maybeReconfigure(String clientId, InetAddress treeRoot, InetAddress sender,
+                          ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers,
+                          CopyOnWriteArrayList<InetAddress> previousSummarySenders,
+                          Map<InetAddress, Integer> loadEst)
     {
         //TODO: write tests for me
 
         // check for open announcement
-        if (previousSenders == null || previousSenders.isEmpty())
-            return;
+        if (previousSummarySenders == null || previousSummarySenders.isEmpty())
+            return false;
 
-        // check if sender shipped us a summary before the message (really shouldn't happen, except in small clusters)
-        if (previousSenders.contains(sender))
-            return;
+        // check if sender shipped us a summary before the message (possibly the message was redelivered)
+        if (previousSummarySenders.contains(sender))
+            return false;
 
-        InetAddress firstSender = previousSenders.get(0);
-        Integer loadEstFirstSender = loadEstimate.get(firstSender);
-        Integer loadEstSecondSender = loadEstimate.get(sender);
+        InetAddress firstSender = previousSummarySenders.get(0);
+        Integer loadEstFirstSender = loadEst.get(firstSender);
+        Integer loadEstSecondSender = loadEst.get(sender);
         if (loadEstFirstSender == null || loadEstSecondSender == null)
         {
-            logger.warn("failed to capture load estimate information for a peer");
-            return;
+            logger.warn("load estimate for a peer is not available");
+            return false;
         }
 
         if (loadEstSecondSender > loadEstFirstSender)
@@ -366,7 +374,9 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             dispatcher.send(this, new PruneMessage(treeRoot, buildLoadEstimate(activePeers)), sender);
             addToActivePeers(activePeers, treeRoot, firstSender);
             dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate(activePeers)), firstSender);
+            return true;
         }
+        return false;
     }
 
     private CopyOnWriteArrayList<InetAddress> cancelAnnouncement(String clientId, Object messageId, InetAddress treeRoot)
