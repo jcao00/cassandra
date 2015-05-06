@@ -555,6 +555,43 @@ public class ThicketBroadcastServiceTest
         Assert.assertFalse(thicket.maybeReconfigure(client.getClientId(), treeRoot, sender, activePeers, previousSenders, loadEst));
     }
 
+    @Test
+    public void addToRecentMessages_NewClient()
+    {
+        ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages = new ConcurrentHashMap<>();
+        thicket.addToRecentMessages(client.getClientId(), msgId, treeRoot, sender, recentMessages);
+
+        Assert.assertTrue(recentMessages.containsKey(client.getClientId()));
+        HashMap<ReceivedMessage, InetAddress> map = recentMessages.get(client.getClientId());
+        Assert.assertEquals(1, map.size());
+        Map.Entry<ReceivedMessage, InetAddress> entry = map.entrySet().iterator().next();
+        ReceivedMessage msg = entry.getKey();
+        Assert.assertEquals(msg.msgId, msgId);
+        Assert.assertEquals(msg.treeRoot, treeRoot);
+        Assert.assertEquals(sender, entry.getValue());
+    }
+
+    @Test
+    public void addToRecentMessages_NewClient_DupeMessage() throws UnknownHostException
+    {
+        ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages = new ConcurrentHashMap<>();
+        thicket.addToRecentMessages(client.getClientId(), msgId, treeRoot, sender, recentMessages);
+
+        InetAddress newAddr = InetAddress.getByName("127.0.7.0");
+        thicket.addToRecentMessages(client.getClientId(), msgId, treeRoot, newAddr, recentMessages);
+
+        Assert.assertTrue(recentMessages.containsKey(client.getClientId()));
+        HashMap<ReceivedMessage, InetAddress> map = recentMessages.get(client.getClientId());
+        Assert.assertEquals(1, map.size());
+        Map.Entry<ReceivedMessage, InetAddress> entry = map.entrySet().iterator().next();
+        ReceivedMessage msg = entry.getKey();
+        Assert.assertEquals(msg.msgId, msgId);
+        Assert.assertEquals(msg.treeRoot, treeRoot);
+
+        // should be the original sender
+        Assert.assertEquals(sender, entry.getValue());
+    }
+
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
     {
         public List<InetAddress> destinations = new ArrayList<>();
