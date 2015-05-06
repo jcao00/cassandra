@@ -62,9 +62,15 @@ public class MembershipService implements BroadcastClient
         return null;
     }
 
-    public void receiveSummary(Object summary)
+    public Set<? extends Object> receiveSummary(Object summary)
     {
 
+        return null;
+    }
+
+    public boolean hasReceivedMessage(Object messageId)
+    {
+        return false;
     }
 
     /**

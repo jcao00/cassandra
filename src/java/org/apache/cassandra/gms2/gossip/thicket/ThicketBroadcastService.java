@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -55,6 +54,9 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastService.class);
     private static final int MAX_GRAFT_ATTEMPTS = 2;
     private static final long ANNOUNCEMENTS_ENTRY_TTL = TimeUnit.SECONDS.toMillis(10);
+
+    //TODO: fix this hard-coded value
+    private static final int MAX_LOAD = 1000;
 
     private final ThicketConfig config;
     private final GossipDispatcher dispatcher;
@@ -342,7 +344,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         //TODO: write tests for me
 
         // check for open announcement
-        if (sender == null || previousSenders.isEmpty())
+        if (previousSenders == null || previousSenders.isEmpty())
             return;
 
         // check if sender shipped us a summary before the message (really shouldn't happen, except in small clusters)
@@ -398,7 +400,9 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      */
     void doSummary()
     {
-        //TODO: check the maxLoad parameter (or just the known size of the cluster)
+        // don't perform a SUMMARY round if we're over the maxLoad, as we won't be able to help in the tree repair
+        if (calculateForwardingLoad(loadEstimate) >= MAX_LOAD)
+            return;
 
         Collection<InetAddress> destinations = summaryDestinations();
 
@@ -461,9 +465,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleGraftRequest(GraftRequestMessage msg, InetAddress sender)
     {
-        //TODO: fix this hard-coded value
         //TODO: make sure that by accepting this graft, it won't make us interior to more than one tree
-        if (calculateForwardingLoad(loadEstimate) < 1000)
+        if (calculateForwardingLoad(loadEstimate) < MAX_LOAD)
         {
             addToActivePeers(activePeers, msg.getTreeRoot(), sender);
 
@@ -677,7 +680,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         if (backupPeers.contains(addr))
             return true;
 
-        // TODO: find more efficient way of testing for existence in the active peers
         if (activePeers.containsKey(addr))
             return true;
 
