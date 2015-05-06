@@ -62,7 +62,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     private final GossipDispatcher dispatcher;
 
     /**
-     * A mapping of tree root node -> broadcast targets.
+     * A mapping of {tree root node -> broadcast targets} for each tree this node is a branch of.
      */
     private final ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers;
 
@@ -141,7 +141,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
         if (!targets.isEmpty())
         {
-            ThicketDataMessage dataMessage = new ThicketDataMessage(localAddr, clientId, messageId, message, buildLoadEstimate());
+            ThicketDataMessage dataMessage = new ThicketDataMessage(localAddr, clientId, messageId, message, buildLoadEstimate(activePeers));
 
             for (InetAddress addr : targets)
                 dispatcher.send(this, dataMessage, addr);
@@ -171,7 +171,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         msgs.put(new ReceivedMessage(messageId, treeRoot), sender);
     }
 
-    private Map<InetAddress, Integer> buildLoadEstimate()
+    Map<InetAddress, Integer> buildLoadEstimate(ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers)
     {
         Map<InetAddress, Integer> loadMap = this.loadEstimate;
         if (loadMap != null)
@@ -217,7 +217,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             peers = new ArrayList<>(fanout);
             Utils.selectMultipleRandom(backupPeers, peers, fanout);
         }
-        else if (isInterior())
+        else if (isInterior(activePeers))
         {
             // if this node is already interior to some other tree, the activePeers for the new tree (for this node)
             // will only contain the sender (so this node acts as a leaf)
@@ -248,7 +248,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         return targets;
     }
 
-    boolean isInterior()
+    boolean isInterior(ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers)
     {
         // NOTE: we are looking to find any set of peers, rooted at any node, where the count is greater than one.
         // as we always include the sender (rooted at a node) in the activePeers for a tree, we can identify if we're a
@@ -312,7 +312,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         if (client.receiveBroadcast(msg.getMessageId(), msg.getMessage()))
         {
             Collection<InetAddress> targets = getTargets(sender, msg.getTreeRoot());
-            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, buildLoadEstimate());
+            ThicketDataMessage dataMessage = new ThicketDataMessage(msg, buildLoadEstimate(activePeers));
             for (InetAddress addr : targets)
             {
                 if (!addr.equals(sender))
@@ -329,8 +329,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             // and B is a direct target of the treeRoot. Then the treeRoot recovers, and broadcasts to B -
             // B will see the message is a dupe, but should it really prune the treeRoot from it's own tree?
 
-            removeActivePeer(msg.getTreeRoot(), sender);
-            dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), buildLoadEstimate()), sender);
+            removeActivePeer(activePeers, msg.getTreeRoot(), sender);
+            dispatcher.send(this, new PruneMessage(msg.getTreeRoot(), buildLoadEstimate(activePeers)), sender);
         }
     }
 
@@ -362,10 +362,10 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
         if (loadEstSecondSender > loadEstFirstSender)
         {
-            removeActivePeer(treeRoot, sender);
-            dispatcher.send(this, new PruneMessage(treeRoot, buildLoadEstimate()), sender);
+            removeActivePeer(activePeers, treeRoot, sender);
+            dispatcher.send(this, new PruneMessage(treeRoot, buildLoadEstimate(activePeers)), sender);
             addToActivePeers(activePeers, treeRoot, firstSender);
-            dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate()), firstSender);
+            dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate(activePeers)), firstSender);
         }
     }
 
@@ -375,13 +375,23 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         return announcements.remove(entry);
     }
 
-    void removeActivePeer(InetAddress treeRoot, InetAddress toRemove)
+    /**
+     * Remove a peer from all use in the tree rooted at {@code treeRoot}.
+     * If the peer was in active use anywhere, add it to the {@code backupPeers} collection.
+     */
+    boolean removeActivePeer(ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers, InetAddress treeRoot, InetAddress toRemove)
     {
-        //TODO: what should we do when tree root is the same as the sender?
-        CopyOnWriteArraySet<InetAddress> branches = activePeers.get(treeRoot);
-        if (branches != null)
-            branches.remove(toRemove);
-        backupPeers.add(toRemove);
+        boolean removed = false;
+        CopyOnWriteArraySet<InetAddress> rootedTree = activePeers.get(treeRoot);
+        if (rootedTree != null)
+        {
+            removed = rootedTree.remove(toRemove);
+            backupPeers.add(toRemove);
+            // setup the loadEstimate to be rebuilt
+            loadEstimate = null;
+        }
+
+        return removed;
     }
 
     /**
@@ -389,7 +399,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      */
     void handlePrune(PruneMessage msg, InetAddress sender)
     {
-        removeActivePeer(msg.getTreeRoot(), sender);
+        removeActivePeer(activePeers, msg.getTreeRoot(), sender);
     }
 
     /**
@@ -415,7 +425,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             HashMap<ReceivedMessage, InetAddress> msgs = recentMessages.remove(client.getClientId());
 
             //TODO: what tree root to use here?!?!?!?!?!
-            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), msgs.keySet(), client.prepareSummary(), buildLoadEstimate());
+            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), msgs.keySet(), client.prepareSummary(), buildLoadEstimate(activePeers));
             for (InetAddress addr : destinations)
                 dispatcher.send(this, msg, addr);
         }
@@ -475,7 +485,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             // can converge quicker.
             BroadcastClient client = clients.get(msg.getClientId());
             dispatcher.send(this,
-                            new GraftResponseAcceptMessage(msg.getTreeRoot(), msg.getClientId(), client.prepareSummary(), buildLoadEstimate()),
+                            new GraftResponseAcceptMessage(msg.getTreeRoot(), msg.getClientId(), client.prepareSummary(), buildLoadEstimate(activePeers)),
                            sender);
         }
         else
@@ -489,7 +499,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
                 alternate = findGraftAlternate(peers, loadEstimates);
             }
             dispatcher.send(this,
-                            new GraftResponseRejectMessage(msg.getTreeRoot(), msg.getClientId(), msg.getAttemptCount(), alternate, buildLoadEstimate()),
+                            new GraftResponseRejectMessage(msg.getTreeRoot(), msg.getClientId(), msg.getAttemptCount(), alternate, buildLoadEstimate(activePeers)),
                             sender);
         }
     }
@@ -600,7 +610,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
         InetAddress graftTarget = Utils.selectRandom(summarySenders);
         addToActivePeers(activePeers, treeRoot, graftTarget);
-        dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate()), graftTarget);
+        dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate(activePeers)), graftTarget);
     }
 
     void handleGraftResponseAccept(GraftResponseAcceptMessage msg, InetAddress sender)
@@ -617,7 +627,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleGraftResponseReject(GraftResponseRejectMessage msg, InetAddress sender)
     {
-        removeActivePeer(msg.getTreeRoot(), sender);
+        removeActivePeer(activePeers, msg.getTreeRoot(), sender);
 
         int attemptCount = msg.getAttemptCount() + 1;
         if (attemptCount > MAX_GRAFT_ATTEMPTS)
@@ -633,7 +643,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         if (msg.getGraftAlternate() != null)
         {
             //NOTE: this is different from the thicket paper
-            dispatcher.send(this, new GraftRequestMessage(msg.getTreeRoot(), msg.getClientId(), attemptCount, buildLoadEstimate()), msg.getGraftAlternate());
+            dispatcher.send(this, new GraftRequestMessage(msg.getTreeRoot(), msg.getClientId(), attemptCount, buildLoadEstimate(activePeers)), msg.getGraftAlternate());
         }
     }
 

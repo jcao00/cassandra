@@ -10,6 +10,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -17,6 +20,7 @@ import org.junit.Test;
 
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
+import org.apache.cassandra.gms2.gossip.Utils;
 import org.apache.cassandra.gms2.gossip.thicket.messages.MessageType;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketDataMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
@@ -390,6 +394,110 @@ public class ThicketBroadcastServiceTest
             }
         }
         Assert.assertEquals(count, thicket.calculateForwardingLoad(map));
+    }
+
+    @Test
+    public void isInterior_EmptyActivePeers()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        Assert.assertFalse(thicket.isInterior(activePeers));
+    }
+
+    @Test
+    public void isInterior_NotInterior() throws UnknownHostException
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        for (int i = 0; i < 8; i++)
+        {
+            InetAddress treeRoot = InetAddress.getByName("127.0.4." + i);
+            CopyOnWriteArraySet<InetAddress> branches = new CopyOnWriteArraySet<>();
+            branches.add(InetAddress.getByName("127.0.42." + i));
+            activePeers.put(treeRoot, branches);
+        }
+        Assert.assertFalse(thicket.isInterior(activePeers));
+    }
+
+    @Test
+    public void isInterior_Interior() throws UnknownHostException
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        for (int i = 0; i < 8; i++)
+        {
+            InetAddress treeRoot = InetAddress.getByName("127.0.4." + i);
+            CopyOnWriteArraySet<InetAddress> branches = new CopyOnWriteArraySet<>();
+            branches.add(InetAddress.getByName("127.0.42." + i));
+            activePeers.put(treeRoot, branches);
+        }
+
+        // select a random tree to add another branch to
+        InetAddress addr = Utils.selectRandom(activePeers.keySet());
+        CopyOnWriteArraySet<InetAddress> branches = activePeers.get(addr);
+        branches.add(InetAddress.getByName("42.42.42.0"));
+        branches.add(InetAddress.getByName("42.42.42.3"));
+        branches.add(InetAddress.getByName("42.42.42.5"));
+
+        Assert.assertTrue(thicket.isInterior(activePeers));
+    }
+
+    @Test
+    public void buildLoadEstimate_EmptyPeers()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        Map<InetAddress, Integer> loadEst = thicket.buildLoadEstimate(activePeers);
+        Assert.assertTrue(loadEst.isEmpty());
+    }
+
+    @Test
+    public void buildLoadEstimate_WithPeers() throws UnknownHostException
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        for (int i = 0; i < 4; i++)
+        {
+            InetAddress treeRoot = InetAddress.getByName("127.0.4." + i);
+            CopyOnWriteArraySet<InetAddress> branches = new CopyOnWriteArraySet<>();
+            branches.add(InetAddress.getByName("127.0.42." + i));
+            activePeers.put(treeRoot, branches);
+        }
+
+        CopyOnWriteArraySet<InetAddress> branches = activePeers.get(InetAddress.getByName("127.0.4.0"));
+        branches.add(InetAddress.getByName("42.42.42.0"));
+        branches.add(InetAddress.getByName("42.42.42.3"));
+        branches.add(InetAddress.getByName("42.42.42.5"));
+
+        // should filtered out in result map
+        InetAddress emptyAddr = InetAddress.getByName("127.0.7.0");
+        activePeers.put(emptyAddr, new CopyOnWriteArraySet<InetAddress>());
+
+        Map<InetAddress, Integer> loadEst = thicket.buildLoadEstimate(activePeers);
+        Assert.assertFalse(loadEst.isEmpty());
+        Assert.assertEquals(4, loadEst.size());
+
+        Assert.assertEquals(4, loadEst.get(InetAddress.getByName("127.0.4.0")).intValue());
+        Assert.assertEquals(1, loadEst.get(InetAddress.getByName("127.0.4.1")).intValue());
+        Assert.assertEquals(1, loadEst.get(InetAddress.getByName("127.0.4.2")).intValue());
+        Assert.assertEquals(1, loadEst.get(InetAddress.getByName("127.0.4.3")).intValue());
+
+        Assert.assertFalse(loadEst.containsKey(emptyAddr));
+    }
+
+    @Test
+    public void removeActivePeer_EmptyActivePeers()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        Assert.assertFalse(thicket.removeActivePeer(activePeers, treeRoot, addr));
+
+    }
+
+    @Test
+    public void removeActivePeer_NonEmptyActivePeers()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArraySet<InetAddress> branches = new CopyOnWriteArraySet<>();
+        branches.add(addr);
+        activePeers.put(treeRoot, branches);
+
+        Assert.assertTrue(thicket.removeActivePeer(activePeers, treeRoot, addr));
+        Assert.assertTrue(thicket.getBackupPeers().contains(addr));
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
