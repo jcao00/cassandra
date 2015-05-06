@@ -306,6 +306,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleDataMessage(ThicketDataMessage msg, InetAddress sender) throws IOException
     {
+        //TODO: add more tests for this method
         BroadcastClient client = clients.get(msg.getClientId());
         if (client == null)
         {
@@ -423,6 +424,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      */
     void doSummary()
     {
+        //TODO: add tests for me
+
         // don't perform a SUMMARY round if we're over the maxLoad, as we won't be able to help in the tree repair
         if (calculateForwardingLoad(loadEstimate) >= MAX_LOAD)
             return;
@@ -460,6 +463,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleSummary(SummaryMessage msg, InetAddress sender)
     {
+        //TODO: add tests for me
+
         String clientId = msg.getClientId();
         BroadcastClient client = clients.get(clientId);
         if (client == null)
@@ -488,6 +493,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleGraftRequest(GraftRequestMessage msg, InetAddress sender)
     {
+        //TODO: add tests for me
+
         //TODO: make sure that by accepting this graft, it won't make us interior to more than one tree
         if (calculateForwardingLoad(loadEstimate) < MAX_LOAD)
         {
@@ -713,8 +720,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     @VisibleForTesting
     boolean alreadyInView(InetAddress addr, ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers, Collection<InetAddress> backupPeers)
     {
-        //TODO: add tests for me
-
         if (backupPeers.contains(addr))
             return true;
 
