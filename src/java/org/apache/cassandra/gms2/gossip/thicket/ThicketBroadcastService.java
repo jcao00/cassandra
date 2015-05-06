@@ -628,6 +628,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleGraftResponseAccept(GraftResponseAcceptMessage msg, InetAddress sender)
     {
+        //TODO: add tests for me
+
         // we've already done the optimistic work in the summary handling, so just process the summary
         BroadcastClient client = clients.get(msg.getClientId());
         if (client == null)
@@ -640,6 +642,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleGraftResponseReject(GraftResponseRejectMessage msg, InetAddress sender)
     {
+        //TODO: add tests for me
+
         removeActivePeer(activePeers, msg.getTreeRoot(), sender);
 
         int attemptCount = msg.getAttemptCount() + 1;
@@ -675,12 +679,15 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     public void neighborUp(InetAddress peer)
     {
-        if (!backupPeers.contains(peer) && !peer.equals(getAddress()))
+        // sanity check
+        if (!peer.equals(getAddress()))
             backupPeers.add(peer);
     }
 
     public void neighborDown(InetAddress peer)
     {
+        //TODO: add tests for me
+
         activePeers.remove(peer);
         for (CopyOnWriteArraySet<InetAddress> branches : activePeers.values())
             branches.remove(peer);
@@ -700,6 +707,14 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      */
     boolean alreadyInView(InetAddress addr)
     {
+        return alreadyInView(addr, activePeers, backupPeers);
+    }
+
+    @VisibleForTesting
+    boolean alreadyInView(InetAddress addr, ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers, Collection<InetAddress> backupPeers)
+    {
+        //TODO: add tests for me
+
         if (backupPeers.contains(addr))
             return true;
 
