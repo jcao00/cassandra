@@ -306,7 +306,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleDataMessage(ThicketDataMessage msg, InetAddress sender) throws IOException
     {
-        //TODO: add more tests for this method
         BroadcastClient client = clients.get(msg.getClientId());
         if (client == null)
         {
@@ -785,9 +784,15 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     }
 
     @VisibleForTesting
-    public ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> getRecentMessages()
+    ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> getRecentMessages()
     {
         return recentMessages;
+    }
+
+    @VisibleForTesting
+    ExpiringMap<ExpiringMapEntry, CopyOnWriteArrayList<InetAddress>> getAnnouncements()
+    {
+        return announcements;
     }
 
     public IEndpointStateChangeSubscriber getStateChangeSubscriber()
@@ -894,13 +899,13 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
     }
 
-    private static class ExpiringMapEntry
+    static class ExpiringMapEntry
     {
         final String clientId;
         final Object messageId;
         final InetAddress treeRoot;
 
-        private ExpiringMapEntry(String clientId, Object messageId, InetAddress treeRoot)
+        ExpiringMapEntry(String clientId, Object messageId, InetAddress treeRoot)
         {
             this.treeRoot = treeRoot;
             this.messageId = messageId;
@@ -910,6 +915,18 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         public int hashCode()
         {
             return 37 * clientId.hashCode() + messageId.hashCode() + treeRoot.hashCode();
+        }
+
+        public boolean equals(Object o)
+        {
+            if (o == null || !(o instanceof ExpiringMapEntry))
+                return false;
+            if (o == this)
+                return true;
+            ExpiringMapEntry entry = (ExpiringMapEntry)o;
+            return clientId.equals(entry.clientId) &&
+                   messageId.equals(entry.messageId) &&
+                   treeRoot.equals(entry.treeRoot);
         }
     }
 }

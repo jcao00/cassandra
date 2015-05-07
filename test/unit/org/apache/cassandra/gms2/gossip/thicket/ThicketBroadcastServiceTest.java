@@ -23,9 +23,11 @@ import org.junit.Test;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
 import org.apache.cassandra.gms2.gossip.Utils;
+import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService.ExpiringMapEntry;
 import org.apache.cassandra.gms2.gossip.thicket.messages.MessageType;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketDataMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
+import org.apache.cassandra.utils.ExpiringMap;
 
 public class ThicketBroadcastServiceTest
 {
@@ -334,6 +336,22 @@ public class ThicketBroadcastServiceTest
         Assert.assertEquals(treeRoot, dispatcher.messages.get(0).addr);
         Assert.assertEquals(MessageType.PRUNE, dispatcher.messages.get(0).msg.getMessageType());
         Assert.assertTrue(thicket.getRecentMessages().isEmpty());
+    }
+
+    @Test
+    public void handleData_RemoveAnnouncement() throws IOException
+    {
+        thicket.register(client);
+        ExpiringMap<ExpiringMapEntry, CopyOnWriteArrayList<InetAddress>> announcements = thicket.getAnnouncements();
+        ExpiringMapEntry entry = new ExpiringMapEntry(client.getClientId(), msgId, treeRoot);
+        CopyOnWriteArrayList<InetAddress> peers = new CopyOnWriteArrayList<>();
+        peers.add(addr);
+        announcements.put(entry, peers);
+        Assert.assertFalse(announcements.isEmpty());
+        ThicketDataMessage thicketMessage = new ThicketDataMessage(treeRoot, client.getClientId(), msgId, msg, loadEstimate);
+
+        thicket.handleDataMessage(thicketMessage, treeRoot);
+        Assert.assertTrue(announcements.isEmpty());
     }
 
     @Test
