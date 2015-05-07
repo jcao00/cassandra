@@ -24,7 +24,7 @@ public interface BroadcastClient
      */
     boolean receiveBroadcast(Object messageId, Object message) throws IOException;
 
-    Object prepareSummary();
+    Object prepareExchange();
 
     /**
      *

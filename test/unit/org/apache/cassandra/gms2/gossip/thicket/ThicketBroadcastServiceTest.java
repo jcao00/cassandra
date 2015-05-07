@@ -25,6 +25,7 @@ import org.apache.cassandra.gms2.gossip.GossipDispatcher;
 import org.apache.cassandra.gms2.gossip.Utils;
 import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService.ExpiringMapEntry;
 import org.apache.cassandra.gms2.gossip.thicket.messages.MessageType;
+import org.apache.cassandra.gms2.gossip.thicket.messages.SummaryMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketDataMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
 import org.apache.cassandra.utils.ExpiringMap;
@@ -711,6 +712,62 @@ public class ThicketBroadcastServiceTest
         Assert.assertTrue(result.equals(addr1) || result.equals(addr2));
     }
 
+    @Test
+    public void doSummary_OverMaxLoad() throws IOException
+    {
+        // fabricate a loadEst so it doesn't trigger sending any summary
+        Map<InetAddress, Integer> loadEst = new HashMap<>();
+        loadEst.put(treeRoot, 12);
+        loadEst.put(sender, 3);
+        thicket.setLoadEstimate(loadEst);
+
+        thicket.doSummary();
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertTrue(dispatcher.messages.isEmpty());
+    }
+
+    @Test
+    public void doSummary_NoNewMessages() throws IOException
+    {
+        thicket.register(client);
+
+        ThicketBroadcastService<ThicketMessage>.AntiEntropyPeerListener antiEntropyPeerListener = thicket.getAntiEntropyPeerListener();
+        Map<InetAddress, String> peers = new HashMap<>();
+        for (int i = 0; i < 8; i++)
+            peers.put(InetAddress.getByName("127.0.4." + i), "dc1");
+        antiEntropyPeerListener.addNodes(peers);
+
+        thicket.doSummary();
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertTrue(dispatcher.messages.isEmpty());
+    }
+
+    @Test
+    public void doSummary_WithMessages() throws IOException
+    {
+        thicket.register(client);
+
+        ThicketBroadcastService<ThicketMessage>.AntiEntropyPeerListener antiEntropyPeerListener = thicket.getAntiEntropyPeerListener();
+        Map<InetAddress, String> peers = new HashMap<>();
+        for (int i = 0; i < 8; i++)
+            peers.put(InetAddress.getByName("127.0.4." + i), "dc1");
+        antiEntropyPeerListener.addNodes(peers);
+
+        HashMap<ReceivedMessage, InetAddress> msgs = new HashMap<>();
+        ReceivedMessage receivedMessage = new ReceivedMessage(msgId, treeRoot);
+        msgs.put(receivedMessage, sender);
+        ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages = thicket.getRecentMessages();
+        recentMessages.put(client.getClientId(), msgs);
+
+        thicket.doSummary();
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertFalse(dispatcher.messages.isEmpty());
+        MessageWrapper wrapper = dispatcher.messages.get(0);
+        Assert.assertTrue(wrapper.msg instanceof SummaryMessage);
+        SummaryMessage summaryMessage = (SummaryMessage)wrapper.msg;
+        Assert.assertTrue(summaryMessage.getReceivedMessages().contains(receivedMessage));
+    }
+
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
     {
         public List<InetAddress> destinations = new ArrayList<>();
@@ -759,7 +816,7 @@ public class ThicketBroadcastServiceTest
             return freshMessage;
         }
 
-        public Object prepareSummary()
+        public Object prepareExchange()
         {
             return null;
         }

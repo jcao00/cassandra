@@ -8,7 +8,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -54,9 +53,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastService.class);
     private static final int MAX_GRAFT_ATTEMPTS = 2;
     private static final long ANNOUNCEMENTS_ENTRY_TTL = TimeUnit.SECONDS.toMillis(10);
-
-    //TODO: fix this hard-coded value
-    private static final int MAX_LOAD = 1000;
 
     private final ThicketConfig config;
     private final GossipDispatcher dispatcher;
@@ -424,10 +420,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      */
     void doSummary()
     {
-        //TODO: add tests for me
-
         // don't perform a SUMMARY round if we're over the maxLoad, as we won't be able to help in the tree repair
-        if (calculateForwardingLoad(loadEstimate) >= MAX_LOAD)
+        if (calculateForwardingLoad(loadEstimate) >= getMaxLoad())
             return;
 
         Collection<InetAddress> destinations = summaryDestinations();
@@ -439,12 +433,22 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         for (BroadcastClient client : clients.values())
         {
             HashMap<ReceivedMessage, InetAddress> msgs = recentMessages.remove(client.getClientId());
+            if (msgs == null || msgs.isEmpty())
+                continue;
 
-            //TODO: what tree root to use here?!?!?!?!?!
-            SummaryMessage msg = new SummaryMessage(null, client.getClientId(), msgs.keySet(), client.prepareSummary(), buildLoadEstimate(activePeers));
+            // doesn't matter what treeRoot we use for the summary message, so just use the local addr
+            SummaryMessage msg = new SummaryMessage(getAddress(), client.getClientId(), msgs.keySet(), buildLoadEstimate(activePeers));
             for (InetAddress addr : destinations)
                 dispatcher.send(this, msg, addr);
         }
+    }
+
+    private int getMaxLoad()
+    {
+        int clusterSize = stateChangeSubscriber.getClusterSize();
+        if (clusterSize == 0)
+            return 0;
+        return (int)Math.ceil(Math.log(clusterSize));
     }
 
     private Collection<InetAddress> summaryDestinations()
@@ -473,15 +477,13 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             return;
         }
 
-        // perform ant anti-entropy (push-only style)
-        Set<? extends Object> missing = client.receiveSummary(msg.getSummary());
-
-        for (Object msgId : missing)
+        for (ReceivedMessage receivedMessage : msg.getReceivedMessages())
         {
             // double check to see if the msg has come in
-            if (client.hasReceivedMessage(msgId))
+            if (client.hasReceivedMessage(receivedMessage.msgId))
                 continue;
-            ExpiringMapEntry entry = new ExpiringMapEntry(clientId, msgId, msg.getTreeRoot());
+
+            ExpiringMapEntry entry = new ExpiringMapEntry(clientId, receivedMessage.msgId, receivedMessage.treeRoot);
             CopyOnWriteArrayList<InetAddress> senders = new CopyOnWriteArrayList<>();
             senders.add(sender);
 
@@ -496,7 +498,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         //TODO: add tests for me
 
         //TODO: make sure that by accepting this graft, it won't make us interior to more than one tree
-        if (calculateForwardingLoad(loadEstimate) < MAX_LOAD)
+        if (calculateForwardingLoad(loadEstimate) < getMaxLoad())
         {
             addToActivePeers(activePeers, msg.getTreeRoot(), sender);
 
@@ -505,8 +507,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             // can converge quicker.
             BroadcastClient client = clients.get(msg.getClientId());
             dispatcher.send(this,
-                            new GraftResponseAcceptMessage(msg.getTreeRoot(), msg.getClientId(), client.prepareSummary(), buildLoadEstimate(activePeers)),
-                           sender);
+                            new GraftResponseAcceptMessage(msg.getTreeRoot(), msg.getClientId(), buildLoadEstimate(activePeers)),
+                            sender);
         }
         else
         {
@@ -646,7 +648,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             System.out.println(String.format("%s, received a message for unknown client component: %s; ignoring message", getAddress(), msg.getClientId()));
             return;
         }
-        client.receiveSummary(msg.getSummary());
     }
 
     void handleGraftResponseReject(GraftResponseRejectMessage msg, InetAddress sender)
@@ -702,13 +703,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             branches.remove(peer);
         loadEstimate = null;
         backupPeers.remove(peer);
-    }
-
-    public void updateClusterSize(int clusterSize)
-    {
-        if (clusterSize == 0)
-            fanout = 1;
-        fanout = (int)Math.ceil(Math.log(clusterSize));
     }
 
     /**
@@ -795,6 +789,18 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         return announcements;
     }
 
+    @VisibleForTesting
+    AntiEntropyPeerListener getAntiEntropyPeerListener()
+    {
+        return stateChangeSubscriber;
+    }
+
+    @VisibleForTesting
+    void setLoadEstimate(Map<InetAddress, Integer> loadEst)
+    {
+        loadEstimate = loadEst;
+    }
+
     public IEndpointStateChangeSubscriber getStateChangeSubscriber()
     {
         return stateChangeSubscriber;
@@ -814,7 +820,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      * peer sampling service. This gives us a richer anti-entropy reconciliation, helps the cluster converge faster, and heal
      * any broken parts of the broadcast tree.
      */
-    private class AntiEntropyPeerListener implements IEndpointStateChangeSubscriber
+    class AntiEntropyPeerListener implements IEndpointStateChangeSubscriber
     {
         /**
          * mapping of address to datacenter
@@ -835,6 +841,17 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             Utils.selectMultipleRandom(nodes.keySet(), selected, maxCount);
 
             return selected;
+        }
+
+        int getClusterSize()
+        {
+            return nodes.size();
+        }
+
+        @VisibleForTesting
+        public void addNodes(Map<InetAddress, String> peers)
+        {
+            nodes.putAll(peers);
         }
 
         /*

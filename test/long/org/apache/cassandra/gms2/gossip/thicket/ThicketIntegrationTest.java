@@ -117,7 +117,7 @@ public class ThicketIntegrationTest
             return true;
         }
 
-        public Object prepareSummary()
+        public Object prepareExchange()
         {
             return null;
         }

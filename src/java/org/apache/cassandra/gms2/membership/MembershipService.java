@@ -57,7 +57,7 @@ public class MembershipService implements BroadcastClient
         return true;
     }
 
-    public Object prepareSummary()
+    public Object prepareExchange()
     {
         return null;
     }

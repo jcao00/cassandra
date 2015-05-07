@@ -11,15 +11,13 @@ public class SummaryMessage extends ThicketMessage
 {
     private final String clientId;
 
-    private final Set<ReceivedMessage> msgIds;
-    private final Object summary;
+    private final Set<ReceivedMessage> receivedMessages;
 
-    public SummaryMessage(InetAddress treeRoot, String clientId, Set<ReceivedMessage> msgIds, Object summary, Map<InetAddress, Integer>loadEstimate)
+    public SummaryMessage(InetAddress treeRoot, String clientId, Set<ReceivedMessage> receivedMessages, Map<InetAddress, Integer>loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.clientId = clientId;
-        this.msgIds = msgIds;
-        this.summary = summary;
+        this.receivedMessages = receivedMessages;
     }
 
     public String getClientId()
@@ -27,14 +25,9 @@ public class SummaryMessage extends ThicketMessage
         return clientId;
     }
 
-    public Object getSummary()
+    public Set<ReceivedMessage> getReceivedMessages()
     {
-        return summary;
-    }
-
-    public Set<ReceivedMessage> getMessages()
-    {
-        return msgIds;
+        return receivedMessages;
     }
 
     public MessageType getMessageType()
