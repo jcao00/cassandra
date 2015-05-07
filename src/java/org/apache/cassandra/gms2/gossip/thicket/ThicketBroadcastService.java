@@ -524,20 +524,19 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
     }
 
+    /**
+     * Add a peer to the tree rooted at {@code treeRoot}.
+     */
     // TODO: this is pretty similar to getTargets() - should be combined?
     void addToActivePeers(ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers, InetAddress treeRoot, InetAddress addr)
     {
-        //TODO: write tests for me
-
         if (addr == null)
             return;
 
         CopyOnWriteArraySet<InetAddress> targets = activePeers.get(treeRoot);
         if (targets != null)
         {
-            // this is to catch case where we get message from a node (in the same rooted tree) not from the usual sender
-            if (addr != null && !targets.contains(addr))
-                targets.add(addr);
+            targets.add(addr);
         }
         else
         {
@@ -550,14 +549,12 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     }
 
     /**
-     * Find an alternate peer that a GRAFT requestor can contact due to a rejection from this node.
+     * Find an alternate peer that a GRAFT requester can contact due to a rejection from this node.
      * A peer is determined looking at this node's branches in the rooted tree, and selecting the one
      * with the lowest loadEstimate.
      */
     InetAddress findGraftAlternate(List<InetAddress> peers, ConcurrentMap<InetAddress, Map<InetAddress, Integer>> loadEstimates)
     {
-        //TODO: write tests for me
-
         // If, for some reason, we don't have any load information for a branch, keep it in a separate field (unknownLoad).
         // if there's no other candidates when we're done searching, just use that node.
         InetAddress bestAddr = null, unknownLoad = null;
@@ -566,7 +563,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         {
             int loadEst = calculateForwardingLoad(loadEstimates.get(addr));
 
-            if (loadEst == 0)
+            if (loadEst == -1)
                 unknownLoad = addr;
             else if (bestAddr ==  null || loadEst < minLoadEstimate)
             {
@@ -578,10 +575,15 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         return bestAddr != null ? bestAddr : unknownLoad;
     }
 
+    /**
+     * Sum the count of trees a node is in. Assumes the parameter is an entry in the {@code loadEstimates} member.
+     *
+     * @return -1 indicates the forwarding load could not be determined; values of zero or greater is the forwarding load.
+     */
     int calculateForwardingLoad(Map<InetAddress, Integer> loads)
     {
         if (loads == null || loads.isEmpty())
-            return 0;
+            return -1;
 
         int load = 0;
         for (Integer i : loads.values())

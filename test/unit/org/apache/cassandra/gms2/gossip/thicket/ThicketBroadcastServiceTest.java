@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -355,13 +356,13 @@ public class ThicketBroadcastServiceTest
     @Test
     public void calculateForwardingLoad_Null()
     {
-        Assert.assertEquals(0, thicket.calculateForwardingLoad(null));
+        Assert.assertEquals(-1, thicket.calculateForwardingLoad(null));
     }
 
     @Test
     public void calculateForwardingLoad_Empty()
     {
-        Assert.assertEquals(0, thicket.calculateForwardingLoad(new HashMap<InetAddress, Integer>()));
+        Assert.assertEquals(-1, thicket.calculateForwardingLoad(new HashMap<InetAddress, Integer>()));
     }
 
     @Test
@@ -590,6 +591,89 @@ public class ThicketBroadcastServiceTest
 
         // should be the original sender
         Assert.assertEquals(sender, entry.getValue());
+    }
+
+    @Test
+    public void addToActivePeers_NewTreeRoot()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        thicket.addToActivePeers(activePeers, treeRoot, addr);
+        Assert.assertTrue(activePeers.containsKey(treeRoot));
+        Assert.assertEquals(1, activePeers.get(treeRoot).size());
+        Assert.assertTrue(activePeers.get(treeRoot).contains(addr));
+    }
+
+    @Test
+    public void addToActivePeers_ExistingTreeRoot()
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArraySet<InetAddress> branches = new CopyOnWriteArraySet<>();
+        branches.add(sender);
+        activePeers.put(treeRoot, branches);
+
+        thicket.addToActivePeers(activePeers, treeRoot, addr);
+        Assert.assertTrue(activePeers.containsKey(treeRoot));
+        Assert.assertEquals(2, activePeers.get(treeRoot).size());
+        Assert.assertTrue(activePeers.get(treeRoot).contains(addr));
+        Assert.assertTrue(activePeers.get(treeRoot).contains(sender));
+    }
+
+    @Test
+    public void findGraftAlternate_KnownLoadEst() throws UnknownHostException
+    {
+        List<InetAddress> peers = new LinkedList<>();
+
+        ConcurrentMap<InetAddress, Map<InetAddress, Integer>> loadEstimates = new ConcurrentHashMap<>();
+        InetAddress addr1 = InetAddress.getByName("127.0.0.1");
+        Map<InetAddress, Integer> map = new HashMap<>();
+        map.put(treeRoot, 3);
+        map.put(sender, 1);
+        loadEstimates.put(addr1, map);
+        peers.add(addr1);
+
+        InetAddress addr2 = InetAddress.getByName("127.0.0.2");
+        map = new HashMap<>();
+        map.put(treeRoot, 1);
+        loadEstimates.put(addr2, map);
+        peers.add(addr2);
+
+        Assert.assertEquals(addr2, thicket.findGraftAlternate(peers, loadEstimates));
+    }
+
+    @Test
+    public void findGraftAlternate_OneUnknownLoadEst() throws UnknownHostException
+    {
+        List<InetAddress> peers = new LinkedList<>();
+
+        ConcurrentMap<InetAddress, Map<InetAddress, Integer>> loadEstimates = new ConcurrentHashMap<>();
+        InetAddress addr1 = InetAddress.getByName("127.0.0.1");
+        Map<InetAddress, Integer> map = new HashMap<>();
+        map.put(treeRoot, 3);
+        map.put(sender, 1);
+        loadEstimates.put(addr1, map);
+        peers.add(addr1);
+
+        InetAddress addr2 = InetAddress.getByName("127.0.0.2");
+        peers.add(addr2);
+
+        Assert.assertEquals(addr1, thicket.findGraftAlternate(peers, loadEstimates));
+    }
+
+    @Test
+    public void findGraftAlternate_BothUnknownLoadEst() throws UnknownHostException
+    {
+        List<InetAddress> peers = new LinkedList<>();
+
+        ConcurrentMap<InetAddress, Map<InetAddress, Integer>> loadEstimates = new ConcurrentHashMap<>();
+        InetAddress addr1 = InetAddress.getByName("127.0.0.1");
+        peers.add(addr1);
+
+        InetAddress addr2 = InetAddress.getByName("127.0.0.2");
+        peers.add(addr2);
+
+        InetAddress result = thicket.findGraftAlternate(peers, loadEstimates);
+        // just make sure one of the expected values was returned
+        Assert.assertTrue(result.equals(addr1) || result.equals(addr2));
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
