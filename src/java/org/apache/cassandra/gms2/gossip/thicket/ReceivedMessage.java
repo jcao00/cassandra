@@ -27,4 +27,9 @@ public class ReceivedMessage
         ReceivedMessage msg = (ReceivedMessage)o;
         return msgId.equals(msg.msgId) && treeRoot.equals(msg.treeRoot);
     }
+
+    public String toString()
+    {
+        return "msgId = " + msgId.toString() + ", tree root = " + treeRoot.toString();
+    }
 }

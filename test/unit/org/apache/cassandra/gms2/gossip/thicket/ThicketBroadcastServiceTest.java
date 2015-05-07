@@ -44,10 +44,10 @@ public class ThicketBroadcastServiceTest
     @Before
     public void setup() throws UnknownHostException
     {
-        addr = InetAddress.getByName("127.0.0.1");
-        thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), new AddressRecordingDispatcher());
-        sender = InetAddress.getByName("127.0.0.2");
         treeRoot = InetAddress.getByName("127.10.13.0");
+        thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(treeRoot), new AddressRecordingDispatcher());
+        addr = InetAddress.getByName("127.0.0.1");
+        sender = InetAddress.getByName("127.0.0.2");
         client = new SimpleClient();
         loadEstimate = new HashMap<>();
     }
@@ -229,6 +229,18 @@ public class ThicketBroadcastServiceTest
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
         Assert.assertEquals(dispatcher.destinations.toString(), 1, dispatcher.destinations.size());
         Assert.assertTrue(dispatcher.destinations.contains(sender));
+        assertHasRecentMessage(client.getClientId(), msgId, treeRoot, treeRoot);
+    }
+
+    private void assertHasRecentMessage(String clientId, String msgId, InetAddress treRoot, InetAddress sender)
+    {
+        ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages = thicket.getRecentMessages();
+        Assert.assertTrue(recentMessages.containsKey(clientId));
+        HashMap<ReceivedMessage, InetAddress> clientMessages = recentMessages.get(clientId);
+        ReceivedMessage receivedMessage = new ReceivedMessage(msgId, treRoot);
+        Assert.assertTrue("client msgs = " + clientMessages.toString() + "\nreceived msg = " + receivedMessage,
+                          clientMessages.containsKey(receivedMessage));
+        Assert.assertEquals(sender, clientMessages.get(receivedMessage));
     }
 
     @Test
@@ -237,6 +249,7 @@ public class ThicketBroadcastServiceTest
         thicket.broadcast(client.getClientId(), msgId, msg);
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
         Assert.assertEquals(dispatcher.destinations.toString(), 0, dispatcher.destinations.size());
+        Assert.assertTrue(thicket.getRecentMessages().isEmpty());
     }
 
     @Test
@@ -253,6 +266,7 @@ public class ThicketBroadcastServiceTest
         // next, make sure it was not broadcast downstream to peers
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
         Assert.assertEquals(dispatcher.destinations.toString(), 0, dispatcher.destinations.size());
+        assertHasRecentMessage(client.getClientId(), msgId, treeRoot, treeRoot);
     }
 
     @Test
@@ -273,6 +287,7 @@ public class ThicketBroadcastServiceTest
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
         Assert.assertEquals(dispatcher.destinations.toString(), 1, dispatcher.destinations.size());
         Assert.assertTrue(dispatcher.destinations.contains(sender));
+        assertHasRecentMessage(client.getClientId(), msgId, treeRoot, treeRoot);
     }
 
     @Test
@@ -291,6 +306,7 @@ public class ThicketBroadcastServiceTest
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
         Assert.assertEquals(dispatcher.messages.toString(), 1, dispatcher.messages.size());
         Assert.assertEquals(MessageType.PRUNE, dispatcher.messages.get(0).msg.getMessageType());
+        Assert.assertTrue(thicket.getRecentMessages().isEmpty());
     }
 
     @Test
@@ -317,6 +333,7 @@ public class ThicketBroadcastServiceTest
         Assert.assertEquals(dispatcher.messages.toString(), 1, dispatcher.messages.size());
         Assert.assertEquals(treeRoot, dispatcher.messages.get(0).addr);
         Assert.assertEquals(MessageType.PRUNE, dispatcher.messages.get(0).msg.getMessageType());
+        Assert.assertTrue(thicket.getRecentMessages().isEmpty());
     }
 
     @Test

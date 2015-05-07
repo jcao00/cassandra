@@ -317,7 +317,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         // check if there are any open timers waiting for this message; if so, cancel them, and remove from 'announcements'
         CopyOnWriteArrayList<InetAddress> previousSummarySenders = cancelAnnouncement(msg.getClientId(), msg.getMessageId(), msg.getTreeRoot());
 
-        //TODO: maybe check recentMessages for determining if a message was stale (and we should PRUNE, etc)
+        // we could also check recentMessages for the messageId, but since we clear those out when
+        // a SUMMARY sessions starts, it's not a reliable source for checking if we've received the message or not
         if (client.receiveBroadcast(msg.getMessageId(), msg.getMessage()))
         {
             Collection<InetAddress> targets = getTargets(sender, msg.getTreeRoot());
@@ -781,6 +782,12 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
                 }
             });
         }
+    }
+
+    @VisibleForTesting
+    public ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> getRecentMessages()
+    {
+        return recentMessages;
     }
 
     public IEndpointStateChangeSubscriber getStateChangeSubscriber()
