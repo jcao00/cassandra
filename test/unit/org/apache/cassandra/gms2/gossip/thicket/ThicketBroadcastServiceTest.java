@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -768,6 +769,59 @@ public class ThicketBroadcastServiceTest
         Assert.assertTrue(summaryMessage.getReceivedMessages().contains(receivedMessage));
     }
 
+    @Test
+    public void handleSummary_AlreadyHasMessages()
+    {
+        thicket.register(client);
+
+        Set<ReceivedMessage> receivedMessages = new HashSet<>();
+        receivedMessages.add(new ReceivedMessage(msgId, treeRoot));
+        client.receivedMessageIds.add(msgId);
+
+        Assert.assertTrue(thicket.getAnnouncements().isEmpty());
+        SummaryMessage summaryMessage = new SummaryMessage(null, client.getClientId(), receivedMessages, new HashMap<InetAddress, Integer>());
+        thicket.handleSummary(summaryMessage, sender);
+        Assert.assertTrue(thicket.getAnnouncements().isEmpty());
+    }
+
+    @Test
+    public void handleSummary_FreshMessagesNoDupes()
+    {
+        thicket.register(client);
+
+        Set<ReceivedMessage> receivedMessages = new HashSet<>();
+        receivedMessages.add(new ReceivedMessage(msgId, treeRoot));
+
+        Assert.assertTrue(thicket.getAnnouncements().isEmpty());
+        SummaryMessage summaryMessage = new SummaryMessage(null, client.getClientId(), receivedMessages, new HashMap<InetAddress, Integer>());
+        thicket.handleSummary(summaryMessage, sender);
+        Assert.assertFalse(thicket.getAnnouncements().isEmpty());
+        CopyOnWriteArrayList<InetAddress> senders = thicket.getAnnouncements().get(new ExpiringMapEntry(client.getClientId(), msgId, treeRoot));
+        Assert.assertNotNull(senders);
+        Assert.assertEquals(1, senders.size());
+        Assert.assertTrue(senders.contains(sender));
+    }
+
+    @Test
+    public void handleSummary_FreshMessagesMultipleSenders()
+    {
+        handleSummary_FreshMessagesNoDupes();
+
+        Set<ReceivedMessage> receivedMessages = new HashSet<>();
+        receivedMessages.add(new ReceivedMessage(msgId, treeRoot));
+
+        SummaryMessage summaryMessage = new SummaryMessage(null, client.getClientId(), receivedMessages, new HashMap<InetAddress, Integer>());
+        thicket.handleSummary(summaryMessage, addr);
+
+        Assert.assertEquals(1, thicket.getAnnouncements().size());
+        CopyOnWriteArrayList<InetAddress> senders = thicket.getAnnouncements().get(new ExpiringMapEntry(client.getClientId(), msgId, treeRoot));
+        Assert.assertNotNull(senders);
+
+        Assert.assertEquals(senders.toString(), 2, senders.size());
+        Assert.assertTrue(senders.contains(sender));
+        Assert.assertTrue(senders.contains(addr));
+    }
+
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
     {
         public List<InetAddress> destinations = new ArrayList<>();
@@ -798,6 +852,7 @@ public class ThicketBroadcastServiceTest
         boolean freshMessage = true;
         String lastReceivedMessageId;
         String lastReceivedMessage;
+        Set<Object> receivedMessageIds = new HashSet<>();
 
         void isFreshMessage(boolean b)
         {
@@ -828,7 +883,7 @@ public class ThicketBroadcastServiceTest
 
         public boolean hasReceivedMessage(Object messageId)
         {
-            return false;
+            return receivedMessageIds.contains(messageId);
         }
 
         public String toString()

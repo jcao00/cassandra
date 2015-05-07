@@ -467,8 +467,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     void handleSummary(SummaryMessage msg, InetAddress sender)
     {
-        //TODO: add tests for me
-
         String clientId = msg.getClientId();
         BroadcastClient client = clients.get(clientId);
         if (client == null)
