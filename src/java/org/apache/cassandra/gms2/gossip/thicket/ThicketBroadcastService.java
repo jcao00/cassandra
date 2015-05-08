@@ -99,7 +99,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      * A collection of recently received broadcast messages per each {@code BroadcastClient}. These will be sent to a peer during the
      * Summary sessions, as per the Thicket paper.
      */
-    //TODO: might want an atomic reference around the value, so we can easily swap it out.
+    // might want an atomic reference around the value, so we can easily swap it out.
     private final ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages;
 
     // need tuple of {clientId, messageId, (treeRoot, sender)}
@@ -141,7 +141,8 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
         else
         {
-            // TODO: possibly queue - unless cluster of one node (as in local testing)
+            logger.info("got a request to broadcast message, but no peers are available");
+            // possibly queue - unless cluster of one node (as in local testing)
         }
     }
 
@@ -457,7 +458,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     private Collection<InetAddress> summaryDestinations()
     {
-        // TODO: do we want to consider tree repair operations with nodes outside the peer sampling service's view?
+        // do we want to consider tree repair operations with nodes outside the peer sampling service's view?
 //        Collection<InetAddress> peers = stateChangeSubscriber.selectNodes(fanout);
 //        if (!peers.isEmpty())
 //            return peers;
@@ -561,7 +562,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     /**
      * Add a peer to the tree rooted at {@code treeRoot}.
      */
-    // TODO: this is pretty similar to getTargets() - should be combined?
     void addToActivePeers(ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers, InetAddress treeRoot, InetAddress addr)
     {
         if (addr == null)
@@ -656,7 +656,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             return;
         }
 
-        // TODO: maybe check to see if we finally got the missing messageId so we stop trying to graft
+        // maybe check to see if we finally got the missing messageId so we stop trying to graft
 
         if (msg.getGraftAlternate() != null)
             dispatcher.send(this, new GraftRequestMessage(msg.getTreeRoot(), msg.getClientId(), attemptCount, buildLoadEstimate(activePeers)), msg.getGraftAlternate());
