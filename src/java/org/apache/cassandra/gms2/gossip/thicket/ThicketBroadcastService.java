@@ -647,8 +647,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
      */
     void handleGraftResponseReject(GraftResponseRejectMessage msg, InetAddress sender)
     {
-        //TODO: add tests for me
-
         removeActivePeer(activePeers, msg.getTreeRoot(), sender);
 
         int attemptCount = msg.getAttemptCount() + 1;
@@ -701,9 +699,22 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
     }
 
     @VisibleForTesting
+    public ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> getActivePeers()
+    {
+        return activePeers;
+    }
+
+    @VisibleForTesting
     List<InetAddress> getBackupPeers()
     {
         return ImmutableList.copyOf(backupPeers);
+    }
+
+    @VisibleForTesting
+    // DO NOT USE OUTSIDE OF TESTING!!!
+    void setActivePeers(ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers)
+    {
+        this.activePeers.putAll(activePeers);
     }
 
     @VisibleForTesting

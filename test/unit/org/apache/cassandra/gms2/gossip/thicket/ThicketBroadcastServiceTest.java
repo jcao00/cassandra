@@ -24,6 +24,7 @@ import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
 import org.apache.cassandra.gms2.gossip.Utils;
 import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService.ExpiringMapEntry;
+import org.apache.cassandra.gms2.gossip.thicket.messages.GraftResponseRejectMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.MessageType;
 import org.apache.cassandra.gms2.gossip.thicket.messages.SummaryMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketDataMessage;
@@ -829,6 +830,62 @@ public class ThicketBroadcastServiceTest
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
         Assert.assertFalse(dispatcher.messages.isEmpty());
         Assert.assertTrue(dispatcher.destinations.contains(sender) || dispatcher.destinations.contains(addr));
+    }
+
+    @Test
+    public void handleGraftResponseReject_RetryCountMet()
+    {
+        setActivePeerAtRoot(treeRoot, sender);
+        GraftResponseRejectMessage rejectMessage = new GraftResponseRejectMessage(treeRoot, client.getClientId(), 1000, null, loadEstimate);
+        thicket.handleGraftResponseReject(rejectMessage, sender);
+        // assert dispacther isEmpty
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertTrue(dispatcher.destinations.isEmpty());
+
+        CopyOnWriteArraySet<InetAddress> resultBranches = thicket.getActivePeers().get(treeRoot);
+        Assert.assertNotNull(resultBranches);
+        Assert.assertFalse(resultBranches.contains(sender));
+    }
+
+    private void setActivePeerAtRoot(InetAddress treeRoot, InetAddress branch)
+    {
+        ConcurrentMap<InetAddress, CopyOnWriteArraySet<InetAddress>> activePeers = new ConcurrentHashMap<>();
+        CopyOnWriteArraySet<InetAddress> branches = new CopyOnWriteArraySet<>();
+        branches.add(branch);
+        activePeers.put(treeRoot, branches);
+        thicket.setActivePeers(activePeers);
+    }
+
+    @Test
+    public void handleGraftResponseReject_NoAlternate()
+    {
+        setActivePeerAtRoot(treeRoot, sender);
+        GraftResponseRejectMessage rejectMessage = new GraftResponseRejectMessage(treeRoot, client.getClientId(), 0, null, loadEstimate);
+        thicket.handleGraftResponseReject(rejectMessage, sender);
+        // assert dispacther isEmpty
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertTrue(dispatcher.destinations.isEmpty());
+
+        CopyOnWriteArraySet<InetAddress> resultBranches = thicket.getActivePeers().get(treeRoot);
+        Assert.assertNotNull(resultBranches);
+        Assert.assertFalse(resultBranches.contains(sender));
+    }
+
+    @Test
+    public void handleGraftResponseReject_WithAlternate()
+    {
+        setActivePeerAtRoot(treeRoot, sender);
+        GraftResponseRejectMessage rejectMessage = new GraftResponseRejectMessage(treeRoot, client.getClientId(), 0, addr, loadEstimate);
+        thicket.handleGraftResponseReject(rejectMessage, sender);
+
+        // assert dispacther NOT isEmpty
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertEquals(1, dispatcher.destinations.size());
+        Assert.assertTrue(dispatcher.destinations.contains(addr));
+
+        CopyOnWriteArraySet<InetAddress> resultBranches = thicket.getActivePeers().get(treeRoot);
+        Assert.assertNotNull(resultBranches);
+        Assert.assertFalse(resultBranches.contains(sender));
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>
