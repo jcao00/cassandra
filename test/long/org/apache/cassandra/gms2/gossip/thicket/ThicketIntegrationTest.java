@@ -17,10 +17,8 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
 import org.apache.cassandra.gms2.gossip.peersampling.PennStationDispatcher;
-import org.apache.cassandra.gms2.gossip.thicket.MinimalPeerSamplingService;
-import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService;
-import org.apache.cassandra.gms2.gossip.thicket.ThicketConfigImpl;
 import org.apache.cassandra.gms2.gossip.thicket.messages.ThicketMessage;
+import org.apache.cassandra.gms2.membership.PeerSubscriber;
 
 public class ThicketIntegrationTest
 {
@@ -31,7 +29,7 @@ public class ThicketIntegrationTest
     {
         PennStationDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage> dispatcher = new PennStationDispatcher();
         InetAddress addr = InetAddress.getByName("127.0.0.1");
-        ThicketBroadcastService<ThicketMessage> thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), dispatcher);
+        ThicketBroadcastService<ThicketMessage> thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), dispatcher, new PeerSubscriber());
 
         int cnt = 1;
         PeerSamplingService peerSamplingService = createPeerSamplingService(cnt);
@@ -85,7 +83,7 @@ public class ThicketIntegrationTest
         for (int i = 0; i < count; i++)
         {
             InetAddress addr = InetAddress.getByName("127.0.0." + i);
-            ThicketBroadcastService<ThicketMessage> thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), dispatcher);
+            ThicketBroadcastService<ThicketMessage> thicket = new ThicketBroadcastService<>(new ThicketConfigImpl(addr), dispatcher, new PeerSubscriber());
             dispatcher.register(addr, thicket);
 
             MinimalPeerSamplingService peerSamplingService = createPeerSamplingService(count);
