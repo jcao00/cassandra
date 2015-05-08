@@ -145,7 +145,7 @@ public class ExpiringMap<K, V>
 
     public V putIfAbsent(K key, V value)
     {
-        return put(key, value, this.defaultExpiration);
+        return putIfAbsent(key, value, this.defaultExpiration);
     }
 
     public V putIfAbsent(K key, V value, long timeout)

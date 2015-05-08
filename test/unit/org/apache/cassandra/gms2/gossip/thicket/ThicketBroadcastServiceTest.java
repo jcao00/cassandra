@@ -796,7 +796,9 @@ public class ThicketBroadcastServiceTest
         SummaryMessage summaryMessage = new SummaryMessage(null, client.getClientId(), receivedMessages, new HashMap<InetAddress, Integer>());
         thicket.handleSummary(summaryMessage, sender);
         Assert.assertFalse(thicket.getAnnouncements().isEmpty());
-        CopyOnWriteArrayList<InetAddress> senders = thicket.getAnnouncements().get(new ExpiringMapEntry(client.getClientId(), msgId, treeRoot));
+        Assert.assertEquals(1, thicket.getAnnouncements().size());
+        ExpiringMapEntry entry = new ExpiringMapEntry(client.getClientId(), msgId, treeRoot);
+        CopyOnWriteArrayList<InetAddress> senders = thicket.getAnnouncements().get(entry);
         Assert.assertNotNull(senders);
         Assert.assertEquals(1, senders.size());
         Assert.assertTrue(senders.contains(sender));
@@ -807,14 +809,18 @@ public class ThicketBroadcastServiceTest
     {
         handleSummary_FreshMessagesNoDupes();
 
+        // Assert the universe is still as we expect
+        Assert.assertEquals(1, thicket.getAnnouncements().size());
+        ExpiringMapEntry entry = thicket.getAnnouncements().keySet().iterator().next();
+
         Set<ReceivedMessage> receivedMessages = new HashSet<>();
-        receivedMessages.add(new ReceivedMessage(msgId, treeRoot));
+        receivedMessages.add(new ReceivedMessage(entry.messageId, entry.treeRoot));
 
         SummaryMessage summaryMessage = new SummaryMessage(null, client.getClientId(), receivedMessages, new HashMap<InetAddress, Integer>());
         thicket.handleSummary(summaryMessage, addr);
 
         Assert.assertEquals(1, thicket.getAnnouncements().size());
-        CopyOnWriteArrayList<InetAddress> senders = thicket.getAnnouncements().get(new ExpiringMapEntry(client.getClientId(), msgId, treeRoot));
+        CopyOnWriteArrayList<InetAddress> senders = thicket.getAnnouncements().get(entry);
         Assert.assertNotNull(senders);
 
         Assert.assertEquals(senders.toString(), 2, senders.size());

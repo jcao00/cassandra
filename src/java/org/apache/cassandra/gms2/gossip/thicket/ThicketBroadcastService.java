@@ -52,7 +52,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 {
     private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastService.class);
     private static final int MAX_GRAFT_ATTEMPTS = 2;
-    private static final long ANNOUNCEMENTS_ENTRY_TTL = TimeUnit.SECONDS.toMillis(10);
+    private static final long ANNOUNCEMENTS_ENTRY_TTL = TimeUnit.SECONDS.toMillis(10000000);
 
     private final ThicketConfig config;
     private final GossipDispatcher dispatcher;
@@ -907,6 +907,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             {
                 public void run()
                 {
+                    logger.warn("FUCKE ME BOOO!!!!");
                     handleExpiredAnnouncement(input.left.clientId, input.left.messageId, input.left.treeRoot, input.right.value);
                 }
             });
@@ -942,6 +943,11 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             return clientId.equals(entry.clientId) &&
                    messageId.equals(entry.messageId) &&
                    treeRoot.equals(entry.treeRoot);
+        }
+
+        public String toString()
+        {
+            return String.format("client id: %s, messageId %s, tree root: %s", clientId, messageId.toString(), treeRoot.toString());
         }
     }
 }
