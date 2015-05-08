@@ -754,11 +754,7 @@ public class ThicketBroadcastServiceTest
             peers.put(InetAddress.getByName("127.0.4." + i), "dc1");
         antiEntropyPeerListener.addNodes(peers);
 
-        HashMap<ReceivedMessage, InetAddress> msgs = new HashMap<>();
-        ReceivedMessage receivedMessage = new ReceivedMessage(msgId, treeRoot);
-        msgs.put(receivedMessage, sender);
-        ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages = thicket.getRecentMessages();
-        recentMessages.put(client.getClientId(), msgs);
+        ReceivedMessage receivedMessage = setRecentMessage(client, msgId, treeRoot, sender);
 
         thicket.doSummary();
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
@@ -826,6 +822,51 @@ public class ThicketBroadcastServiceTest
         Assert.assertEquals(senders.toString(), 2, senders.size());
         Assert.assertTrue(senders.contains(sender));
         Assert.assertTrue(senders.contains(addr));
+    }
+
+    @Test
+    public void handleExpiredAnnouncement_EmptySenders()
+    {
+        thicket.register(client);
+        thicket.handleExpiredAnnouncement(client.getClientId(), msgId, treeRoot, new CopyOnWriteArrayList<InetAddress>());
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertTrue(dispatcher.messages.isEmpty());
+    }
+
+    private ReceivedMessage setRecentMessage(BroadcastClient client, Object msgId, InetAddress treeRoot, InetAddress sender)
+    {
+        HashMap<ReceivedMessage, InetAddress> msgs = new HashMap<>();
+        ReceivedMessage receivedMessage = new ReceivedMessage(msgId, treeRoot);
+        msgs.put(receivedMessage, sender);
+        ConcurrentMap<String, HashMap<ReceivedMessage, InetAddress>> recentMessages = thicket.getRecentMessages();
+        recentMessages.put(client.getClientId(), msgs);
+        return receivedMessage;
+    }
+
+    @Test
+    public void handleExpiredAnnouncement_ReceivedMessage()
+    {
+        thicket.register(client);
+        setRecentMessage(client, msgId, treeRoot, sender);
+        client.receivedMessageIds.add(msgId);
+
+        thicket.handleExpiredAnnouncement(client.getClientId(), msgId, treeRoot, new CopyOnWriteArrayList<InetAddress>());
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertTrue(dispatcher.messages.isEmpty());
+    }
+
+    @Test
+    public void handleExpiredAnnouncement_WithExistingSenders()
+    {
+        thicket.register(client);
+
+        CopyOnWriteArrayList senders = new CopyOnWriteArrayList<InetAddress>();
+        senders.add(sender);
+        senders.add(addr);
+        thicket.handleExpiredAnnouncement(client.getClientId(), msgId, treeRoot, senders);
+        AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();
+        Assert.assertFalse(dispatcher.messages.isEmpty());
+        Assert.assertTrue(dispatcher.destinations.contains(sender) || dispatcher.destinations.contains(addr));
     }
 
     static class AddressRecordingDispatcher implements GossipDispatcher<ThicketBroadcastService<ThicketMessage>, ThicketMessage>

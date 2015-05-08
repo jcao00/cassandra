@@ -52,7 +52,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 {
     private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastService.class);
     private static final int MAX_GRAFT_ATTEMPTS = 2;
-    private static final long ANNOUNCEMENTS_ENTRY_TTL = TimeUnit.SECONDS.toMillis(10000000);
+    private static final long ANNOUNCEMENTS_ENTRY_TTL = TimeUnit.SECONDS.toMillis(10);
 
     private final ThicketConfig config;
     private final GossipDispatcher dispatcher;
@@ -491,6 +491,46 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
     }
 
+    /**
+     * When the timer for an announcement expires, we have to assume the sender (rooted at a given
+     * tree) is down, so we need to replace it. To do that, we select one of the peers that sent
+     * a SUMMARY request with the given {client, messageId, treeRoot} tuple, optimistically add it
+     * to the local tree (for the tree root), and send a GRAFT message.
+     *
+     * @param clientId
+     * @param messageId
+     * @param treeRoot
+     * @param summarySenders set of peers that sent this node a SUMMARY message with the given
+     *                       {clientId, messageId} tuple.
+     */
+    void handleExpiredAnnouncement(String clientId, Object messageId, InetAddress treeRoot, CopyOnWriteArrayList<InetAddress> summarySenders)
+    {
+        //TODO: add tests for me
+
+        BroadcastClient client = clients.get(clientId);
+        if (client == null)
+        {
+            logger.warn(String.format("%s, processing an expired announcement for unknown client component: %s; ignoring",
+                                      getAddress(), clientId));
+            return;
+        }
+
+        // check to see if there was any race between the timer expiring and the client receiving and precessing the message
+        if (client.hasReceivedMessage(messageId))
+            return;
+
+        // now we need to send out a GRAFT message
+        if (summarySenders.isEmpty())
+        {
+            logger.warn("wanted to send a GRAFT message in response to expired announcement, but summarySenders is empty");
+            return;
+        }
+
+        InetAddress graftTarget = Utils.selectRandom(summarySenders);
+        addToActivePeers(activePeers, treeRoot, graftTarget);
+        dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate(activePeers)), graftTarget);
+    }
+
     void handleGraftRequest(GraftRequestMessage msg, InetAddress sender)
     {
         //TODO: add tests for me
@@ -593,46 +633,6 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
             load += i;
         }
         return load;
-    }
-
-    /**
-     * When the timer for an announcement expires, we have to assume the sender (rooted at a given
-     * tree) is down, so we need to replace it. To do that, we select one of the peers that sent
-     * a SUMMARY request with the given {client, messageId, treeRoot} tuple, optimistically add it
-     * to the local tree (for the tree root), and send a GRAFT message.
-     *
-     * @param clientId
-     * @param messageId
-     * @param treeRoot
-     * @param summarySenders set of peers that sent this node a SUMMARY message with the given
-     *                       {clientId, messageId} tuple.
-     */
-    void handleExpiredAnnouncement(String clientId, Object messageId, InetAddress treeRoot, CopyOnWriteArrayList<InetAddress> summarySenders)
-    {
-        //TODO: add tests for me
-
-        BroadcastClient client = clients.get(clientId);
-        if (client == null)
-        {
-            logger.warn(String.format("%s, processing an expired announcement for unknown client component: %s; ignoring",
-                                      getAddress(), clientId));
-            return;
-        }
-
-        // check to see if there was any race between the timer expiring and the client receiving and precessing the message
-        if (client.hasReceivedMessage(messageId))
-            return;
-
-        // now we need to send out a GRAFT message, assumming the original sender is not reachable
-        if (summarySenders.isEmpty())
-        {
-            logger.warn("wanted to send a GRAFT message in response to expired announcement, but summarySenders is empty");
-            return;
-        }
-
-        InetAddress graftTarget = Utils.selectRandom(summarySenders);
-        addToActivePeers(activePeers, treeRoot, graftTarget);
-        dispatcher.send(this, new GraftRequestMessage(treeRoot, clientId, 0, buildLoadEstimate(activePeers)), graftTarget);
     }
 
     void handleGraftResponseAccept(GraftResponseAcceptMessage msg, InetAddress sender)
