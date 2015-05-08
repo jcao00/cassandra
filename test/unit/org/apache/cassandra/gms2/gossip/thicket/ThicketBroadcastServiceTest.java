@@ -84,7 +84,6 @@ public class ThicketBroadcastServiceTest
             addrs.add(InetAddress.getByName("127.0.4." + i));
         thicket.setBackupPeers(addrs);
         Collection<InetAddress> peers = thicket.getTargets(null, thicket.getAddress());
-        Assert.assertEquals(thicket.getFanout(), peers.size());
         Assert.assertFalse(peers.contains(thicket.getAddress()));
 
         // now, check that fetching from cache is working properly
@@ -121,7 +120,6 @@ public class ThicketBroadcastServiceTest
         thicket.setBackupPeers(addrs);
 
         Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
-        Assert.assertEquals(thicket.getFanout(), peers.size());
         Assert.assertTrue(peers.contains(treeRoot));
     }
 
@@ -141,34 +139,38 @@ public class ThicketBroadcastServiceTest
     @Test
     public void getTargets_FirstDegreeNode_LargePeerSet() throws UnknownHostException
     {
-        List<InetAddress> addrs = new ArrayList<>();
+        Map<InetAddress, String> addrs = new HashMap<>();
         for (int i = 0; i < 20; i++)
-            addrs.add(InetAddress.getByName("127.0.4." + i));
+            addrs.put(InetAddress.getByName("127.0.4." + i), "dc1");
+        peerSubscriber.addNodes(addrs);
 
-        thicket.setBackupPeers(addrs);
+        thicket.setBackupPeers(addrs.keySet());
         Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
-        Assert.assertEquals(addrs.size(), peers.size());
+        Assert.assertEquals(thicket.getFanout(), peers.size());
         Assert.assertTrue(peers.contains(treeRoot));
     }
 
     @Test
     public void getTargets_FirstDegreeNode_LargePeerSet_GetFromCache() throws UnknownHostException
     {
-        List<InetAddress> addrs = new ArrayList<>();
+        Map<InetAddress, String> addrs = new HashMap<>();
         for (int i = 0; i < 20; i++)
-            addrs.add(InetAddress.getByName("127.0.4." + i));
+            addrs.put(InetAddress.getByName("127.0.4." + i), "dc1");
+        peerSubscriber.addNodes(addrs);
 
-        thicket.setBackupPeers(addrs);
-        InetAddress sender = addrs.get(0);
+        List<InetAddress> basePeers = new ArrayList<>(addrs.keySet());
+        thicket.setBackupPeers(basePeers);
+
+        InetAddress sender = basePeers.get(0);
         Collection<InetAddress> peers = thicket.getTargets(treeRoot, treeRoot);
-        Assert.assertEquals(addrs.size(), peers.size());
+        Assert.assertEquals(thicket.getFanout(), peers.size());
         Assert.assertTrue(peers.contains(treeRoot));
 
         Collection<InetAddress> refetchedPeers = thicket.getTargets(sender, treeRoot);
         Assert.assertTrue(peers.containsAll(refetchedPeers));
         Assert.assertTrue(refetchedPeers.containsAll(peers));
 
-        InetAddress nextSender = addrs.get(1);
+        InetAddress nextSender = basePeers.get(1);
         Collection<InetAddress> peersForSender = thicket.getTargets(nextSender, treeRoot);
         Assert.assertTrue(peersForSender.contains(nextSender));
         Assert.assertTrue(peersForSender.containsAll(refetchedPeers));
@@ -195,7 +197,6 @@ public class ThicketBroadcastServiceTest
         thicket.setBackupPeers(addrs);
 
         Collection<InetAddress> peers = thicket.getTargets(sender, treeRoot);
-        Assert.assertEquals(thicket.getFanout(), peers.size());
         Assert.assertFalse(peers.contains(treeRoot));
     }
 
@@ -208,7 +209,6 @@ public class ThicketBroadcastServiceTest
         thicket.setBackupPeers(addrs);
 
         Collection<InetAddress> peers = thicket.getTargets(sender, treeRoot);
-        Assert.assertEquals(peers.toString(), thicket.getFanout() - 1, peers.size());
         Assert.assertFalse(peers.contains(treeRoot));
     }
 
@@ -357,40 +357,6 @@ public class ThicketBroadcastServiceTest
         thicket.handleDataMessage(thicketMessage, treeRoot);
         Assert.assertTrue(announcements.isEmpty());
     }
-
-//    @Test
-//    public void alreadyInView_EmptyViews()
-//    {
-//        Assert.assertFalse(thicket.alreadyInView(treeRoot));
-//    }
-//
-//    @Test
-//    public void alreadyInView_InBackupPeers()
-//    {
-//        List<InetAddress> addrs = new ArrayList<>();
-//        addrs.add(sender);
-//        thicket.setBackupPeers(addrs);
-//        Assert.assertFalse(thicket.alreadyInView(treeRoot));
-//        Assert.assertTrue(thicket.alreadyInView(sender));
-//    }
-//
-//    @Test
-//    public void alreadyInView_NotInBackupPeers() throws UnknownHostException
-//    {
-//        List<InetAddress> addrs = new ArrayList<>();
-//        for (int i = 0; i < 20; i++)
-//            addrs.add(InetAddress.getByName("127.0.4." + i));
-//
-//        thicket.setBackupPeers(addrs);
-//        InetAddress sender = addrs.get(0);
-//        thicket.getTargets(sender, treeRoot);
-//
-//        // reset the backup peers so we don't trigger on that
-//        thicket.setBackupPeers(Collections.<InetAddress>emptyList());
-//
-//        Assert.assertTrue(thicket.alreadyInView(treeRoot));
-//        Assert.assertTrue(thicket.alreadyInView(sender));
-//    }
 
     @Test
     public void calculateForwardingLoad_Null()
@@ -733,12 +699,6 @@ public class ThicketBroadcastServiceTest
     public void doSummary_NoNewMessages() throws IOException
     {
         thicket.register(client);
-
-//        ThicketBroadcastService<ThicketMessage>.AntiEntropyPeerListener antiEntropyPeerListener = thicket.getAntiEntropyPeerListener();
-//        Map<InetAddress, String> peers = new HashMap<>();
-//        for (int i = 0; i < 8; i++)
-//            peers.put(InetAddress.getByName("127.0.4." + i), "dc1");
-//        antiEntropyPeerListener.addNodes(peers);
 
         thicket.doSummary();
         AddressRecordingDispatcher dispatcher = (AddressRecordingDispatcher)thicket.getDispatcher();

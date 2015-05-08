@@ -708,7 +708,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     @VisibleForTesting
     // DO NOT USE OUTSIDE OF TESTING!!!
-    void setBackupPeers(List<InetAddress> peers)
+    void setBackupPeers(Collection<InetAddress> peers)
     {
         backupPeers.addAll(peers);
     }
