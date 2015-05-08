@@ -15,12 +15,20 @@ public class GraftResponseRejectMessage extends ThicketMessage
      */
     private final InetAddress graftAlternate;
 
-    public GraftResponseRejectMessage(InetAddress treeRoot, String clientId, int attemptCount, InetAddress graftAlternate, Map<InetAddress, Integer> loadEstimate)
+    GraftResponseRejectMessage(InetAddress treeRoot, String clientId, int attemptCount, InetAddress graftAlternate, Map<InetAddress, Integer> loadEstimate)
     {
         super(treeRoot, loadEstimate);
         this.attemptCount = attemptCount;
         this.graftAlternate = graftAlternate;
         this.clientId = clientId;
+    }
+
+    public GraftResponseRejectMessage(GraftRequestMessage request, InetAddress graftAlternate, Map<InetAddress, Integer> loadEstimate)
+    {
+        super(request.getTreeRoot(), loadEstimate);
+        this.attemptCount = request.getAttemptCount();
+        this.graftAlternate = graftAlternate;
+        this.clientId = request.getClientId();
     }
 
     public String getClientId()

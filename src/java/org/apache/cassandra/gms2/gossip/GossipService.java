@@ -36,4 +36,11 @@ public class GossipService
         MembershipService membershipService = new MembershipService(hpvConfig.getLocalAddr());
         membershipService.register(broadcastService.getStateChangeSubscriber());
     }
+
+    public void register(BroadcastClient client)
+    {
+        broadcastService.register(client);
+    }
+
+
 }
