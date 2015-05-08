@@ -710,11 +710,11 @@ public class ThicketBroadcastServiceTest
     {
         thicket.register(client);
 
-//        ThicketBroadcastService<ThicketMessage>.AntiEntropyPeerListener antiEntropyPeerListener = thicket.getAntiEntropyPeerListener();
-//        Map<InetAddress, String> peers = new HashMap<>();
-//        for (int i = 0; i < 8; i++)
-//            peers.put(InetAddress.getByName("127.0.4." + i), "dc1");
-//        antiEntropyPeerListener.addNodes(peers);
+        Map<InetAddress, String> addrs = new HashMap<>();
+        for (int i = 0; i < 20; i++)
+            addrs.put(InetAddress.getByName("127.0.4." + i), "dc1");
+        peerSubscriber.addNodes(addrs);
+        thicket.setBackupPeers(addrs.keySet());
 
         ReceivedMessage receivedMessage = setRecentMessage(client, msgId, treeRoot, sender);
 
