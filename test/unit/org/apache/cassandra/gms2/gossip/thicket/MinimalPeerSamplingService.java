@@ -5,6 +5,7 @@ import java.util.Collection;
 
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
+import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingServiceClient;
 
 public class MinimalPeerSamplingService implements PeerSamplingService
 {
@@ -15,7 +16,7 @@ public class MinimalPeerSamplingService implements PeerSamplingService
         this.peers = peers;
     }
 
-    public void register(GossipBroadcaster broadcaster)
+    public void register(PeerSamplingServiceClient client)
     {
 
     }

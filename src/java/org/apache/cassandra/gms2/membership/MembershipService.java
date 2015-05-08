@@ -14,13 +14,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
+import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
+import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
 
 /**
  * A cluster membership service for cassandra.
  */
-public class MembershipService implements BroadcastClient
+public class MembershipService implements BroadcastClient, AntiEntropyClient
 {
     private static final String ID = "membership_svc";
 
@@ -91,5 +93,19 @@ public class MembershipService implements BroadcastClient
     public void unregister(IEndpointStateChangeSubscriber subscriber)
     {
         lifecycleSubscribers.remove(subscriber);
+    }
+
+    /*
+        methods for AntiEntropyClient
+     */
+
+    public ISerializer getDataToSend()
+    {
+        return null;
+    }
+
+    public void receive(ISerializer iSerializer) throws IOException
+    {
+
     }
 }

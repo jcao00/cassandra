@@ -1,7 +1,6 @@
 package org.apache.cassandra.gms2.gossip.peersampling;
 
 import java.net.InetAddress;
-import java.net.InetAddress;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -44,7 +43,7 @@ public class HyParViewService<M extends HyParViewMessage> implements PeerSamplin
     private final HPVConfig config;
     private final GossipDispatcher dispatcher;
 
-    private final Set<GossipBroadcaster> broadcasters;
+    private final Set<PeerSamplingServiceClient> clients;
 
     public HyParViewService(HPVConfig config, GossipDispatcher dispatcher)
     {
@@ -52,7 +51,7 @@ public class HyParViewService<M extends HyParViewMessage> implements PeerSamplin
         this.dispatcher = dispatcher;
         activeView = new CopyOnWriteArrayList<>();
         passiveView = new CopyOnWriteArrayList<>();
-        broadcasters = new CopyOnWriteArraySet<>();
+        clients = new CopyOnWriteArraySet<>();
     }
 
     public void init(ScheduledExecutorService scheduledService, IFailureDetector failureDetector)
@@ -145,9 +144,8 @@ public class HyParViewService<M extends HyParViewMessage> implements PeerSamplin
         if (!activeView.contains(peer))
         {
             activeView.add(peer);
-            for (GossipBroadcaster broadcaster : broadcasters)
-                broadcaster.neighborUp(peer);
-
+            for (PeerSamplingServiceClient client : clients)
+                client.neighborUp(peer);
 
             while (activeView.size() > config.getActiveViewLength())
                 removeFromActiveView(activeView.get(0), true);
@@ -170,8 +168,8 @@ public class HyParViewService<M extends HyParViewMessage> implements PeerSamplin
 
         dispatcher.send(this, new Disconnect(), peer);
 
-        for (GossipBroadcaster broadcaster : broadcasters)
-            broadcaster.neighborDown(peer);
+        for (PeerSamplingServiceClient client : clients)
+            client.neighborDown(peer);
     }
 
     void addToPassiveView(InetAddress peer)
@@ -480,13 +478,13 @@ public class HyParViewService<M extends HyParViewMessage> implements PeerSamplin
         return sb.toString();
     }
 
-    public void register(GossipBroadcaster broadcaster)
+    public void register(PeerSamplingServiceClient client)
     {
-        if (broadcasters.contains(broadcaster))
-            throw new IllegalStateException(String.format("already have gossip broadcaster {} as a registered instance", broadcaster));
+        if (clients.contains(client))
+            throw new IllegalStateException(String.format("already have gossip broadcaster {} as a registered instance", client));
 
-        broadcasters.add(broadcaster);
-        broadcaster.registered(this);
+        clients.add(client);
+        client.registered(this);
     }
 
     public Collection<InetAddress> getPeers()

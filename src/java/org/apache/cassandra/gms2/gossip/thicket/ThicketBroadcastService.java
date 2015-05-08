@@ -32,6 +32,7 @@ import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
 import org.apache.cassandra.gms2.gossip.Utils;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
+import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingServiceClient;
 import org.apache.cassandra.gms2.gossip.thicket.messages.GraftRequestMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.GraftResponseAcceptMessage;
 import org.apache.cassandra.gms2.gossip.thicket.messages.GraftResponseRejectMessage;
@@ -48,7 +49,7 @@ import org.apache.cassandra.utils.Pair;
  * <a html="http://asc.di.fct.unl.pt/~jleitao/pdf/srds10-mario.pdf">
  * Thicket: A Protocol for Building and Maintaining Multiple Trees in a P2P Overlay</a> paper.
  */
-public class ThicketBroadcastService<M extends ThicketMessage> implements GossipBroadcaster, GossipDispatcher.GossipReceiver<M>
+public class ThicketBroadcastService<M extends ThicketMessage> implements GossipBroadcaster, GossipDispatcher.GossipReceiver<M>, PeerSamplingServiceClient
 {
     private static final Logger logger = LoggerFactory.getLogger(ThicketBroadcastService.class);
     private static final int MAX_GRAFT_ATTEMPTS = 2;

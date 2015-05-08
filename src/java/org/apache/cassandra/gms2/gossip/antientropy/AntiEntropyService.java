@@ -1,35 +1,43 @@
 package org.apache.cassandra.gms2.gossip.antientropy;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.LinkedList;
+import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.cassandra.gms2.gossip.antientropy.messages.AckMessage;
 import org.apache.cassandra.gms2.gossip.antientropy.messages.AntiEntropyMessage;
 import org.apache.cassandra.gms2.gossip.antientropy.messages.SynAckMessage;
 import org.apache.cassandra.gms2.gossip.antientropy.messages.SynMessage;
 import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
+import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingServiceClient;
 
-public class AntiEntropyService
+public class AntiEntropyService implements PeerSamplingServiceClient
 {
-    /**
-     * The primary source for getting peers.
-     */
-    private final PeerSamplingService primary;
-
-    /**
-     * A source that yields peers to not prefer. Those peers may be used if no other peers are available,
-     * as in the case of small clusters or network partitions.
-     */
-    private final PeerSamplingService filter;
+//    /**
+//     * The primary source for getting peers.
+//     */
+//    private final PeerSamplingService primary;
+//
+//    /**
+//     * A source that yields peers to not prefer. Those peers may be used if no other peers are available,
+//     * as in the case of small clusters or network partitions.
+//     */
+//    private final PeerSamplingService filter;
 
     private final Collection<AntiEntropyClient> clients;
 
-    public AntiEntropyService(PeerSamplingService primary, PeerSamplingService filter)
+    public AntiEntropyService(/*PeerSamplingService primary, PeerSamplingService filter*/)
     {
-        this.primary = primary;
-        this.filter = filter;
+//        this.primary = primary;
+//        this.filter = filter;
         clients = new LinkedList<>();
+    }
+
+    public void init(ScheduledExecutorService scheduledService)
+    {
+
     }
 
     public void execute()
@@ -75,5 +83,24 @@ public class AntiEntropyService
     public void register(AntiEntropyClient client)
     {
         clients.add(client);
+    }
+
+    /*
+        methods for PeerSamplingServiceClient
+     */
+
+    public void registered(PeerSamplingService peerSamplingService)
+    {
+
+    }
+
+    public void neighborUp(InetAddress peer)
+    {
+
+    }
+
+    public void neighborDown(InetAddress peer)
+    {
+
     }
 }

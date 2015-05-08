@@ -11,7 +11,7 @@ import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
  */
 public interface PeerSamplingService
 {
-    void register(GossipBroadcaster broadcaster);
+    void register(PeerSamplingServiceClient client);
 
     Collection<InetAddress> getPeers();
 }
