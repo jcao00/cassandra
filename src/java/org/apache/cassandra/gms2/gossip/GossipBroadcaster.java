@@ -1,10 +1,7 @@
 package org.apache.cassandra.gms2.gossip;
 
-import java.net.InetAddress;
-
-import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
-
 /**
+ * Interface for systems responsible for sending messages in an epidemic manner (a/k/a gossip).
  */
 public interface GossipBroadcaster
 {
