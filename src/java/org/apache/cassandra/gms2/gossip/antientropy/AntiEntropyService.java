@@ -243,7 +243,7 @@ public class AntiEntropyService<M extends AntiEntropyMessage> implements PeerSam
 
     public void registered(PeerSamplingService peerSamplingService)
     {
-        // nop
+        peerSamplingNodes.addAll(peerSamplingService.getPeers());
     }
 
     public void neighborUp(InetAddress peer)
