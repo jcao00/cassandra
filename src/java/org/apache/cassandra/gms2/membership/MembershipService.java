@@ -5,19 +5,14 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
-import org.apache.cassandra.gms2.gossip.peersampling.PeerSamplingService;
-import org.apache.cassandra.io.ISerializer;
-import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
 
 /**
  * A cluster membership service for cassandra.
@@ -59,7 +54,7 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         return true;
     }
 
-    public boolean hasReceivedMessage(Object messageId)
+    public boolean hasReceivedBroadcast(Object messageId)
     {
         return false;
     }

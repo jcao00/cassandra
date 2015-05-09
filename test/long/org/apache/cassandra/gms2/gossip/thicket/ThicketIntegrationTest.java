@@ -115,7 +115,7 @@ public class ThicketIntegrationTest
             return true;
         }
 
-        public boolean hasReceivedMessage(Object messageId)
+        public boolean hasReceivedBroadcast(Object messageId)
         {
             return false;
         }

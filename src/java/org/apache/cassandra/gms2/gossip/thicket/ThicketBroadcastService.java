@@ -479,7 +479,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         for (ReceivedMessage receivedMessage : msg.getReceivedMessages())
         {
             // double check to see if the msg has come in
-            if (client.hasReceivedMessage(receivedMessage.msgId))
+            if (client.hasReceivedBroadcast(receivedMessage.msgId))
                 continue;
 
             ExpiringMapEntry entry = new ExpiringMapEntry(clientId, receivedMessage.msgId, receivedMessage.treeRoot);
@@ -515,7 +515,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         }
 
         // check to see if there was any race between the timer expiring and the client receiving and precessing the message
-        if (client.hasReceivedMessage(messageId))
+        if (client.hasReceivedBroadcast(messageId))
             return;
 
         // now we need to send out a GRAFT message

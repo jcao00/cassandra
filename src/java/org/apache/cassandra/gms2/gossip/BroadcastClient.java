@@ -18,6 +18,6 @@ public interface BroadcastClient
      */
     boolean receiveBroadcast(Object messageId, Object message) throws IOException;
 
-    boolean hasReceivedMessage(Object messageId);
+    boolean hasReceivedBroadcast(Object messageId);
 }
 

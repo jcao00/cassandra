@@ -937,7 +937,7 @@ public class ThicketBroadcastServiceTest
             return freshMessage;
         }
 
-        public boolean hasReceivedMessage(Object messageId)
+        public boolean hasReceivedBroadcast(Object messageId)
         {
             return receivedMessageIds.contains(messageId);
         }
