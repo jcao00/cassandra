@@ -18,15 +18,6 @@ public interface BroadcastClient
      */
     boolean receiveBroadcast(Object messageId, Object message) throws IOException;
 
-    Object prepareExchange();
-
-    /**
-     *
-     * @param summary
-     * @return Set of missing messageIds
-     */
-    Set<? extends Object> receiveSummary(Object summary);
-
     boolean hasReceivedMessage(Object messageId);
 }
 

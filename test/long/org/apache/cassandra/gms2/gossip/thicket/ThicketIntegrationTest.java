@@ -115,16 +115,6 @@ public class ThicketIntegrationTest
             return true;
         }
 
-        public Object prepareExchange()
-        {
-            return null;
-        }
-
-        public Set<? extends Object> receiveSummary(Object summary)
-        {
-            return null;
-        }
-
         public boolean hasReceivedMessage(Object messageId)
         {
             return false;
