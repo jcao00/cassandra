@@ -4,6 +4,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
+import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyConfig;
 import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyService;
 import org.apache.cassandra.gms2.gossip.peersampling.HPVConfig;
 import org.apache.cassandra.gms2.gossip.peersampling.HyParViewService;
@@ -25,7 +26,7 @@ public class GossipService
      */
     public final ScheduledExecutorService scheduledService;
 
-    public GossipService(HPVConfig hpvConfig, ThicketConfig plumtreeConfig, GossipDispatcher dispatcher)
+    public GossipService(HPVConfig hpvConfig, ThicketConfig plumtreeConfig, GossipDispatcher dispatcher, AntiEntropyConfig antiEntropyConfig)
     {
         scheduledService = Executors.newSingleThreadScheduledExecutor();
 
@@ -40,7 +41,7 @@ public class GossipService
         // broadcast requires an underlying peer sampling service
         hyParViewService.register(broadcastService);
 
-        antiEntropyService = new AntiEntropyService(hyParViewService, peerSubscriber);
+        antiEntropyService = new AntiEntropyService(antiEntropyConfig, dispatcher, peerSubscriber);
         antiEntropyService.init(scheduledService);
         // anti-entropy requires a peer sampling service largely to attempt to avoid peers the broadcast service is using (if that is possible)
         hyParViewService.register(antiEntropyService);

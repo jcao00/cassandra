@@ -23,10 +23,6 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
-import org.apache.cassandra.gms.ApplicationState;
-import org.apache.cassandra.gms.EndpointState;
-import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
-import org.apache.cassandra.gms.VersionedValue;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
@@ -735,13 +731,14 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         // not sure this is the best way to do this (one Runnable just submitting another)
         public void run()
         {
-            publish(new Runnable()
+            try
             {
-                public void run()
-                {
-                    doSummary();
-                }
-            });
+                doSummary();
+            }
+            catch (Exception e)
+            {
+                logger.warn("failed to execute start of new summary", e);
+            }
         }
     }
 

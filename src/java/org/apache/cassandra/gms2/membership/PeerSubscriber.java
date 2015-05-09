@@ -3,12 +3,16 @@ package org.apache.cassandra.gms2.membership;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableCollection;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
@@ -36,19 +40,14 @@ public class PeerSubscriber implements IEndpointStateChangeSubscriber
         // TODO: might want a way to snag all the existing entries, if any - maybe take parameter to Membership service
     }
 
-    Collection<InetAddress> selectNodes(int maxCount)
-    {
-        List<InetAddress> selected = new ArrayList<>(maxCount);
-
-        // TODO: get a better distribution of local DC vs. (possible) remote DC nodes
-        Utils.selectMultipleRandom(nodes.keySet(), selected, maxCount);
-
-        return selected;
-    }
-
     public int getClusterSize()
     {
         return nodes.size();
+    }
+
+    public ImmutableSet<InetAddress> getNodes()
+    {
+        return ImmutableSet.copyOf(nodes.keySet());
     }
 
     @VisibleForTesting

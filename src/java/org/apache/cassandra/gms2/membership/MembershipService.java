@@ -99,12 +99,22 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         methods for AntiEntropyClient
      */
 
-    public ISerializer getDataToSend()
+    public Object preparePush()
     {
         return null;
     }
 
-    public void receive(ISerializer iSerializer) throws IOException
+    public Object processPush(Object t) throws IOException
+    {
+        return null;
+    }
+
+    public Object processPull(Object t) throws IOException
+    {
+        return null;
+    }
+
+    public void processPushPull(Object t) throws IOException
     {
 
     }
