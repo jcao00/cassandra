@@ -4,17 +4,17 @@ import org.apache.cassandra.io.ISerializer;
 
 public class SynMessage extends AntiEntropyMessage
 {
-    private final Object pushData;
+    private final Object data;
 
-    public SynMessage(String clientId, Object pushData)
+    public SynMessage(String clientId, Object data)
     {
         super(clientId);
-        this.pushData = pushData;
+        this.data = data;
     }
 
-    public Object getPushData()
+    public Object getData()
     {
-        return pushData;
+        return data;
     }
 
     public MessageType getMessageType()

@@ -28,7 +28,7 @@ public class Utils
         else
             filtered = filter(source, toFilter);
 
-        if (filtered.size() == 0)
+        if (filtered.isEmpty())
             return null;
 
         return filtered.get(ThreadLocalRandom.current().nextInt(0, filtered.size()));

@@ -4,17 +4,17 @@ import org.apache.cassandra.io.ISerializer;
 
 public class AckMessage extends AntiEntropyMessage
 {
-    private final Object pullData;
+    private final Object data;
 
     public AckMessage(String clientId, Object pullData)
     {
         super(clientId);
-        this.pullData = pullData;
+        this.data = pullData;
     }
 
-    public Object getPullData()
+    public Object getData()
     {
-        return pullData;
+        return data;
     }
 
     public MessageType getMessageType()

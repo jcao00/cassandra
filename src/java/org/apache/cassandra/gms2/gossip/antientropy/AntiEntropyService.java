@@ -4,11 +4,12 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.collect.Multimap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,7 +31,7 @@ import org.apache.cassandra.gms2.membership.PeerSubscriber;
  * that {@code AntiEntropyClient}s must implement, but typical implementations would look like
  * the protocol described in the Scuttlebutt paper, or they exchange merkle trees and diffs, and so on.
  */
-public class AntiEntropyService implements PeerSamplingServiceClient, GossipDispatcher.GossipReceiver<AntiEntropyMessage>
+public class AntiEntropyService<M extends AntiEntropyMessage> implements PeerSamplingServiceClient, GossipDispatcher.GossipReceiver<M>
 {
     private static final Logger logger = LoggerFactory.getLogger(AntiEntropyService.class);
 
@@ -113,13 +114,40 @@ public class AntiEntropyService implements PeerSamplingServiceClient, GossipDisp
         dispatcher.send(this, msg, antiEntropyPeer);
     }
 
-    InetAddress selectPeer(Set<InetAddress> clusterNodes, Collection<InetAddress> filter)
+    InetAddress selectPeer(Multimap<String, InetAddress> clusterNodes, Collection<InetAddress> filter)
     {
-        // TODO: determine if we should probabalistically go cross-DC
-        // get the difference between the two peers
-        // if no diffs, select a random node from the primary (either local or any remote DC per-probability)
-        // if diffs, select random node from diffs (either local or any remote DC per-probability)
-        return Utils.selectRandom(clusterNodes, filter.toArray(new InetAddress[0]));
+        Collection<InetAddress> dcNodes;
+        switch (clusterNodes.keySet().size())
+        {
+            case 0:
+                return null;
+            case 1:
+                dcNodes = clusterNodes.values();
+                break;
+            default:
+                // decide if we go cross-dc, unless there's no other known nodes in our dc
+                // TODO: come up with a better randomization alg, preferrably one which takes the
+                // number of DCs into account
+                if (!clusterNodes.containsKey(config.getDatacenter()) ||
+                    ThreadLocalRandom.current().nextInt(0, 10) < 2)
+                {
+                    clusterNodes.removeAll(config.getDatacenter());
+                    String dc = Utils.selectRandom(clusterNodes.keySet());
+                    dcNodes = clusterNodes.get(dc);
+                }
+                else
+                {
+                    dcNodes = clusterNodes.get(config.getDatacenter());
+                }
+        }
+
+        // try to select a node that is not in the filter list
+        InetAddress peer = Utils.selectRandom(dcNodes, filter.toArray(new InetAddress[0]));
+        if (peer != null)
+            return peer;
+
+        // return what ever we can
+        return Utils.selectRandom(dcNodes);
     }
 
     public void handle(AntiEntropyMessage msg, InetAddress sender)
@@ -171,8 +199,8 @@ public class AntiEntropyService implements PeerSamplingServiceClient, GossipDisp
             return;
         }
 
-        Object pullData = client.processPush(msg.getPushData());
-        AckMessage ackMSg = new AckMessage(client.getClientId(), pullData);
+        Object data = client.processPush(msg.getData());
+        AckMessage ackMSg = new AckMessage(client.getClientId(), data);
         dispatcher.send(this, ackMSg, sender);
     }
 
@@ -185,7 +213,7 @@ public class AntiEntropyService implements PeerSamplingServiceClient, GossipDisp
             return;
         }
 
-        Object pushPullData = client.processPull(msg.getPullData());
+        Object pushPullData = client.processPull(msg.getData());
         if (pushPullData == null)
             return;
         SynAckMessage synAckMessage = new SynAckMessage(client.getClientId(), pushPullData);
@@ -201,7 +229,7 @@ public class AntiEntropyService implements PeerSamplingServiceClient, GossipDisp
             return;
         }
 
-        client.processPushPull(msg.getPushPullData());
+        client.processPushPull(msg.getData());
     }
 
     public void register(AntiEntropyClient client)

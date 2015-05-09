@@ -10,9 +10,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSetMultimap;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.SetMultimap;
 
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
@@ -45,9 +49,12 @@ public class PeerSubscriber implements IEndpointStateChangeSubscriber
         return nodes.size();
     }
 
-    public ImmutableSet<InetAddress> getNodes()
+    public Multimap<String, InetAddress> getNodes()
     {
-        return ImmutableSet.copyOf(nodes.keySet());
+        HashMultimap<String, InetAddress> map = HashMultimap.create();
+        for (Map.Entry<InetAddress, String> entry : nodes.entrySet())
+            map.put(entry.getValue(), entry.getKey());
+        return map;
     }
 
     @VisibleForTesting

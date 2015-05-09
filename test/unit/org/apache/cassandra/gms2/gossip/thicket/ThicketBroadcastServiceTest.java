@@ -902,8 +902,8 @@ public class ThicketBroadcastServiceTest
 
     static class MessageWrapper
     {
-        InetAddress addr;
-        ThicketMessage msg;
+        final InetAddress addr;
+        final ThicketMessage msg;
 
         public MessageWrapper(InetAddress addr, ThicketMessage msg)
         {
