@@ -45,6 +45,9 @@ import org.apache.cassandra.utils.Pair;
  * An implementation of the
  * <a html="http://asc.di.fct.unl.pt/~jleitao/pdf/srds10-mario.pdf">
  * Thicket: A Protocol for Building and Maintaining Multiple Trees in a P2P Overlay</a> paper.
+ *
+ * // TODO: clean up announcements logic. it really needs to focus more on the tree/sender that we haven't
+ * heard from rather than the tree/sender/messageId
  */
 public class ThicketBroadcastService<M extends ThicketMessage> implements GossipBroadcaster, GossipDispatcher.GossipReceiver<M>, PeerSamplingServiceClient
 {
@@ -103,6 +106,12 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
 
     public ThicketBroadcastService(ThicketConfig config, GossipDispatcher dispatcher, PeerSubscriber peerSubscriber)
     {
+        this (config, dispatcher, peerSubscriber, ANNOUNCEMENTS_ENTRY_TTL);
+    }
+
+    @VisibleForTesting
+    ThicketBroadcastService(ThicketConfig config, GossipDispatcher dispatcher, PeerSubscriber peerSubscriber, long announcementsTTL)
+    {
         this.config = config;
         this.dispatcher = dispatcher;
         this.peerSubscriber = peerSubscriber;
@@ -113,7 +122,7 @@ public class ThicketBroadcastService<M extends ThicketMessage> implements Gossip
         backupPeers = new CopyOnWriteArrayList<>();
         clients = new ConcurrentHashMap<>();
         recentMessages = new ConcurrentHashMap<>();
-        announcements = new ExpiringMap<>(ANNOUNCEMENTS_ENTRY_TTL, new AnnouncementTimeoutProcessor());
+        announcements = new ExpiringMap<>(announcementsTTL, new AnnouncementTimeoutProcessor());
     }
 
     public void init(ScheduledExecutorService scheduledService)
