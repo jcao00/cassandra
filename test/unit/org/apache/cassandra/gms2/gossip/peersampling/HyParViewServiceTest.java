@@ -12,12 +12,11 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.gms2.gossip.peersampling.messages.HyParViewMessage;
+import org.apache.cassandra.gms2.membership.PeerSubscriber;
 
 public class HyParViewServiceTest
 {
@@ -32,7 +31,7 @@ public class HyParViewServiceTest
     HyParViewService createService(InetAddress addr, List<InetAddress> seeds, PennStationDispatcher dispatcher) throws UnknownHostException
     {
         HPVConfigImpl config = new HPVConfigImpl(addr, seeds);
-        HyParViewService svc = new HyParViewService(config, dispatcher);
+        HyParViewService svc = new HyParViewService(config, dispatcher, new PeerSubscriber());
         dispatcher.register(addr, svc);
         return svc;
     }

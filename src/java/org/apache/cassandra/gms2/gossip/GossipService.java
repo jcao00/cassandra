@@ -10,6 +10,7 @@ import org.apache.cassandra.gms2.gossip.peersampling.HPVConfig;
 import org.apache.cassandra.gms2.gossip.peersampling.HyParViewService;
 import org.apache.cassandra.gms2.gossip.thicket.ThicketBroadcastService;
 import org.apache.cassandra.gms2.gossip.thicket.ThicketConfig;
+import org.apache.cassandra.gms2.membership.MembershipConfig;
 import org.apache.cassandra.gms2.membership.MembershipService;
 import org.apache.cassandra.gms2.membership.PeerSubscriber;
 
@@ -26,15 +27,14 @@ public class GossipService
      */
     public final ScheduledExecutorService scheduledService;
 
-    public GossipService(HPVConfig hpvConfig, ThicketConfig plumtreeConfig, GossipDispatcher dispatcher, AntiEntropyConfig antiEntropyConfig)
+    public GossipService(HPVConfig hpvConfig, ThicketConfig plumtreeConfig, GossipDispatcher dispatcher, AntiEntropyConfig antiEntropyConfig, MembershipConfig membershipConfig)
     {
         scheduledService = Executors.newSingleThreadScheduledExecutor();
+        PeerSubscriber peerSubscriber = new PeerSubscriber();
 
-        hyParViewService = new HyParViewService(hpvConfig, dispatcher);
+        hyParViewService = new HyParViewService(hpvConfig, dispatcher, peerSubscriber);
         //TODO: figure out the FD to pass into init()
         hyParViewService.init(scheduledService, null);
-
-        PeerSubscriber peerSubscriber = new PeerSubscriber();
 
         broadcastService = new ThicketBroadcastService(plumtreeConfig, dispatcher, peerSubscriber);
         broadcastService.init(scheduledService);
@@ -46,7 +46,7 @@ public class GossipService
         // anti-entropy requires a peer sampling service largely to attempt to avoid peers the broadcast service is using (if that is possible)
         hyParViewService.register(antiEntropyService);
 
-        MembershipService membershipService = new MembershipService(hpvConfig.getLocalAddr());
+        MembershipService membershipService = new MembershipService(broadcastService, membershipConfig);
         membershipService.register(peerSubscriber);
 
         // membership needs to receive messages from peers

@@ -22,12 +22,12 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.gms.IFailureDetectionEventListener;
 import org.apache.cassandra.gms.IFailureDetector;
-import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.GossipDispatcher;
 import org.apache.cassandra.gms2.gossip.Utils;
 import org.apache.cassandra.gms2.gossip.peersampling.messages.*;
 import org.apache.cassandra.gms2.gossip.peersampling.messages.NeighborRequest.Priority;
 import org.apache.cassandra.gms2.gossip.peersampling.messages.NeighborResponse.Result;
+import org.apache.cassandra.gms2.membership.PeerSubscriber;
 
 /**
  * An implementation of the HyParView peer sampling service (http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf).
@@ -42,13 +42,15 @@ public class HyParViewService<M extends HyParViewMessage> implements PeerSamplin
     private final List<InetAddress> passiveView;
     private final HPVConfig config;
     private final GossipDispatcher dispatcher;
+    private final PeerSubscriber peerSubscriber;
 
     private final Set<PeerSamplingServiceClient> clients;
 
-    public HyParViewService(HPVConfig config, GossipDispatcher dispatcher)
+    public HyParViewService(HPVConfig config, GossipDispatcher dispatcher, PeerSubscriber peerSubscriber)
     {
         this.config = config;
         this.dispatcher = dispatcher;
+        this.peerSubscriber = peerSubscriber;
         activeView = new CopyOnWriteArrayList<>();
         passiveView = new CopyOnWriteArrayList<>();
         clients = new CopyOnWriteArraySet<>();

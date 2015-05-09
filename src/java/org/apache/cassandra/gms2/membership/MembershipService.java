@@ -2,9 +2,7 @@ package org.apache.cassandra.gms2.membership;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,27 +19,28 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
 {
     private static final String ID = "membership_svc";
 
+    private final GossipBroadcaster broadcaster;
+    private final MembershipConfig config;
+
+    /**
+     * A CRDT of the nodes that are in the cluster.
+     */
     private final Orswot<? extends Object> members;
 
-    private final Map<InetSocketAddress, PeerState> peerStateMap;
+    /**
+     * A map to hold the known state of each of the nodes in the cluster.
+     */
+    private final Map<InetAddress, PeerState> peerStateMap;
+
     private final List<IEndpointStateChangeSubscriber> lifecycleSubscribers;
 
-    private GossipBroadcaster broadcaster;
-
-    public MembershipService(InetAddress localAddr)
+    public MembershipService(GossipBroadcaster broadcaster, MembershipConfig config)
     {
-        members = new Orswot(localAddr);
-        lifecycleSubscribers = new ArrayList<>(4);
+        this.broadcaster = broadcaster;
+        this.config = config;
+        members = new Orswot(config.getAddress());
+        lifecycleSubscribers = new ArrayList<>(1);
         peerStateMap = new ConcurrentHashMap<>();
-    }
-
-    //TODO: when size of membership changes, callback to the Broadcast service (HPV)
-    // so it can adjust it's active/passive view size, ARWL/PRLW, and so on
-
-    public Collection<InetAddress> getPeers()
-    {
-        // TODO: return some immutable list of peers
-        return null;
     }
 
     public String getClientId()
