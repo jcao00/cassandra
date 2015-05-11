@@ -25,7 +25,7 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
     /**
      * A CRDT of the nodes that are in the cluster.
      */
-    private final Orswot<? extends Object> members;
+    private final Orswot<MemberEntry> members;
 
     /**
      * A map to hold the known state of each of the nodes in the cluster.
@@ -100,5 +100,15 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
     public void processPushPull(Object t) throws IOException
     {
 
+    }
+
+    static class MemberEntry
+    {
+        final InetAddress address;
+
+        MemberEntry(InetAddress address)
+        {
+            this.address = address;
+        }
     }
 }
