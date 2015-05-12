@@ -9,13 +9,25 @@ import org.apache.cassandra.gms.VersionedValue;
 
 public class PeerState
 {
-    final Map<ApplicationState, VersionedValue> applicationStates;
+    // TODO: fix the type of the value
+    final Map<ApplicationState, Integer> applicationStates;
+    final long generation;
 
+    // TODO: not sure this belongs here
     private volatile boolean isAlive;
 
-    public PeerState()
+    public PeerState(long generation)
     {
+        this.generation = generation;
         applicationStates = new NonBlockingHashMap<>();
+        isAlive = true;
+    }
+
+    public PeerState(long generation, Map<ApplicationState, Integer> states)
+    {
+        this.generation = generation;
+        applicationStates = new NonBlockingHashMap<>();
+        applicationStates.putAll(states);
         isAlive = true;
     }
 }

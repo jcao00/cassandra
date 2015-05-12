@@ -1,7 +1,7 @@
 package org.apache.cassandra.gms2.gossip;
 
 /**
- * Interface for systems responsible for sending messages in an epidemic manner (a/k/a gossip).
+ * Interface for systems responsible for broadcasting messages in an epidemic manner (a/k/a gossip).
  */
 public interface GossipBroadcaster
 {

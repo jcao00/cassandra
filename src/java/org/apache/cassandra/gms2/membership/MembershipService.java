@@ -6,18 +6,27 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
+import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
+import org.apache.cassandra.gms2.membership.messages.PeerStateMessage;
 
 /**
  * A cluster membership service for cassandra.
+ *
+ * The membership service communicates with peers with two types of messages: one for cluster membership, and another
+ * for the state of the peers in the cluster. The cluster membership messages are part of a CRDT representing what nodes
+ * are in the cluster, while the peer state messages pass any changes in a node's state (status, DC, rack, load, and so on).
  */
 public class MembershipService implements BroadcastClient, AntiEntropyClient
 {
     private static final String ID = "membership_svc";
+    private static final String MSG_ID_PREFIX_CLUSTER_MEMBERSHIP = "CM_";
+    private static final String MSG_ID_PREFIX_PEER_STATE = "PS_";
 
     private final GossipBroadcaster broadcaster;
     private final MembershipConfig config;
@@ -30,7 +39,7 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
     /**
      * A map to hold the known state of each of the nodes in the cluster.
      */
-    private final Map<InetAddress, PeerState> peerStateMap;
+    private final ConcurrentMap<InetAddress, PeerState> peerStateMap;
 
     private final List<IEndpointStateChangeSubscriber> lifecycleSubscribers;
 
@@ -50,7 +59,72 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
 
     public boolean receiveBroadcast(Object messageId, Object message) throws IOException
     {
+        String msgId = messageId.toString();
+        if (msgId.startsWith(MSG_ID_PREFIX_CLUSTER_MEMBERSHIP))
+            return handleClusterMembershipMessage(msgId, message);
+        else
+            return handlePeerStateMessage(msgId, message);
+    }
+
+    boolean handleClusterMembershipMessage(String msgId, Object message)
+    {
         return true;
+    }
+
+    boolean handlePeerStateMessage(String msgId, Object message)
+    {
+        // msgId format = prefix + addr + generation + version
+
+        PeerStateMessage peerStateMessage = (PeerStateMessage)message;
+        PeerState peerState = peerStateMap.get(peerStateMessage.getAddress());
+        if (peerState == null)
+        {
+            peerState = new PeerState(peerStateMessage.getGeneration(), peerStateMessage.getAppStates());
+            PeerState existing = peerStateMap.putIfAbsent(peerStateMessage.getAddress(), peerState);
+            if (existing == null)
+                return true;
+
+            return mergePeerState(existing, peerStateMessage);
+        }
+        else
+        {
+            return mergePeerState(peerState, peerStateMessage);
+        }
+    }
+
+    private boolean mergePeerState(PeerState peerState, PeerStateMessage peerStateMessage)
+    {
+        // we have a newer generation, thus we must have more recent information
+        if (peerState.generation > peerStateMessage.getGeneration())
+            return false;
+
+        // we have an older generation, thus we are out of date
+        if (peerState.generation < peerStateMessage.getGeneration())
+        {
+            // TODO: introduce atomic reference around the PeerState in the map, to be really thread safe?
+            peerStateMap.put(peerStateMessage.getAddress(), new PeerState(peerStateMessage.getGeneration(), peerStateMessage.getAppStates()));
+            // TODO: invoke subscribers?
+            return true;
+        }
+
+        // if we got here, the generations are the same, so we have to merge state by state
+        boolean newData = true;  // TODO: this is probably totally wrong
+        for (Map.Entry<ApplicationState, Integer> state : peerStateMessage.getAppStates().entrySet())
+        {
+            Integer version = peerState.applicationStates.get(state.getKey());
+            if (version == null || version.intValue() < state.getValue())
+            {
+                peerState.applicationStates.put(state.getKey(), version);
+                newData |= true;
+                // TODO: invoke subscribers?
+            }
+            else
+            {
+                newData |= false;
+            }
+        }
+
+        return newData;
     }
 
     public boolean hasReceivedBroadcast(Object messageId)
