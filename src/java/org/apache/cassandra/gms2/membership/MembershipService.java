@@ -13,6 +13,7 @@ import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
 import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
+import org.apache.cassandra.gms2.membership.messages.ClusterMembershipMessage;
 import org.apache.cassandra.gms2.membership.messages.PeerStateMessage;
 
 /**
@@ -68,12 +69,19 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
 
     boolean handleClusterMembershipMessage(String msgId, Object message)
     {
+        ClusterMembershipMessage clusterMembershipMessage = (ClusterMembershipMessage)message;
+
+        // determine if this is an add or remove
+
+        // check clock
+
+
         return true;
     }
 
     boolean handlePeerStateMessage(String msgId, Object message)
     {
-        // msgId format = prefix + addr + generation + version
+        // msgId format = prefix + addr + generation + highest version
 
         PeerStateMessage peerStateMessage = (PeerStateMessage)message;
         PeerState peerState = peerStateMap.get(peerStateMessage.getAddress());
@@ -108,19 +116,19 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         }
 
         // if we got here, the generations are the same, so we have to merge state by state
-        boolean newData = true;  // TODO: this is probably totally wrong
+        boolean newData = true;
         for (Map.Entry<ApplicationState, Integer> state : peerStateMessage.getAppStates().entrySet())
         {
             Integer version = peerState.applicationStates.get(state.getKey());
             if (version == null || version.intValue() < state.getValue())
             {
                 peerState.applicationStates.put(state.getKey(), version);
-                newData |= true;
+                newData &= true;
                 // TODO: invoke subscribers?
             }
             else
             {
-                newData |= false;
+                newData &= false;
             }
         }
 
