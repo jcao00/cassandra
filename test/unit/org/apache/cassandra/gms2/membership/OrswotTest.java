@@ -151,4 +151,39 @@ public class OrswotTest
         Assert.assertTrue(clock.containsKey(localAddr));
         Assert.assertEquals(1, clock.get(localAddr).intValue());
     }
+
+    @Test
+    public void remove_EmptySet()
+    {
+        Assert.assertNull(orswot.remove(addr2));
+    }
+
+    @Test
+    public void remove_MultiElementSet()
+    {
+        OrswotClock<InetAddress> addr1Clock = orswot.add(addr1, localAddr);
+        OrswotClock<InetAddress> addr2Clock = orswot.add(addr2, remoteSeed);
+        OrswotClock<InetAddress> addr3Clock = orswot.add(addr3, remoteSeed);
+
+        Orswot.SetAndClock<InetAddress, InetAddress> stateBeforeRemove = orswot.getCurrentState();
+        Assert.assertEquals(3, stateBeforeRemove.elements.size());
+
+        // remove an element
+        Assert.assertEquals(addr2Clock, orswot.remove(addr2));
+        Orswot.SetAndClock<InetAddress, InetAddress> stateAfterRemove = orswot.getCurrentState();
+        Assert.assertEquals(2, stateAfterRemove.elements.size());
+        Assert.assertEquals(stateBeforeRemove.clock, stateAfterRemove.clock);
+
+        // remove another element
+        Assert.assertEquals(addr1Clock, orswot.remove(addr1));
+        stateAfterRemove = orswot.getCurrentState();
+        Assert.assertEquals(1, stateAfterRemove.elements.size());
+        Assert.assertEquals(stateBeforeRemove.clock, stateAfterRemove.clock);
+
+        // remove last element
+        Assert.assertEquals(addr3Clock, orswot.remove(addr3));
+        stateAfterRemove = orswot.getCurrentState();
+        Assert.assertEquals(0, stateAfterRemove.elements.size());
+        Assert.assertEquals(stateBeforeRemove.clock, stateAfterRemove.clock);
+    }
 }

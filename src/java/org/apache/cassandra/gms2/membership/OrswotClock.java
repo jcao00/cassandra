@@ -97,4 +97,14 @@ public class OrswotClock<A>
     {
         return clock;
     }
+
+    public boolean equals(Object o)
+    {
+        if (o == null || !(o instanceof OrswotClock))
+            return false;
+        if (o == this)
+            return true;
+        OrswotClock<A> orswotClock = (OrswotClock<A>)o;
+        return clock.equals(orswotClock.clock);
+    }
 }

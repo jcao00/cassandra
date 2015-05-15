@@ -47,13 +47,13 @@ public class Orswot<T, A>
      *
      * @param t The element to add.
      */
-    public void add(T t)
+    public OrswotClock<A> add(T t)
     {
-        add(t, localAddr);
+        return add(t, localAddr);
     }
 
     @VisibleForTesting
-    void add(T t, A a)
+    OrswotClock<A> add(T t, A a)
     {
         // perform an atomic swap of the wrapper (which contains the clock and the set)
         SetAndClock<T, A> current, next;
@@ -71,43 +71,71 @@ public class Orswot<T, A>
 
             next = new SetAndClock<>(nextClock, nextSet);
         } while (!wrapper.compareAndSet(current, next));
+
+        return next.clock;
     }
 
-    /**
-     * Receive an update to the orswot that occurred on another node.
-     */
-    public void update()
+    public void applyAdd(T t, OrswotClock<A> clock)
     {
-        // need updated master clock, affected node, node's new dot/tag (? - should it be the same as updated master?)
-        // node addr that did updating
+        OrswotClock<A> existingClock = getClock(t);
+        if (existingClock == null)
+        {
+            // add to TaggedElements, run like hell
+        }
+        else
+        {
+            //
+        }
+
+    }
+
+    public void applyRemove(T t, OrswotClock<A> clock)
+    {
+        OrswotClock<A> existingClock = getClock(t);
+        if (clock.descends(existingClock))
+        {
+            // hooray - we can safely delete this fucker
+
+        }
+        else
+        {
+            // TODO: stash into deferred deletes bucket
+        }
+    }
+
+    public OrswotClock<A> getClock(T t)
+    {
+        SetAndClock<T, A> current = wrapper.get();
+        TaggedElement<T, A> taggedElement = findElement(t, current.elements);
+        return taggedElement != null ? taggedElement.clock : null;
     }
 
     /**
-     * Remove an element from the set. If the element is already in the set, the clock will *not* be incremented,
-     * as per the rule of 'add-wins' ORSWOT.
+     * Remove an element from the set.
      * Called when this node is the coordinator for the update, not a downstream recipient.
-     *
-     * @param element The element to remove from the set.
-     * @return <tt>true</tt> if this set contained the specified element.
+     * If the target is not a member of the Orswot, returns null. (NOTE: we can revisit this later)
      */
-    public boolean remove(T element)
+    public OrswotClock<A> remove(T t)
     {
-        // perform an atomic swap of the wrapper (which contains the clock and the set)
-        SetAndClock orig, next;
+        OrswotClock<A> elementClock;
+        SetAndClock<T, A> current, next;
         do
         {
-            orig = wrapper.get();
-            TaggedElement<T, A> taggedElement = findElement(element, orig.elements);
+            current = wrapper.get();
+            TaggedElement<T, A> taggedElement = findElement(t, current.elements);
+
+            // if we don't know about the target, just bail
             if (taggedElement == null)
-                return false;
+                return null;
+            elementClock = taggedElement.clock;
 
-            HashSet<TaggedElement<T, A>> nextSet = orig.elements;
-            nextSet = new HashSet<>(nextSet);
-            nextSet.remove(element);
-            next = new SetAndClock(orig.clock, nextSet);
-        } while (!wrapper.compareAndSet(orig, next));
+            // see comment in add() about the use of HashSet
+            HashSet<TaggedElement<T, A>> nextSet = new HashSet<>(current.elements);
+            nextSet.remove(taggedElement);
+            next = new SetAndClock(current.clock, nextSet);
+        } while (!wrapper.compareAndSet(current, next));
 
-        return true;
+        return elementClock;
     }
 
     /**

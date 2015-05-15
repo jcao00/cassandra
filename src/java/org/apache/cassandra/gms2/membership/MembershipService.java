@@ -17,7 +17,6 @@ import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
 import org.apache.cassandra.gms2.membership.messages.ClusterMembershipMessage;
 import org.apache.cassandra.gms2.membership.messages.PeerStateMessage;
-import org.hyperic.sigar.Mem;
 
 /**
  * A cluster membership service for cassandra.
