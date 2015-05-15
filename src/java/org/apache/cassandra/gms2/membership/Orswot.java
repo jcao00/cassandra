@@ -103,6 +103,13 @@ public class Orswot<T, A>
         }
     }
 
+    /**
+     * Reteive the logical clock for the given parameter. If present the clock will reflect the last time
+     * the element was added to the orswot. (Remember, on adds of existing elements, we update the clock to the current 'time').
+     *
+     * @param t The element to get the clock for.
+     * @return Clock of the element if it is present in the orswot; else, null.
+     */
     public OrswotClock<A> getClock(T t)
     {
         SetAndClock<T, A> current = wrapper.get();
@@ -155,26 +162,6 @@ public class Orswot<T, A>
         return null;
     }
 
-    public Orswot<T, A> merge(Orswot<T, A> orswot)
-    {
-        SetAndClock<T, A> localWrapper = wrapper.get();
-        Iterable<TaggedElement<T, A>> intersection = Sets.intersection(localWrapper.elements, orswot.getElements());
-
-
-
-
-        return null;
-    }
-
-    /**
-     * test that this set is in the other's semilattice
-     */
-    public boolean compare(Orswot<T, A> orswot)
-    {
-        //TODO: implement me
-        return false;
-    }
-
     public Set<TaggedElement<T, A>> getElements()
     {
         return wrapper.get().elements;
@@ -191,6 +178,12 @@ public class Orswot<T, A>
         return wrapper.get();
     }
 
+    /**
+     * A wrapper class class that holds a state of the orswot at a given moment
+     *
+     * @param <T> The type to store in the ORSWOT.
+     * @param <A> The type of the actors of the ORSWOT
+     */
     static class SetAndClock<T, A>
     {
         final HashSet<TaggedElement<T, A>> elements;
@@ -212,7 +205,8 @@ public class Orswot<T, A>
     /**
      * Capture the 'dot' associated with each specific element in the ORSWOT when it is added.
      * Note that elements in the ORSWOT are different than the actors who participate in modifying the ORSWOT.
-     * @param <T>
+     *
+     * @param <T> The type to store in the ORSWOT.
      */
     static class TaggedElement<T, A>
     {
