@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import com.google.common.base.Objects;
+
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms2.gossip.BroadcastClient;
@@ -15,6 +17,7 @@ import org.apache.cassandra.gms2.gossip.GossipBroadcaster;
 import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
 import org.apache.cassandra.gms2.membership.messages.ClusterMembershipMessage;
 import org.apache.cassandra.gms2.membership.messages.PeerStateMessage;
+import org.hyperic.sigar.Mem;
 
 /**
  * A cluster membership service for cassandra.
@@ -35,7 +38,7 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
     /**
      * A CRDT of the nodes that are in the cluster.
      */
-    private final Orswot<MemberEntry> members;
+    private final Orswot<MemberEntry, InetAddress> members;
 
     /**
      * A map to hold the known state of each of the nodes in the cluster.
@@ -62,16 +65,15 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
     {
         String msgId = messageId.toString();
         if (msgId.startsWith(MSG_ID_PREFIX_CLUSTER_MEMBERSHIP))
-            return handleClusterMembershipMessage(msgId, message);
+            return handleClusterMembershipMessage(msgId, (ClusterMembershipMessage)message);
         else
-            return handlePeerStateMessage(msgId, message);
+            return handlePeerStateMessage(msgId, (PeerStateMessage)message);
     }
 
-    boolean handleClusterMembershipMessage(String msgId, Object message)
+    boolean handleClusterMembershipMessage(String msgId, ClusterMembershipMessage message)
     {
-        ClusterMembershipMessage clusterMembershipMessage = (ClusterMembershipMessage)message;
-
         // determine if this is an add or remove
+        members.add(new MemberEntry(message.getAddress()));
 
         // check clock
 
@@ -79,11 +81,9 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         return true;
     }
 
-    boolean handlePeerStateMessage(String msgId, Object message)
+    boolean handlePeerStateMessage(String msgId, PeerStateMessage peerStateMessage)
     {
         // msgId format = prefix + addr + generation + highest version
-
-        PeerStateMessage peerStateMessage = (PeerStateMessage)message;
         PeerState peerState = peerStateMap.get(peerStateMessage.getAddress());
         if (peerState == null)
         {
@@ -191,6 +191,26 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         MemberEntry(InetAddress address)
         {
             this.address = address;
+        }
+
+        public boolean equals(Object o)
+        {
+            if (o == null || !(o instanceof MemberEntry))
+                return false;
+            if (o == this)
+                return true;
+            MemberEntry entry = (MemberEntry)o;
+            return address.equals(entry);
+        }
+
+        public int hashCode()
+        {
+            return Objects.hashCode(address);
+        }
+
+        public String toString()
+        {
+            return address.toString();
         }
     }
 }

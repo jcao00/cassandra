@@ -1,9 +1,8 @@
 package org.apache.cassandra.gms2.membership;
 
-import java.net.InetAddress;
-import java.util.HashMap;
 import java.util.Map;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 
 /**
@@ -15,40 +14,87 @@ import com.google.common.collect.ImmutableMap;
  * Should be used like an immutable clock
  *
  * TODO:JEB think about long-term garbage collection from the clock, as seeds come and go from the cluster
+ *
+ * @param <A> The type of the actors of the ORSWOT
  */
-public class OrswotClock
+public class OrswotClock<A>
 {
-    private final Map<InetAddress, Integer> clock;
+    private final Map<A, Integer> clock;
 
-    public OrswotClock(InetAddress addr)
+    public OrswotClock()
     {
-        clock = ImmutableMap.of(addr, new Integer(0));
+        this(ImmutableMap.<A, Integer>builder().build());
     }
 
-    private OrswotClock(Map<InetAddress, Integer> clock)
+    private OrswotClock(Map<A, Integer> clock)
     {
         this.clock = clock;
     }
 
-    public OrswotClock incrementCounter(InetAddress addr)
+    public OrswotClock<A> increment(A a)
     {
-        Map<InetAddress, Integer> clockMap = new HashMap<>(clock);
-        Integer i = clockMap.get(addr);
-        if (i != null)
-            clockMap.put(addr, new Integer(i + 1));
-        else
-            clockMap.put(addr, new Integer(0));
-
-        // not sure I like the copyOf() here, especially since we just copied the entire map a few lines up
-        return new OrswotClock(ImmutableMap.copyOf(clockMap));
+        Integer i = clock.get(a);
+        return new OrswotClock<>(addOrReplace(a, (i == null ? 1 : i + 1)));
     }
 
-    public Integer getClockValue(InetAddress address)
+    @VisibleForTesting
+    Map<A, Integer> addOrReplace(A a, Integer counter)
     {
-        Integer i = clock.get(address);
-        if (i != null)
-            return i.intValue();
-        clock.put(address, new Integer(0));
-        return 0;
+        ImmutableMap.Builder<A, Integer> builder = ImmutableMap.<A, Integer>builder();
+        builder.put(a, counter);
+
+        for (Map.Entry<A, Integer> entry : clock.entrySet())
+        {
+            if (!a.equals(entry.getKey()))
+                builder.put(entry);
+        }
+
+        return builder.build();
+    }
+
+    public boolean contains(A a)
+    {
+        return clock.containsKey(a);
+    }
+
+    public Integer getCounter(A a)
+    {
+        return clock.get(a);
+    }
+
+    /**
+     * Test is this .....
+     *
+     * Note: a clock can descend itself, so be careful how the return value is handled
+     */
+    public boolean descends(OrswotClock<A> clock)
+    {
+        // TODO: implement me
+        return false;
+    }
+
+    /**
+     * Compare this clock to see if it is "greater than" {@code clock}.
+     */
+    public boolean dominates(OrswotClock<A> clock)
+    {
+        return descends(clock) && !clock.descends(this);
+    }
+
+    public OrswotClock merge(OrswotClock<A> clock)
+    {
+        // TODO: implement me
+        return null;
+    }
+
+    public String toString()
+    {
+        return clock.toString();
+    }
+
+    @VisibleForTesting
+    Map<A, Integer> getClock()
+    {
+        return clock;
     }
 }

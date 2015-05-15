@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.apache.cassandra.gms.ApplicationState;
 
+// TODO: delete and merge w/ClusterMemberhsipMessage
 public class PeerStateMessage
 {
     private final InetAddress address;

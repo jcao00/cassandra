@@ -1,10 +1,10 @@
 package org.apache.cassandra.gms2.membership;
 
-import java.net.InetAddress;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Sets;
 
 /**
@@ -21,16 +21,23 @@ import com.google.common.collect.Sets;
  * the set, the logical clock is incremented; when the same element is removed, the clock remains unchanged. Thus,
  * when two nodes perform conflicting add/remove operations, the one that performed the add increment the clock,
  * and thus will be the 'winner' when the replicas converge.
+ *
+ * @param <T> The type to store in the ORSWOT. <b>MUST</b> implement proper Object#equals() and Object#hashCode() methods.
+ * @param <A> The type of the actors of the ORSWOT
  */
-public class Orswot<T>
+public class Orswot<T, A>
 {
-    private final InetAddress localAddr;
-    private final AtomicReference<SetAndClock<T>> wrapper;
+    /**
+     * Address of local machine. This is required when this node makes changes to the Orswot that will then be
+     * communicated to peers.
+     */
+    private final A localAddr;
+    private final AtomicReference<SetAndClock<T, A>> wrapper;
 
-    public Orswot(InetAddress localAddr)
+    public Orswot(A localAddr)
     {
         this.localAddr = localAddr;
-        wrapper = new AtomicReference<>(new SetAndClock<>(new OrswotClock(localAddr), new HashSet<TaggedElement<T>>()));
+        wrapper = new AtomicReference<>(new SetAndClock<>(new OrswotClock<>(), new HashSet<TaggedElement<T, A>>()));
     }
 
     /**
@@ -38,24 +45,32 @@ public class Orswot<T>
      * as per the rules of 'add-wins' ORSWOT.
      * Called when this node is the coordinator for the update, not a downstream recipient.
      *
-     * @param element The element to add to the set.
+     * @param t The element to add.
      */
-    public void add(T element)
+    public void add(T t)
+    {
+        add(t, localAddr);
+    }
+
+    @VisibleForTesting
+    void add(T t, A a)
     {
         // perform an atomic swap of the wrapper (which contains the clock and the set)
-        SetAndClock orig, next;
+        SetAndClock<T, A> current, next;
         do
         {
-            orig = wrapper.get();
-            HashSet<TaggedElement<T>> nextSet = orig.elements;
-            OrswotClock nextClock = orig.clock.incrementCounter(localAddr);
-            if (!nextSet.contains(element))
-            {
-                nextSet = new HashSet<>(nextSet);
-                nextSet.add(new TaggedElement(element, nextClock.getClockValue(localAddr)));
-            }
-            next = new SetAndClock(nextClock, nextSet);
-        } while (!wrapper.compareAndSet(orig, next));
+            current = wrapper.get();
+            OrswotClock<A> nextClock = current.clock.increment(a);
+            HashSet<TaggedElement<T, A>> nextSet = new HashSet<>(current.elements);
+
+            // this is a little funky, as HashSet.add() does *not* remove an existing entry.
+            // so we have to remove it first. Wondering if SetAndClock should just use a map instead of a set...
+            TaggedElement<T, A> taggedElement = new TaggedElement<>(t, nextClock);
+            nextSet.remove(taggedElement);
+            nextSet.add(taggedElement);
+
+            next = new SetAndClock<>(nextClock, nextSet);
+        } while (!wrapper.compareAndSet(current, next));
     }
 
     /**
@@ -73,11 +88,11 @@ public class Orswot<T>
         do
         {
             orig = wrapper.get();
-            TaggedElement<T> taggedElement = findElement(element, orig.elements);
+            TaggedElement<T, A> taggedElement = findElement(element, orig.elements);
             if (taggedElement == null)
                 return false;
 
-            HashSet<TaggedElement<T>> nextSet = orig.elements;
+            HashSet<TaggedElement<T, A>> nextSet = orig.elements;
             nextSet = new HashSet<>(nextSet);
             nextSet.remove(element);
             next = new SetAndClock(orig.clock, nextSet);
@@ -93,9 +108,9 @@ public class Orswot<T>
      * @param set The set to search
      * @return first matching element, if any.
      */
-    private TaggedElement<T> findElement(T t, Set<TaggedElement<T>> set)
+    private TaggedElement<T, A> findElement(T t, Set<TaggedElement<T, A>> set)
     {
-        for (TaggedElement<T> element : set)
+        for (TaggedElement<T, A> element : set)
         {
             if (t.equals(element.t))
                 return element;
@@ -103,10 +118,10 @@ public class Orswot<T>
         return null;
     }
 
-    public Orswot<T> merge(Orswot<T> orswot)
+    public Orswot<T, A> merge(Orswot<T, A> orswot)
     {
-        SetAndClock<T> localWrapper = wrapper.get();
-        Iterable<TaggedElement<T>> intersection = Sets.intersection(localWrapper.elements, orswot.getElements());
+        SetAndClock<T, A> localWrapper = wrapper.get();
+        Iterable<TaggedElement<T, A>> intersection = Sets.intersection(localWrapper.elements, orswot.getElements());
 
 
 
@@ -117,35 +132,57 @@ public class Orswot<T>
     /**
      * test that this set is in the other's semilattice
      */
-    public boolean compare(Orswot<T> orswot)
+    public boolean compare(Orswot<T, A> orswot)
     {
         //TODO: implement me
         return false;
     }
 
-    public Set<TaggedElement<T>> getElements()
+    public Set<TaggedElement<T, A>> getElements()
     {
         return wrapper.get().elements;
     }
 
-    private static class SetAndClock<T>
+    public String toString()
     {
-        private final HashSet<TaggedElement<T>> elements;
-        private final OrswotClock clock;
+        return wrapper.get().toString();
+    }
 
-        private SetAndClock(OrswotClock clock, HashSet<TaggedElement<T>> elements)
+    @VisibleForTesting
+    SetAndClock<T, A> getCurrentState()
+    {
+        return wrapper.get();
+    }
+
+    static class SetAndClock<T, A>
+    {
+        final HashSet<TaggedElement<T, A>> elements;
+        final OrswotClock<A> clock;
+
+        private SetAndClock(OrswotClock<A> clock, HashSet<TaggedElement<T, A>> elements)
         {
             this.elements = elements;
             this.clock = clock;
         }
+
+        public String toString()
+        {
+            return "Orswort state: master clock = " + clock.toString() +
+                   ", tagged entries = " + elements.toString();
+        }
     }
 
-    private static class TaggedElement<T>
+    /**
+     * Capture the 'dot' associated with each specific element in the ORSWOT when it is added.
+     * Note that elements in the ORSWOT are different than the actors who participate in modifying the ORSWOT.
+     * @param <T>
+     */
+    static class TaggedElement<T, A>
     {
-        private final T t;
-        private final int clock;
+        final T t;
+        final OrswotClock<A> clock;
 
-        private TaggedElement(T t, int clock)
+        private TaggedElement(T t, OrswotClock<A> clock)
         {
             this.t = t;
             this.clock = clock;
@@ -161,6 +198,11 @@ public class Orswot<T>
             if (o == null || !(o instanceof TaggedElement))
                 return false;
             return o == this || t.equals(((TaggedElement)o).t);
+        }
+
+        public String toString()
+        {
+            return t.toString() + " : " + clock.toString();
         }
     }
 }
