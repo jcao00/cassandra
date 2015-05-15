@@ -186,8 +186,15 @@ public class Orswot<T, A>
      */
     static class SetAndClock<T, A>
     {
-        final HashSet<TaggedElement<T, A>> elements;
+        /**
+         * 'master' clock as of the last modification.
+         */
         final OrswotClock<A> clock;
+
+        /**
+         * Collection of the actual elements stored within the orswot.
+         */
+        final HashSet<TaggedElement<T, A>> elements;
 
         private SetAndClock(OrswotClock<A> clock, HashSet<TaggedElement<T, A>> elements)
         {
@@ -210,7 +217,14 @@ public class Orswot<T, A>
      */
     static class TaggedElement<T, A>
     {
+        /**
+         * The element that's actually being stored.
+         */
         final T t;
+
+        /**
+         * A logical timestamp of when the element was added (or re-added) to the orswot.
+         */
         final OrswotClock<A> clock;
 
         private TaggedElement(T t, OrswotClock<A> clock)
