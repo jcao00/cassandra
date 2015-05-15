@@ -80,7 +80,6 @@ public class OrswotTest
         Assert.assertTrue(masterClock.containsKey(localAddr));
         Assert.assertEquals(2, masterClock.get(localAddr).intValue());
         Assert.assertEquals(1, masterClock.get(remoteSeed).intValue());
-        System.out.println(currentState);
     }
 
     @Test
@@ -112,5 +111,44 @@ public class OrswotTest
         Assert.assertEquals(1, masterClock.size());
         Assert.assertTrue(masterClock.containsKey(localAddr));
         Assert.assertEquals(3, masterClock.get(localAddr).intValue());
+    }
+
+    @Test
+    public void add_MultipleNodes_DifferentSeeds()
+    {
+        orswot.add(addr1, localAddr);
+        orswot.add(addr2, remoteSeed);
+        orswot.add(addr3, remoteSeed);
+        Orswot.SetAndClock<InetAddress, InetAddress> currentState = orswot.getCurrentState();
+
+        // check the master clock for the entire set has both updating nodes in it
+        Map<InetAddress, Integer> masterClock = currentState.clock.getClock();
+        Assert.assertEquals(2, masterClock.size());
+        Assert.assertEquals(1, masterClock.get(localAddr).intValue());
+        Assert.assertEquals(2, masterClock.get(remoteSeed).intValue());
+
+
+        // make sure each node is in orswot, and counter is as each step
+        // make sure master clock = 3 for localAddr
+
+        Map<InetAddress, Integer> clock = getElement(currentState, addr1).clock.getClock();
+        Assert.assertEquals(1, clock.size());
+        Assert.assertTrue(clock.containsKey(localAddr));
+        Assert.assertFalse(clock.containsKey(remoteSeed));
+        Assert.assertEquals(1, clock.get(localAddr).intValue());
+
+        clock = getElement(currentState, addr2).clock.getClock();
+        Assert.assertEquals(2, clock.size());
+        Assert.assertTrue(clock.containsKey(remoteSeed));
+        Assert.assertEquals(1, clock.get(remoteSeed).intValue());
+        Assert.assertTrue(clock.containsKey(localAddr));
+        Assert.assertEquals(1, clock.get(localAddr).intValue());
+
+        clock = getElement(currentState, addr3).clock.getClock();
+        Assert.assertEquals(2, clock.size());
+        Assert.assertTrue(clock.containsKey(localAddr));
+        Assert.assertEquals(2, clock.get(remoteSeed).intValue());
+        Assert.assertTrue(clock.containsKey(localAddr));
+        Assert.assertEquals(1, clock.get(localAddr).intValue());
     }
 }

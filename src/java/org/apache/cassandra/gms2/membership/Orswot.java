@@ -74,6 +74,15 @@ public class Orswot<T, A>
     }
 
     /**
+     * Receive an update to the orswot that occurred on another node.
+     */
+    public void update()
+    {
+        // need updated master clock, affected node, node's new dot/tag (? - should it be the same as updated master?)
+        // node addr that did updating
+    }
+
+    /**
      * Remove an element from the set. If the element is already in the set, the clock will *not* be incremented,
      * as per the rule of 'add-wins' ORSWOT.
      * Called when this node is the coordinator for the update, not a downstream recipient.
