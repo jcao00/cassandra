@@ -75,7 +75,7 @@ public class Orswot<T, A>
         return next.clock;
     }
 
-    public void applyAdd(T t, OrswotClock<A> clock)
+    public boolean applyAdd(T t, OrswotClock<A> clock)
     {
         OrswotClock<A> existingClock = getClock(t);
         if (existingClock == null)
@@ -87,9 +87,10 @@ public class Orswot<T, A>
             //
         }
 
+        return false;
     }
 
-    public void applyRemove(T t, OrswotClock<A> clock)
+    public boolean applyRemove(T t, OrswotClock<A> clock)
     {
         OrswotClock<A> existingClock = getClock(t);
         if (clock.descends(existingClock))
@@ -101,6 +102,8 @@ public class Orswot<T, A>
         {
             // TODO: stash into deferred deletes bucket
         }
+
+        return false;
     }
 
     /**

@@ -18,6 +18,8 @@ import org.apache.cassandra.gms2.gossip.antientropy.AntiEntropyClient;
 import org.apache.cassandra.gms2.membership.messages.ClusterMembershipMessage;
 import org.apache.cassandra.gms2.membership.messages.PeerStateMessage;
 
+import static org.apache.cassandra.gms2.membership.messages.ClusterMembershipMessage.Action.ADD;
+
 /**
  * A cluster membership service for cassandra.
  *
@@ -55,13 +57,44 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         peerStateMap = new ConcurrentHashMap<>();
     }
 
-    public String getClientId()
+    /**
+     * Process an event directly from a peer that wants to join/rejoin/leave/be kicked out of the cluster.
+     * Typically, these messages are processed by a seed node, but the receiving node does not need to think itself
+     * is a seed node.
+     *
+     * @param message
+     */
+    public void handle(ClusterMembershipMessage message, InetAddress sender)
     {
-        return ID;
+        switch (message.getAction())
+        {
+            case ADD:       handleAdd(message, sender); break;
+            case REMOVE:    handleRemove(message, sender); break;
+            default:
+                throw new IllegalArgumentException("unknown action type: " + message.getAction());
+        }
+    }
+
+    void handleAdd(ClusterMembershipMessage message, InetAddress sender)
+    {
+        OrswotClock<InetAddress> clock = members.add(new MemberEntry(message.getAddress()));
+        // TODO: add metatdata to map
+        // TODO: broadcast add msg
+
+        // TODO: send response back to sender (with full clock and metadata)
+    }
+
+    void handleRemove(ClusterMembershipMessage message, InetAddress sender)
+    {
+        members.remove(new MemberEntry(message.getAddress()));
+        // TODO: broadcast remove msg
+
+        // TODO: send response back to sender ??
     }
 
     public boolean receiveBroadcast(Object messageId, Object message) throws IOException
     {
+        // TODO: replace this string checking horse shit, and add some 'Type' to the message
         String msgId = messageId.toString();
         if (msgId.startsWith(MSG_ID_PREFIX_CLUSTER_MEMBERSHIP))
             return handleClusterMembershipMessage(msgId, (ClusterMembershipMessage)message);
@@ -71,12 +104,28 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
 
     boolean handleClusterMembershipMessage(String msgId, ClusterMembershipMessage message)
     {
-        // determine if this is an add or remove
-        members.add(new MemberEntry(message.getAddress()));
+        switch (message.getAction())
+        {
+            case ADD:       return handleBroadcastAdd(message);
+            case REMOVE:    return handleBroadcastRemove(message);
+            default:
+                throw new IllegalArgumentException("unknown action type: " + message.getAction());
+        }
+    }
 
-        // check clock
+    private boolean handleBroadcastAdd(ClusterMembershipMessage message)
+    {
+        if (!members.applyAdd(new MemberEntry(message.getAddress()), message.getClock()))
+           return false;
+        //TODO: add metatdata to map
+        return true;
+    }
 
-
+    private boolean handleBroadcastRemove(ClusterMembershipMessage message)
+    {
+        if (!members.applyRemove(new MemberEntry(message.getAddress()), message.getClock()))
+            return false;
+        // TODO: remove metatdata - might be a simple map.remove(), but not sure
         return true;
     }
 
@@ -136,7 +185,13 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
 
     public boolean hasReceivedBroadcast(Object messageId)
     {
+        // TODO : implement me
         return false;
+    }
+
+    public String getClientId()
+    {
+        return ID;
     }
 
     /**

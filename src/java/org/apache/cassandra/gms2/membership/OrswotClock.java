@@ -11,7 +11,7 @@ import com.google.common.collect.ImmutableMap;
  * clock based upon the description in the ORSWOT paper, and nothing more general
  * for the time being...
  *
- * Should be used like an immutable clock
+ * Should be used like an immutable clock.
  *
  * TODO:JEB think about long-term garbage collection from the clock, as seeds come and go from the cluster
  *
@@ -74,7 +74,7 @@ public class OrswotClock<A>
     }
 
     /**
-     * Compare this clock to see if it is "greater than" {@code clock}.
+     * Compare this clock to see if it is "greater than" {@code clock}, but not equal
      */
     public boolean dominates(OrswotClock<A> clock)
     {
