@@ -37,7 +37,7 @@ public class Orswot<T, A>
     public Orswot(A localAddr)
     {
         this.localAddr = localAddr;
-        wrapper = new AtomicReference<>(new SetAndClock<>(new OrswotClock<>(), new HashSet<TaggedElement<T, A>>()));
+        wrapper = new AtomicReference<>(new SetAndClock<T, A>(new OrswotClock<>(), new HashSet<TaggedElement<T, A>>()));
     }
 
     /**
