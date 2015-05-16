@@ -54,11 +54,17 @@ public class OrswotClock<A>
         return builder.build();
     }
 
+    /**
+     * Check if the clock contains the given element.
+     */
     public boolean contains(A a)
     {
         return clock.containsKey(a);
     }
 
+    /**
+     * Get the current clock counter for the given element, if it is present.
+     */
     public Integer getCounter(A a)
     {
         return clock.get(a);
@@ -94,6 +100,12 @@ public class OrswotClock<A>
         return descends(clock) && !clock.descends(this);
     }
 
+    /**
+     * Merge two clocks to their least common ancestor
+     *
+     * @param orswotClock the clock to merge with this
+     * @return An immutable, merged clock
+     */
     public OrswotClock merge(OrswotClock<A> orswotClock)
     {
         Map<A, Integer> map = new HashMap<>(clock);
