@@ -2,6 +2,7 @@ package org.apache.cassandra.gms2.membership;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.HashMap;
 import java.util.Map;
 
 import org.junit.Assert;
@@ -185,5 +186,56 @@ public class OrswotTest
         stateAfterRemove = orswot.getCurrentState();
         Assert.assertEquals(0, stateAfterRemove.elements.size());
         Assert.assertEquals(stateBeforeRemove.clock, stateAfterRemove.clock);
+    }
+
+    @Test
+    public void applyAdd_EmptySet()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+
+        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
+
+        Orswot.SetAndClock<InetAddress, InetAddress> currentState = orswot.getCurrentState();
+        Map<InetAddress, Integer> masterClock = currentState.clock.getClock();
+        Assert.assertEquals(1, masterClock.size());
+        Assert.assertTrue(masterClock.containsKey(localAddr));
+        Assert.assertEquals(1, masterClock.get(localAddr).intValue());
+
+        Map<InetAddress, Integer> elementClock = getElement(currentState, addr1).clock.getClock();
+        Assert.assertEquals(1, elementClock.size());
+        Assert.assertTrue(elementClock.containsKey(localAddr));
+        Assert.assertEquals(1, elementClock.get(localAddr).intValue());
+    }
+
+    @Test
+    public void applyAdd_ExistingEntryWithLowerClock()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
+
+
+        OrswotClock<InetAddress> newAdd = orswotClock.increment(localAddr);
+        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
+
+        Orswot.SetAndClock<InetAddress, InetAddress> currentState = orswot.getCurrentState();
+        Map<InetAddress, Integer> masterClock = currentState.clock.getClock();
+        Assert.assertEquals(1, masterClock.size());
+        Assert.assertTrue(masterClock.containsKey(localAddr));
+        Assert.assertEquals(1, masterClock.get(localAddr).intValue());
+
+        Map<InetAddress, Integer> elementClock = getElement(currentState, addr1).clock.getClock();
+        Assert.assertEquals(1, elementClock.size());
+        Assert.assertTrue(elementClock.containsKey(localAddr));
+        Assert.assertEquals(2, elementClock.get(localAddr).intValue());
+    }
+
+//    @Test
+    public void applyAdd_ExistingEntryWithGreaterClock()
+    {
+
     }
 }

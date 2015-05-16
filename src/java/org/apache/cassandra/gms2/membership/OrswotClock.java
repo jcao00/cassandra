@@ -26,7 +26,8 @@ public class OrswotClock<A>
         this(ImmutableMap.<A, Integer>builder().build());
     }
 
-    private OrswotClock(Map<A, Integer> clock)
+    @VisibleForTesting
+    OrswotClock(Map<A, Integer> clock)
     {
         this.clock = clock;
     }
@@ -63,14 +64,25 @@ public class OrswotClock<A>
     }
 
     /**
-     * Test is this .....
+     * Test is this clock is 'greater than or equal to' {@code orswotClock}. This is useful
+     * for discovering if the parameter {@code orswotClock} is an ancestor of this one.
      *
      * Note: a clock can descend itself, so be careful how the return value is handled
      */
-    public boolean descends(OrswotClock<A> clock)
+    public boolean descends(OrswotClock<A> orswotClock)
     {
-        // TODO: implement me
-        return false;
+        // take care of the easy case, everything descends the empty set
+        if (orswotClock.clock.isEmpty())
+            return true;
+
+        // make sure this clock contains all entries from the other clock
+        for (Map.Entry<A, Integer> entry : orswotClock.clock.entrySet())
+        {
+            Integer counter = clock.get(entry.getKey());
+            if (counter == null || counter < entry.getValue())
+                return false;
+        }
+        return true;
     }
 
     /**
@@ -84,7 +96,7 @@ public class OrswotClock<A>
     public OrswotClock merge(OrswotClock<A> clock)
     {
         // TODO: implement me
-        return null;
+        return clock;
     }
 
     public String toString()

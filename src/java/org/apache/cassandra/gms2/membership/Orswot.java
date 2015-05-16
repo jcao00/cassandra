@@ -5,7 +5,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Sets;
 
 /**
  * Implementation of the <a href="http://haslab.uminho.pt/cbm/files/1210.3368v1.pdf">
@@ -75,19 +74,36 @@ public class Orswot<T, A>
         return next.clock;
     }
 
+    /**
+     * Apply an add to the set.
+     *
+     * @param t
+     * @param clock
+     * @return
+     */
     public boolean applyAdd(T t, OrswotClock<A> clock)
     {
-        OrswotClock<A> existingClock = getClock(t);
-        if (existingClock == null)
-        {
-            // add to TaggedElements, run like hell
-        }
-        else
-        {
-            //
-        }
+        // perform an atomic swap of the wrapper (which contains the clock and the set)
+        SetAndClock<T, A> current, next;
+        do {
+            current = wrapper.get();
+            OrswotClock<A> existingClock = getClock(t);
 
-        return false;
+            // if we have an existing clock
+            if (existingClock != null && !existingClock.dominates(clock))
+                return false;
+
+            // TODO: make sure this is the right thing to do with the clock
+            TaggedElement<T, A> taggedElement = new TaggedElement<>(t, clock);
+
+            // see comment in add() about the use of HashSet
+            HashSet<TaggedElement<T, A>> nextSet = new HashSet<>(current.elements);
+            nextSet.remove(taggedElement);
+            nextSet.add(taggedElement);
+            next = new SetAndClock<>(current.clock.merge(clock), nextSet);
+        } while (!wrapper.compareAndSet(current, next));
+
+        return true;
     }
 
     public boolean applyRemove(T t, OrswotClock<A> clock)
