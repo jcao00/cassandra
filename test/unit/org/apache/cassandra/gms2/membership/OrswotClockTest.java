@@ -169,4 +169,73 @@ public class OrswotClockTest
 
         Assert.assertTrue(clock1.dominates(clock2));
     }
+
+    @Test
+    public void merge_EmptyLists()
+    {
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>();
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>();
+        Assert.assertTrue(clock1.merge(clock2).getClock().isEmpty());
+    }
+
+    @Test
+    public void merge_OneEmptyList()
+    {
+        Map<InetAddress, Integer> map = new HashMap<>();
+        map.put(addr, 7);
+        map.put(addr2, 2);
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>(map);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>();
+        OrswotClock<InetAddress> result = clock1.merge(clock2);
+        Assert.assertTrue(result.equals(clock1));
+        Assert.assertFalse(result.equals(clock2));
+    }
+
+    @Test
+    public void merge_TwoDifferentLists()
+    {
+        Map<InetAddress, Integer> map1 = new HashMap<>();
+        map1.put(addr, 7);
+        map1.put(addr2, 2);
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>(map1);
+
+        Map<InetAddress, Integer> map2 = new HashMap<>();
+        map2.put(addr3, 1);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>(map2);
+
+        OrswotClock<InetAddress> result = clock1.merge(clock2);
+        Assert.assertFalse(result.equals(clock1));
+        Assert.assertTrue(result.descends(clock1));
+        Assert.assertFalse(result.equals(clock2));
+        Assert.assertTrue(result.descends(clock2));
+
+        for (Map.Entry<InetAddress, Integer> entry : clock1.getClock().entrySet())
+            Assert.assertEquals(entry.getValue(), result.getCounter(entry.getKey()));
+        for (Map.Entry<InetAddress, Integer> entry : clock2.getClock().entrySet())
+            Assert.assertEquals(entry.getValue(), result.getCounter(entry.getKey()));
+    }
+
+    @Test
+    public void merge_OverlappingLists()
+    {
+        Map<InetAddress, Integer> map1 = new HashMap<>();
+        map1.put(addr, 7);
+        map1.put(addr2, 2);
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>(map1);
+
+        Map<InetAddress, Integer> map2 = new HashMap<>();
+        map2.put(addr, 3);
+        map2.put(addr3, 1);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>(map2);
+
+        OrswotClock<InetAddress> result = clock1.merge(clock2);
+        Assert.assertFalse(result.equals(clock1));
+        Assert.assertTrue(result.descends(clock1));
+        Assert.assertFalse(result.equals(clock2));
+        Assert.assertTrue(result.descends(clock2));
+
+        Assert.assertEquals(7, result.getCounter(addr).intValue());
+        Assert.assertEquals(2, result.getCounter(addr2).intValue());
+        Assert.assertEquals(1, result.getCounter(addr3).intValue());
+    }
 }

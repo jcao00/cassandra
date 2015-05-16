@@ -1,5 +1,6 @@
 package org.apache.cassandra.gms2.membership;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -93,10 +94,23 @@ public class OrswotClock<A>
         return descends(clock) && !clock.descends(this);
     }
 
-    public OrswotClock merge(OrswotClock<A> clock)
+    public OrswotClock merge(OrswotClock<A> orswotClock)
     {
-        // TODO: implement me
-        return clock;
+        Map<A, Integer> map = new HashMap<>(clock);
+        for (Map.Entry<A, Integer> entry : orswotClock.clock.entrySet())
+        {
+            Integer counter = map.get(entry.getKey());
+            if (counter == null)
+                counter = entry.getValue();
+            else
+                counter = counter.intValue() >= entry.getValue().intValue() ? counter : entry.getValue();
+
+            map.put(entry.getKey(), counter);
+        }
+
+        ImmutableMap.Builder<A, Integer> builder = ImmutableMap.<A, Integer>builder();
+        builder.putAll(map);
+        return new OrswotClock<>(builder.build());
     }
 
     public String toString()
