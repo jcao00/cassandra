@@ -97,4 +97,76 @@ public class OrswotClockTest
 
         Assert.assertFalse(clock2.descends(clock1));
     }
+
+    @Test
+    public void dominates_EmptyLists()
+    {
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>();
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>();
+        Assert.assertFalse(clock1.dominates(clock2));
+    }
+
+    @Test
+    public void dominates_EmptyListAndPopulatedOther()
+    {
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>();
+        Map<InetAddress, Integer> otherClock = new HashMap<>();
+        otherClock.put(addr, 5);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>(otherClock);
+        Assert.assertFalse(clock1.dominates(clock2));
+    }
+
+    @Test
+    public void dominates_PopulatedListAndEmptyOther()
+    {
+        Map<InetAddress, Integer> otherClock = new HashMap<>();
+        otherClock.put(addr, 5);
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>(otherClock);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>();
+        Assert.assertTrue(clock1.dominates(clock2));
+    }
+
+    @Test
+    public void dominates_PopulatedTheSame()
+    {
+        Map<InetAddress, Integer> otherClock = new HashMap<>();
+        otherClock.put(addr, 5);
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>(otherClock);
+
+        otherClock = new HashMap<>();
+        otherClock.put(addr, 5);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>(otherClock);
+
+        Assert.assertFalse(clock1.dominates(clock2));
+    }
+
+    @Test
+    public void dominates_PopulatedDifferent_Lower()
+    {
+        Map<InetAddress, Integer> otherClock = new HashMap<>();
+        otherClock.put(addr, 5);
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>(otherClock);
+
+        otherClock = new HashMap<>();
+        otherClock.put(addr, 5);
+        otherClock.put(addr2, 2);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>(otherClock);
+
+        Assert.assertFalse(clock1.dominates(clock2));
+    }
+
+    @Test
+    public void dominates_PopulatedDifferent_Higher()
+    {
+        Map<InetAddress, Integer> otherClock = new HashMap<>();
+        otherClock.put(addr, 7);
+        otherClock.put(addr2, 2);
+        OrswotClock<InetAddress> clock1 = new OrswotClock<>(otherClock);
+
+        otherClock = new HashMap<>();
+        otherClock.put(addr, 5);
+        OrswotClock<InetAddress> clock2 = new OrswotClock<>(otherClock);
+
+        Assert.assertTrue(clock1.dominates(clock2));
+    }
 }
