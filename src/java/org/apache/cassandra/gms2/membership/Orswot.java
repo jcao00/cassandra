@@ -89,8 +89,9 @@ public class Orswot<T, A>
             current = wrapper.get();
             OrswotClock<A> existingClock = getClock(t);
 
-            // if we have an existing clock
-            if (existingClock != null && !existingClock.dominates(clock))
+            // if we have an existing clock, check that the new one descends
+            // TODO: reconfirm this logic of what to do when we get a disjoint or non-dominating clock
+            if (existingClock != null && !clock.dominates(existingClock))
                 return false;
 
             // TODO: make sure this is the right thing to do with the clock

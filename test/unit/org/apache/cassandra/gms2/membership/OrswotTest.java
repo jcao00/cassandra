@@ -217,15 +217,14 @@ public class OrswotTest
         OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
         Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
 
-
-        OrswotClock<InetAddress> newAdd = orswotClock.increment(localAddr);
-        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
+        OrswotClock<InetAddress> incrementedClock = orswotClock.increment(localAddr);
+        Assert.assertTrue(orswot.applyAdd(addr1, incrementedClock));
 
         Orswot.SetAndClock<InetAddress, InetAddress> currentState = orswot.getCurrentState();
         Map<InetAddress, Integer> masterClock = currentState.clock.getClock();
         Assert.assertEquals(1, masterClock.size());
         Assert.assertTrue(masterClock.containsKey(localAddr));
-        Assert.assertEquals(1, masterClock.get(localAddr).intValue());
+        Assert.assertEquals(masterClock.get(localAddr).toString(), 2, masterClock.get(localAddr).intValue());
 
         Map<InetAddress, Integer> elementClock = getElement(currentState, addr1).clock.getClock();
         Assert.assertEquals(1, elementClock.size());
@@ -233,9 +232,66 @@ public class OrswotTest
         Assert.assertEquals(2, elementClock.get(localAddr).intValue());
     }
 
-//    @Test
+    @Test
     public void applyAdd_ExistingEntryWithGreaterClock()
     {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
 
+        clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        orswotClock = new OrswotClock<>(clock);
+        Assert.assertFalse(orswot.applyAdd(addr1, orswotClock));
+        // make sure master clock has not changed
+        Assert.assertEquals(orswotClock, orswot.getCurrentState().clock);
+    }
+
+    @Test
+    public void applyAdd_DisjointClocks()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
+
+        clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        clock.put(remoteSeed, 3);
+        OrswotClock<InetAddress> newClock = new OrswotClock<>(clock);
+        Assert.assertFalse(orswot.applyAdd(addr1, newClock));
+        // make sure master clock has not changed
+        Assert.assertEquals(orswotClock, orswot.getCurrentState().clock);
+    }
+
+    @Test
+    public void applyAdd_ClockWithNewEntry()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
+
+        clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        clock.put(remoteSeed, 1);
+        orswotClock = new OrswotClock<>(clock);
+        Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
+
+        Orswot.SetAndClock<InetAddress, InetAddress> currentState = orswot.getCurrentState();
+        Map<InetAddress, Integer> masterClock = currentState.clock.getClock();
+        Assert.assertEquals(2, masterClock.size());
+        Assert.assertTrue(masterClock.containsKey(localAddr));
+        Assert.assertTrue(masterClock.containsKey(remoteSeed));
+        Assert.assertEquals(masterClock.get(localAddr).toString(), 2, masterClock.get(localAddr).intValue());
+        Assert.assertEquals(masterClock.get(remoteSeed).toString(), 1, masterClock.get(remoteSeed).intValue());
+
+        Map<InetAddress, Integer> elementClock = getElement(currentState, addr1).clock.getClock();
+        Assert.assertEquals(2, elementClock.size());
+        Assert.assertTrue(elementClock.containsKey(localAddr));
+        Assert.assertEquals(2, elementClock.get(localAddr).intValue());
+        Assert.assertTrue(elementClock.containsKey(remoteSeed));
+        Assert.assertEquals(1, elementClock.get(remoteSeed).intValue());
     }
 }
