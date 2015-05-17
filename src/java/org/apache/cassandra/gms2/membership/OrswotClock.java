@@ -106,7 +106,7 @@ public class OrswotClock<A>
      * @param orswotClock the clock to merge with this
      * @return An immutable, merged clock
      */
-    public OrswotClock merge(OrswotClock<A> orswotClock)
+    public OrswotClock<A> merge(OrswotClock<A> orswotClock)
     {
         Map<A, Integer> map = new HashMap<>(clock);
         for (Map.Entry<A, Integer> entry : orswotClock.clock.entrySet())
@@ -115,7 +115,7 @@ public class OrswotClock<A>
             if (counter == null)
                 counter = entry.getValue();
             else
-                counter = counter.intValue() >= entry.getValue().intValue() ? counter : entry.getValue();
+                counter = counter >= entry.getValue() ? counter : entry.getValue();
 
             map.put(entry.getKey(), counter);
         }

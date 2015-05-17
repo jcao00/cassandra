@@ -4,6 +4,8 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -233,7 +235,7 @@ public class OrswotTest
     }
 
     @Test
-    public void applyAdd_ExistingEntryWithGreaterClock()
+    public void applyAdd_ExistingEntryWithDescendingClock()
     {
         Map<InetAddress, Integer> clock = new HashMap<>();
         clock.put(localAddr, 2);
@@ -242,8 +244,8 @@ public class OrswotTest
 
         clock = new HashMap<>();
         clock.put(localAddr, 1);
-        orswotClock = new OrswotClock<>(clock);
-        Assert.assertFalse(orswot.applyAdd(addr1, orswotClock));
+        OrswotClock<InetAddress> ancestorOrswotClock = new OrswotClock<>(clock);
+        Assert.assertFalse(orswot.applyAdd(addr1, ancestorOrswotClock));
         // make sure master clock has not changed
         Assert.assertEquals(orswotClock, orswot.getCurrentState().clock);
     }
@@ -293,5 +295,140 @@ public class OrswotTest
         Assert.assertEquals(2, elementClock.get(localAddr).intValue());
         Assert.assertTrue(elementClock.containsKey(remoteSeed));
         Assert.assertEquals(1, elementClock.get(remoteSeed).intValue());
+    }
+
+    @Test
+    public void addToDeferred_ExistingAddWithDescendingClock()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        orswot.applyAdd(addr1, orswotClock);
+
+        clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> ancestorOrswotClock = new OrswotClock<>(clock);
+
+        ConcurrentMap<InetAddress, OrswotClock<InetAddress>> deferredRemoves = new ConcurrentHashMap<>();
+        Assert.assertFalse(orswot.addToDeferred(deferredRemoves, addr1, ancestorOrswotClock));
+        Assert.assertTrue(deferredRemoves.isEmpty());
+
+        // make sure the original entry is still in orswot
+        Assert.assertEquals(orswotClock, orswot.getClock(addr1));
+    }
+
+    @Test
+    public void addToDeferred_NoExistingClock()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        ConcurrentMap<InetAddress, OrswotClock<InetAddress>> deferredRemoves = new ConcurrentHashMap<>();
+        Assert.assertTrue(orswot.addToDeferred(deferredRemoves, addr1, orswotClock));
+        Assert.assertEquals(orswotClock, deferredRemoves.get(addr1));
+    }
+
+    @Test
+    public void addToDeferred_ExistingAncestorDeferredClock()
+    {
+        ConcurrentMap<InetAddress, OrswotClock<InetAddress>> deferredRemoves = new ConcurrentHashMap<>();
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        deferredRemoves.put(addr1, orswotClock);
+
+        clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        OrswotClock<InetAddress> descendingOrswotClock = new OrswotClock<>(clock);
+
+        Assert.assertTrue(orswot.addToDeferred(deferredRemoves, addr1, descendingOrswotClock));
+        Assert.assertEquals(1, deferredRemoves.size());
+        Assert.assertEquals(descendingOrswotClock, deferredRemoves.get(addr1));
+    }
+
+    @Test
+    public void addToDeferred_ExistingDescendingDeferrerClock()
+    {
+        ConcurrentMap<InetAddress, OrswotClock<InetAddress>> deferredRemoves = new ConcurrentHashMap<>();
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        deferredRemoves.put(addr1, orswotClock);
+
+        clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> ancestorOrswotClock = new OrswotClock<>(clock);
+
+        Assert.assertFalse(orswot.addToDeferred(deferredRemoves, addr1, ancestorOrswotClock));
+        Assert.assertEquals(1, deferredRemoves.size());
+        Assert.assertEquals(orswotClock, deferredRemoves.get(addr1));
+    }
+
+    @Test
+    public void applyRemove_NoExistingOrswotEntry()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        Assert.assertTrue(orswot.applyRemove(addr1, orswotClock));
+        Assert.assertEquals(orswotClock, orswot.getDeferredRemoves().get(addr1));
+    }
+
+    /**
+     * this is where the entry should be deleted
+     */
+    @Test
+    public void applyRemove_EqualExistingClock()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        orswot.applyAdd(addr1, orswotClock);
+        Assert.assertEquals(orswotClock, orswot.getClock(addr1));
+
+        Assert.assertTrue(orswot.applyRemove(addr1, orswotClock));
+        Assert.assertNull(orswot.getClock(addr1));
+        Assert.assertTrue(orswot.getDeferredRemoves().isEmpty());
+    }
+
+    /**
+     * this is where the entry should be not deleted, but remove should be deferred
+     */
+    @Test
+    public void applyRemove_AncestorExistingClock()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        orswot.applyAdd(addr1, orswotClock);
+        Assert.assertEquals(orswotClock, orswot.getClock(addr1));
+
+        OrswotClock<InetAddress> descendingClock = orswotClock.increment(localAddr);
+
+        Assert.assertTrue(orswot.applyRemove(addr1, descendingClock));
+        Assert.assertEquals(orswotClock, orswot.getClock(addr1));
+        Assert.assertEquals(1, orswot.getDeferredRemoves().size());
+        Assert.assertEquals(descendingClock, orswot.getDeferredRemoves().get(addr1));
+    }
+
+    /**
+     * this is where the entry should be not deleted, but remove should be ignored
+     */
+    @Test
+    public void applyRemove_DescendingExistingClock()
+    {
+        Map<InetAddress, Integer> clock = new HashMap<>();
+        clock.put(localAddr, 2);
+        OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        orswot.applyAdd(addr1, orswotClock);
+        Assert.assertEquals(orswotClock, orswot.getClock(addr1));
+
+        clock = new HashMap<>();
+        clock.put(localAddr, 1);
+        OrswotClock<InetAddress> ancestorClock = new OrswotClock<>(clock);
+
+        Assert.assertFalse(orswot.applyRemove(addr1, ancestorClock));
+        Assert.assertEquals(orswotClock, orswot.getClock(addr1));
+        Assert.assertTrue(orswot.getDeferredRemoves().isEmpty());
     }
 }

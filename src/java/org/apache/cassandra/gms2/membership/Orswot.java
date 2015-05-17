@@ -2,6 +2,8 @@ package org.apache.cassandra.gms2.membership;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -33,10 +35,18 @@ public class Orswot<T, A>
     private final A localAddr;
     private final AtomicReference<SetAndClock<T, A>> wrapper;
 
+    /**
+     * When we receive a remove operation with a clock timestamp for which we have not seen
+     * a descending (greater than or equal to) add clock, we need to store remove request until
+     * the corresponding add is received.
+     */
+    private final ConcurrentMap<T, OrswotClock<A>> deferredRemoves;
+
     public Orswot(A localAddr)
     {
         this.localAddr = localAddr;
         wrapper = new AtomicReference<>(new SetAndClock<T, A>(new OrswotClock<>(), new HashSet<TaggedElement<T, A>>()));
+        deferredRemoves = new ConcurrentHashMap<>();
     }
 
     /**
@@ -58,6 +68,8 @@ public class Orswot<T, A>
         SetAndClock<T, A> current, next;
         do
         {
+            // TODO: check to see if there are any entries in the deferred collection
+
             current = wrapper.get();
             OrswotClock<A> nextClock = current.clock.increment(a);
             HashSet<TaggedElement<T, A>> nextSet = new HashSet<>(current.elements);
@@ -77,8 +89,8 @@ public class Orswot<T, A>
     /**
      * Apply an add to the set.
      *
-     * @param t
-     * @param clock
+     * @param t Element to add
+     * @param clock timestamp of addition
      * @return
      */
     public boolean applyAdd(T t, OrswotClock<A> clock)
@@ -88,6 +100,10 @@ public class Orswot<T, A>
         do {
             current = wrapper.get();
             OrswotClock<A> existingClock = getClock(t);
+
+            // TODO: check the deferred map to see if any entry should be deleted, or if we should *not* add the element
+            // due to a remove with the same clock timestamp
+
 
             // if we have an existing clock, check that the new one descends
             // TODO: reconfirm this logic of what to do when we get a disjoint or non-dominating clock
@@ -107,20 +123,87 @@ public class Orswot<T, A>
         return true;
     }
 
+    /**
+     * Remove an element from the orswot. Element will be removed if 1) is actually exists in the orswort,
+     * and 2) if the {@code clock} is equal to the element's existing clock.
+     *
+     * If the {@code clock} dominates the element's existing clock, it is assumed the remove arrived before
+     * the add with the same clock timestamp, and thus we *cannot* remove the element. We will, however, store the
+     * remove so that if we receive an add with the same timestamp, the element will not be added to the orswot.
+     * If the add contains a clock that dominates the remove's clock, the entry in the deferred collection will be dropped
+     * (and the element will be properly added to the orswot).
+     *
+     * @param t Element to remove
+     * @param clock removal timestamp
+     * @return true if the element was removed or was added to {@code deferredRemoves}.
+     */
     public boolean applyRemove(T t, OrswotClock<A> clock)
     {
-        OrswotClock<A> existingClock = getClock(t);
-        if (clock.descends(existingClock))
-        {
-            // hooray - we can safely delete this fucker
+        SetAndClock<T, A> current, next;
+        do {
+            current = wrapper.get();
+            OrswotClock<A> existingClock = getClock(t);
 
-        }
-        else
-        {
-            // TODO: stash into deferred deletes bucket
-        }
+            if (existingClock != null)
+            {
+                if (clock.equals(existingClock))
+                {
+                    /// this is the case want
+                    TaggedElement<T, A> taggedElement = new TaggedElement<>(t, clock);
 
-        return false;
+                    // see comment in add() about the use of HashSet
+                    HashSet<TaggedElement<T, A>> nextSet = new HashSet<>(current.elements);
+                    nextSet.remove(taggedElement);
+                    next = new SetAndClock<>(current.clock.merge(clock), nextSet);
+                }
+                else if (existingClock.dominates(clock))
+                {
+                    // we already received a newer add, so this is a dupe or delayed message
+                    return false;
+                }
+                else // received clock is newer, we might have missed an add
+                {
+                    return addToDeferred(deferredRemoves, t, clock);
+                }
+            }
+            else // we have never heard of the node, so we might have missed an add message
+            {
+                return addToDeferred(deferredRemoves, t, clock);
+            }
+
+        } while (!wrapper.compareAndSet(current, next));
+
+        return true;
+    }
+
+    /**
+     * Add element to the deferred removes collection.
+     *
+     * @return true if there is not a 'live' entry in orswot with a descending clock, or if there exists an entry
+     * in {@code deferredRemoves} for the element, that clock is dominated by {@code clock}.
+     */
+    @VisibleForTesting
+    boolean addToDeferred(ConcurrentMap<T, OrswotClock<A>> deferredRemoves, T t, OrswotClock<A> clock)
+    {
+        while (true)
+        {
+            // check if we have an add operation that has a dominating clock
+            OrswotClock<A> liveClock = getClock(t);
+            if (liveClock != null && liveClock.dominates(clock))
+                return false;
+
+            OrswotClock<A> existingClock = deferredRemoves.putIfAbsent(t, clock);
+            if (existingClock == null)
+                return true;
+
+            // check if we lost the race to another remove timestamp with a higher value
+            if (!clock.dominates(existingClock))
+                return false;
+
+            // this is a CAS operation which, if we lost the thread race, will cause the loop to execute again
+            if (deferredRemoves.replace(t, existingClock, clock))
+                return true;
+        }
     }
 
     /**
@@ -159,7 +242,7 @@ public class Orswot<T, A>
             // see comment in add() about the use of HashSet
             HashSet<TaggedElement<T, A>> nextSet = new HashSet<>(current.elements);
             nextSet.remove(taggedElement);
-            next = new SetAndClock(current.clock, nextSet);
+            next = new SetAndClock<>(current.clock, nextSet);
         } while (!wrapper.compareAndSet(current, next));
 
         return elementClock;
@@ -196,6 +279,12 @@ public class Orswot<T, A>
     SetAndClock<T, A> getCurrentState()
     {
         return wrapper.get();
+    }
+
+    @VisibleForTesting
+    ConcurrentMap<T, OrswotClock<A>> getDeferredRemoves()
+    {
+        return deferredRemoves;
     }
 
     /**
@@ -260,9 +349,7 @@ public class Orswot<T, A>
 
         public boolean equals(Object o)
         {
-            if (o == null || !(o instanceof TaggedElement))
-                return false;
-            return o == this || t.equals(((TaggedElement)o).t);
+            return !(o == null || !(o instanceof TaggedElement)) && (o == this || t.equals(((TaggedElement) o).t));
         }
 
         public String toString()
