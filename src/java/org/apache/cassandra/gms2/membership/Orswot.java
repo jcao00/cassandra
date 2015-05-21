@@ -50,10 +50,15 @@ public class Orswot<T, A>
         removeTimestamps = new ConcurrentHashMap<>();
     }
 
-    private Orswot(A localAddr, SetAndClock<T, A> setAndCLock)
+    /**
+     * A copy constructor. As all data is immutable, this constructor creates a duplicate/snapshot of the parameter
+     *
+     * @param orswot the Orswot to copy
+     */
+    public Orswot(Orswot<T, A> orswot)
     {
-        this(localAddr);
-        wrapper.set(setAndCLock);
+        this(orswot.localAddr);
+        wrapper.set(orswot.wrapper.get());
     }
 
     /**
@@ -390,17 +395,6 @@ public class Orswot<T, A>
     ConcurrentMap<T, OrswotClock<A>> getRemoveTimestamps()
     {
         return removeTimestamps;
-    }
-
-    /**
-     * A clone function, useful for testing. A deep copy of the orswot is returned as everything is immutable, so we just copy
-     * the relevant references to the new instance.
-     *
-     * @return A deep copy of this Orswot
-     */
-    public Orswot<T, A> cloneOrswot()
-    {
-        return new Orswot<T, A>(localAddr, wrapper.get());
     }
 
     /**
