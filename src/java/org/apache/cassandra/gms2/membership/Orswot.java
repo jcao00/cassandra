@@ -62,6 +62,7 @@ public class Orswot<T, A>
      * Called when this node is the coordinator for the update, not a downstream recipient.
      *
      * @param t The element to add.
+     * @return If the element was successfully added to the Orswot, the new 'master' clock is returned.
      */
     public OrswotClock<A> add(T t)
     {
@@ -272,7 +273,7 @@ public class Orswot<T, A>
     }
 
     /**
-     * Reteive the logical clock for the given parameter. If present the clock will reflect the last time
+     * Retrieve the logical clock for the given parameter. If present the clock will reflect the last time
      * the element was added to the orswot. (Remember, on adds of existing elements, we update the clock to the current 'time').
      *
      * @param t The element to get the clock for.
@@ -283,6 +284,17 @@ public class Orswot<T, A>
         SetAndClock<T, A> current = wrapper.get();
         TaggedElement<T, A> taggedElement = findElement(t, current.elements);
         return taggedElement != null ? taggedElement.clock : null;
+    }
+
+    /**
+     * Retrieve the current 'master' clock of this node.
+     *
+     * @return The master clock
+     */
+    public OrswotClock<A> getClock()
+    {
+        SetAndClock<T, A> current = wrapper.get();
+        return current.clock;
     }
 
     /**
@@ -380,6 +392,12 @@ public class Orswot<T, A>
         return removeTimestamps;
     }
 
+    /**
+     * A clone function, useful for testing. A deep copy of the orswot is returned as everything is immutable, so we just copy
+     * the relevant references to the new instance.
+     *
+     * @return A deep copy of this Orswot
+     */
     public Orswot<T, A> cloneOrswot()
     {
         return new Orswot<T, A>(localAddr, wrapper.get());
