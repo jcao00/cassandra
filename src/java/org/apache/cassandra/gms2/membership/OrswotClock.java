@@ -28,7 +28,7 @@ public class OrswotClock<A>
     }
 
     @VisibleForTesting
-    OrswotClock(Map<A, Integer> clock)
+    public OrswotClock(Map<A, Integer> clock)
     {
         this.clock = clock;
     }

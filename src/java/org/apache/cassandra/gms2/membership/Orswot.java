@@ -50,6 +50,12 @@ public class Orswot<T, A>
         removeTimestamps = new ConcurrentHashMap<>();
     }
 
+    private Orswot(A localAddr, SetAndClock<T, A> setAndCLock)
+    {
+        this(localAddr);
+        wrapper.set(setAndCLock);
+    }
+
     /**
      * Add an element to the set. If the element is already in the set, the clock will be incremented,
      * as per the rules of 'add-wins' ORSWOT.
@@ -372,6 +378,11 @@ public class Orswot<T, A>
     ConcurrentMap<T, OrswotClock<A>> getRemoveTimestamps()
     {
         return removeTimestamps;
+    }
+
+    public Orswot<T, A> cloneOrswot()
+    {
+        return new Orswot<T, A>(localAddr, wrapper.get());
     }
 
     /**
