@@ -193,7 +193,7 @@ public class CommitLogArchiver
             }
             for (File fromFile : files)
             {
-                CommitLogDescriptor fromHeader = CommitLogDescriptor.fromHeader(fromFile);
+                CommitLogDescriptor fromHeader = CommitLogDescriptor.fromHeader(fromFile, DatabaseDescriptor.getEncryptionContext());
                 CommitLogDescriptor fromName = CommitLogDescriptor.isValid(fromFile.getName()) ? CommitLogDescriptor.fromFileName(fromFile.getName()) : null;
                 CommitLogDescriptor descriptor;
                 if (fromHeader == null && fromName == null)
@@ -206,7 +206,7 @@ public class CommitLogArchiver
                     descriptor = fromHeader;
                 else descriptor = fromName;
 
-                if (descriptor.version > CommitLogDescriptor.VERSION_22)
+                if (descriptor.version > CommitLogDescriptor.current_version)
                     throw new IllegalStateException("Unsupported commit log version: " + descriptor.version);
 
                 if (descriptor.compression != null) {

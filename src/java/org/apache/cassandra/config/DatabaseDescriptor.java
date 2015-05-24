@@ -45,6 +45,7 @@ import org.apache.cassandra.locator.*;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.scheduler.NoScheduler;
+import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.thrift.ThriftServer;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -93,6 +94,8 @@ public class DatabaseDescriptor
 
     private static String localDC;
     private static Comparator<InetAddress> localComparator;
+
+    private static EncryptionContext encryptionContext;
 
     public static void forceStaticInitialization() {}
     static
@@ -617,6 +620,10 @@ public class DatabaseDescriptor
         }
         if (seedProvider.getSeeds().size() == 0)
             throw new ConfigurationException("The seed provider lists no seeds.", false);
+
+        // always attempt to load the cipher factory, as we could be in the situation where the user has disabled encryption,
+        // but has existing commitlogs and sstables on disk that are still git addencrypted (and still need to be read)
+        encryptionContext = new EncryptionContext(config.transparent_data_encryption_options);
     }
 
     private static IEndpointSnitch createEndpointSnitch(String snitchClassName) throws ConfigurationException
@@ -1692,5 +1699,16 @@ public class DatabaseDescriptor
     public static boolean enableUserDefinedFunctions()
     {
         return conf.enable_user_defined_functions;
+    }
+
+    public static EncryptionContext getEncryptionContext()
+    {
+        return encryptionContext;
+    }
+
+    @VisibleForTesting
+    public static void setEncryptionContext(EncryptionContext ec)
+    {
+        encryptionContext = ec;
     }
 }

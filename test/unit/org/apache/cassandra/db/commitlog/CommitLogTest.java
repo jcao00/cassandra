@@ -17,55 +17,74 @@
 * under the License.
 */
 
-package org.apache.cassandra.db;
-
-import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
+package org.apache.cassandra.db.commitlog;
 
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
-import com.google.common.collect.ImmutableMap;
-
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.KSMetaData;
 import org.apache.cassandra.config.ParameterizedClass;
-import org.apache.cassandra.db.commitlog.CommitLog;
-import org.apache.cassandra.db.commitlog.CommitLogDescriptor;
-import org.apache.cassandra.db.commitlog.CommitLogSegment;
-import org.apache.cassandra.db.commitlog.ReplayPosition;
+import org.apache.cassandra.db.Cell;
+import org.apache.cassandra.db.ColumnFamily;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.ColumnSerializer;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.Keyspace;
+import org.apache.cassandra.db.Mutation;
+import org.apache.cassandra.db.ReadCommand;
+import org.apache.cassandra.db.Row;
+import org.apache.cassandra.db.SliceByNamesReadCommand;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.util.ByteBufferDataInput;
-import org.apache.cassandra.io.util.FileDataInput;
+import org.apache.cassandra.io.compress.DeflateCompressor;
+import org.apache.cassandra.io.compress.LZ4Compressor;
+import org.apache.cassandra.io.compress.SnappyCompressor;
+import org.apache.cassandra.io.util.FastByteArrayInputStream;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.SimpleStrategy;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.Hex;
+import org.apache.cassandra.utils.Pair;
+
+import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 
 public class CommitLogTest
 {
-    private static final String KEYSPACE1 = "CommitLogTest";
-    private static final String KEYSPACE2 = "CommitLogTestNonDurable";
-    private static final String CF1 = "Standard1";
-    private static final String CF2 = "Standard2";
+    public static final String KEYSPACE1 = "CommitLogTest";
+    public static final String KEYSPACE2 = "CommitLogTestNonDurable";
+    public static final String CF1 = "Standard1";
+    public static final String CF2 = "Standard2";
+
+    String logDirectory;
 
     @BeforeClass
     public static void defineSchema() throws ConfigurationException
@@ -87,10 +106,17 @@ public class CommitLogTest
         CompactionManager.instance.disableAutoCompaction();
     }
 
+    @Before
+    public void setup()
+    {
+        logDirectory = DatabaseDescriptor.getCommitLogLocation() + "/unit";
+        new File(logDirectory).mkdirs();
+    }
+
     @Test
     public void testRecoveryWithEmptyLog() throws Exception
     {
-        CommitLog.instance.recover(new File[]{ tmpFile() });
+        CommitLog.instance.recover(tmpFile().left);
     }
 
     @Test
@@ -148,7 +174,7 @@ public class CommitLogTest
         CommitLog.instance.resetUnsafe(true);
         // Roughly 32 MB mutation
         Mutation rm = new Mutation(KEYSPACE1, bytes("k"));
-        rm.add(CF1, Util.cellname("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize()/4), 0);
+        rm.add(CF1, Util.cellname("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize() / 4), 0);
 
         // Adding it 5 times
         CommitLog.instance.add(rm);
@@ -162,13 +188,13 @@ public class CommitLogTest
         rm2.add(CF2, Util.cellname("c1"), ByteBuffer.allocate(4), 0);
         CommitLog.instance.add(rm2);
 
-        assert CommitLog.instance.activeSegments() == 2 : "Expecting 2 segments, got " + CommitLog.instance.activeSegments();
+        Assert.assertEquals(2, CommitLog.instance.activeSegments());
 
         UUID cfid2 = rm2.getColumnFamilyIds().iterator().next();
         CommitLog.instance.discardCompletedSegments(cfid2, CommitLog.instance.getContext());
 
-        // Assert we still have both our segment
-        assert CommitLog.instance.activeSegments() == 2 : "Expecting 2 segments, got " + CommitLog.instance.activeSegments();
+        // Assert we still have both our segments
+        Assert.assertEquals(2, CommitLog.instance.activeSegments());
     }
 
     @Test
@@ -178,31 +204,30 @@ public class CommitLogTest
         CommitLog.instance.resetUnsafe(true);
         // Roughly 32 MB mutation
         Mutation rm = new Mutation(KEYSPACE1, bytes("k"));
-        rm.add(CF1, Util.cellname("c1"), ByteBuffer.allocate((DatabaseDescriptor.getCommitLogSegmentSize()/4) - 1), 0);
+        rm.add(CF1, Util.cellname("c1"), ByteBuffer.allocate((DatabaseDescriptor.getCommitLogSegmentSize() / 4) - 1), 0);
 
         // Adding it twice (won't change segment)
         CommitLog.instance.add(rm);
         CommitLog.instance.add(rm);
 
-        assert CommitLog.instance.activeSegments() == 1 : "Expecting 1 segment, got " + CommitLog.instance.activeSegments();
+        Assert.assertEquals(1, CommitLog.instance.activeSegments());
 
         // "Flush": this won't delete anything
         UUID cfid1 = rm.getColumnFamilyIds().iterator().next();
         CommitLog.instance.sync(true);
         CommitLog.instance.discardCompletedSegments(cfid1, CommitLog.instance.getContext());
 
-        assert CommitLog.instance.activeSegments() == 1 : "Expecting 1 segment, got " + CommitLog.instance.activeSegments();
+        Assert.assertEquals(1, CommitLog.instance.activeSegments());
 
         // Adding new mutation on another CF, large enough (including CL entry overhead) that a new segment is created
         Mutation rm2 = new Mutation(KEYSPACE1, bytes("k"));
-        rm2.add(CF2, Util.cellname("c1"), ByteBuffer.allocate((DatabaseDescriptor.getCommitLogSegmentSize()/2) - 200), 0);
+        rm2.add(CF2, Util.cellname("c1"), ByteBuffer.allocate((DatabaseDescriptor.getCommitLogSegmentSize() / 2) - 200), 0);
         CommitLog.instance.add(rm2);
         // also forces a new segment, since each entry-with-overhead is just under half the CL size
         CommitLog.instance.add(rm2);
         CommitLog.instance.add(rm2);
 
-        assert CommitLog.instance.activeSegments() == 3 : "Expecting 3 segments, got " + CommitLog.instance.activeSegments();
-
+        Assert.assertEquals(3, CommitLog.instance.activeSegments());
 
         // "Flush" second cf: The first segment should be deleted since we
         // didn't write anything on cf1 since last flush (and we flush cf2)
@@ -211,7 +236,7 @@ public class CommitLogTest
         CommitLog.instance.discardCompletedSegments(cfid2, CommitLog.instance.getContext());
 
         // Assert we still have both our segment
-        assert CommitLog.instance.activeSegments() == 1 : "Expecting 1 segment, got " + CommitLog.instance.activeSegments();
+        Assert.assertEquals(1, CommitLog.instance.activeSegments());
     }
 
     private static int getMaxRecordDataSize(String keyspace, ByteBuffer key, String table, CellName column)
@@ -240,21 +265,13 @@ public class CommitLogTest
         CommitLog.instance.add(rm);
     }
 
-    @Test
+    @Test(expected = IllegalArgumentException.class)
     public void testExceedRecordLimit() throws Exception
     {
         CommitLog.instance.resetUnsafe(true);
-        try
-        {
-            Mutation rm = new Mutation(KEYSPACE1, bytes("k"));
-            rm.add(CF1, Util.cellname("c1"), ByteBuffer.allocate(1 + getMaxRecordDataSize()), 0);
-            CommitLog.instance.add(rm);
-            throw new AssertionError("mutation larger than limit was accepted");
-        }
-        catch (IllegalArgumentException e)
-        {
-            // IAE is thrown on too-large mutations
-        }
+        Mutation rm = new Mutation(KEYSPACE1, bytes("k"));
+        rm.add(CF1, Util.cellname("c1"), ByteBuffer.allocate(1 + getMaxRecordDataSize()), 0);
+        CommitLog.instance.add(rm);
     }
 
     protected void testRecoveryWithBadSizeArgument(int size, int dataSize) throws Exception
@@ -275,39 +292,56 @@ public class CommitLogTest
         testRecovery(out.toByteArray());
     }
 
-    protected File tmpFile() throws IOException
+    /**
+     * Create a temporary commit log file with an appropriate descriptor at the head.
+     *
+     * @return the commit log file reference and the first position after the descriptor in the file
+     * (so that subsequent writes happen at the correct file location).
+     */
+    protected Pair<File, Integer> tmpFile() throws IOException
     {
-        File logFile = File.createTempFile("CommitLog-" + CommitLogDescriptor.current_version + "-", ".log");
+        EncryptionContext encryptionContext = DatabaseDescriptor.getEncryptionContext();
+        CommitLogDescriptor desc = new CommitLogDescriptor(CommitLogDescriptor.current_version,
+                                                           CommitLogSegment.getNextId(),
+                                                           DatabaseDescriptor.getCommitLogCompression(),
+                                                           encryptionContext);
+
+        // if we're testing encryption, we need to write out a cipher IV to the descriptor headers
+        Map<String, String> additionalHeaders = new HashMap<>();
+        if (encryptionContext.isEnabled())
+        {
+            byte[] buf = new byte[16];
+            new Random().nextBytes(buf);
+            additionalHeaders.put(EncryptionContext.ENCRYPTION_IV, Hex.bytesToHex(buf));
+        }
+
+        ByteBuffer buf = ByteBuffer.allocate(1024);
+        CommitLogDescriptor.writeHeader(buf, desc, additionalHeaders);
+        buf.flip();
+        int positionAfterHeader = buf.limit() + 1;
+
+        File logFile = new File(logDirectory, desc.fileName());
         logFile.deleteOnExit();
-        assert logFile.length() == 0;
-        return logFile;
+
+        try (OutputStream lout = new FileOutputStream(logFile))
+        {
+            lout.write(buf.array(), 0, buf.limit());
+        }
+
+        return Pair.create(logFile, positionAfterHeader);
     }
 
     protected void testRecovery(byte[] logData) throws Exception
     {
-        File logFile = tmpFile();
-        try (OutputStream lout = new FileOutputStream(logFile))
+        Pair<File, Integer> pair = tmpFile();
+        try (RandomAccessFile raf = new RandomAccessFile(pair.left, "rw"))
         {
-            lout.write(logData);
-            //statics make it annoying to test things correctly
-            CommitLog.instance.recover(new File[]{ logFile }); //CASSANDRA-1119 / CASSANDRA-1179 throw on failure*/
+            raf.seek(pair.right);
+            raf.write(logData);
+            raf.close();
+
+            CommitLog.instance.recover(new File[]{ pair.left }); //CASSANDRA-1119 / CASSANDRA-1179 throw on failure*/
         }
-    }
-
-    @Test
-    public void testVersions()
-    {
-        Assert.assertTrue(CommitLogDescriptor.isValid("CommitLog-1340512736956320000.log"));
-        Assert.assertTrue(CommitLogDescriptor.isValid("CommitLog-2-1340512736956320000.log"));
-        Assert.assertFalse(CommitLogDescriptor.isValid("CommitLog--1340512736956320000.log"));
-        Assert.assertFalse(CommitLogDescriptor.isValid("CommitLog--2-1340512736956320000.log"));
-        Assert.assertFalse(CommitLogDescriptor.isValid("CommitLog-2-1340512736956320000-123.log"));
-
-        Assert.assertEquals(1340512736956320000L, CommitLogDescriptor.fromFileName("CommitLog-2-1340512736956320000.log").id);
-
-        Assert.assertEquals(MessagingService.current_version, new CommitLogDescriptor(1340512736956320000L, null).getMessagingVersion());
-        String newCLName = "CommitLog-" + CommitLogDescriptor.current_version + "-1340512736956320000.log";
-        Assert.assertEquals(MessagingService.current_version, CommitLogDescriptor.fromFileName(newCLName).getMessagingVersion());
     }
 
     @Test
@@ -327,7 +361,7 @@ public class CommitLogTest
         final Mutation rm2 = new Mutation(KEYSPACE1, bytes("k"));
         rm2.add("Standard2", Util.cellname("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize() / 4), 0);
 
-        for (int i = 0 ; i < 5 ; i++)
+        for (int i = 0; i < 5; i++)
             CommitLog.instance.add(rm2);
 
         Assert.assertEquals(2, CommitLog.instance.activeSegments());
@@ -366,48 +400,153 @@ public class CommitLogTest
         row = command.getRow(notDurableKs);
         Assert.assertEquals(null, row.cf);
     }
-    
-    private void testDescriptorPersistence(CommitLogDescriptor desc) throws IOException
-    {
-        ByteBuffer buf = ByteBuffer.allocate(1024);
-        CommitLogDescriptor.writeHeader(buf, desc);
-        long length = buf.position();
-        // Put some extra data in the stream.
-        buf.putDouble(0.1);
-        buf.flip();
-        FileDataInput input = new ByteBufferDataInput(buf, "input", 0, 0);
-        CommitLogDescriptor read = CommitLogDescriptor.readHeader(input);
-        Assert.assertEquals("Descriptor length", length, input.getFilePointer());
-        Assert.assertEquals("Descriptors", desc, read);
-    }
-    
+
     @Test
-    public void testDescriptorPersistence() throws IOException
+    public void replay_StandardMmapped() throws IOException
     {
-        testDescriptorPersistence(new CommitLogDescriptor(11, null));
-        testDescriptorPersistence(new CommitLogDescriptor(CommitLogDescriptor.VERSION_21, 13, null));
-        testDescriptorPersistence(new CommitLogDescriptor(CommitLogDescriptor.VERSION_22, 15, null));
-        testDescriptorPersistence(new CommitLogDescriptor(CommitLogDescriptor.VERSION_22, 17, new ParameterizedClass("LZ4Compressor", null)));
-        testDescriptorPersistence(new CommitLogDescriptor(CommitLogDescriptor.VERSION_22, 19,
-                new ParameterizedClass("StubbyCompressor", ImmutableMap.of("parameter1", "value1", "flag2", "55", "argument3", "null"))));
+        DatabaseDescriptor.setCommitLogCompression(null);
+        DatabaseDescriptor.setEncryptionContext(EncryptionContextGenerator.createDisabledContext());
+        CommitLog commitLog = new CommitLog(logDirectory, CommitLog.instance.archiver);
+        replaySimple(commitLog);
+        replayWithDiscard(commitLog);
     }
 
     @Test
-    public void testDescriptorInvalidParametersSize() throws IOException
+    public void replay_Compressed_LZ4() throws IOException
     {
-        Map<String, String> params = new HashMap<>();
-        for (int i=0; i<65535; ++i)
-            params.put("key"+i, Integer.toString(i, 16));
-        try {
-            CommitLogDescriptor desc = new CommitLogDescriptor(CommitLogDescriptor.VERSION_22,
-                                                               21,
-                                                               new ParameterizedClass("LZ4Compressor", params));
-            ByteBuffer buf = ByteBuffer.allocate(1024000);
-            CommitLogDescriptor.writeHeader(buf, desc);
-            Assert.fail("Parameter object too long should fail on writing descriptor.");
-        } catch (ConfigurationException e)
+        replay_Compressed(new ParameterizedClass(LZ4Compressor.class.getName(), Collections.emptyMap()));
+    }
+
+    @Test
+    public void replay_Compressed_Snappy() throws IOException
+    {
+        replay_Compressed(new ParameterizedClass(SnappyCompressor.class.getName(), Collections.emptyMap()));
+    }
+
+    @Test
+    public void replay_Compressed_Deflate() throws IOException
+    {
+        replay_Compressed(new ParameterizedClass(DeflateCompressor.class.getName(), Collections.emptyMap()));
+    }
+
+    private void replay_Compressed(ParameterizedClass parameterizedClass) throws IOException
+    {
+        DatabaseDescriptor.setCommitLogCompression(parameterizedClass);
+        DatabaseDescriptor.setEncryptionContext(EncryptionContextGenerator.createDisabledContext());
+        CommitLog commitLog = new CommitLog(logDirectory, CommitLog.instance.archiver);
+       // replaySimple(commitLog);
+        replayWithDiscard(commitLog);
+    }
+
+    @Test
+    public void replay_Encrypted() throws IOException
+    {
+        DatabaseDescriptor.setCommitLogCompression(null);
+        DatabaseDescriptor.setEncryptionContext(EncryptionContextGenerator.createContext(true));
+        CommitLog commitLog = new CommitLog(logDirectory, CommitLog.instance.archiver);
+
+        try
         {
-            // correct path
+            replaySimple(commitLog);
+            replayWithDiscard(commitLog);
+        }
+        finally
+        {
+            for (String file : commitLog.getActiveSegmentNames())
+                FileUtils.delete(new File(commitLog.location, file));
+        }
+    }
+
+    private void replaySimple(CommitLog commitLog) throws IOException
+    {
+        int cellCount = 0;
+        final Mutation rm1 = new Mutation(KEYSPACE1, bytes("k1"));
+        rm1.add(CF1, Util.cellname("c1"), ByteBufferUtil.bytes("this is a string"), 0);
+        cellCount += 1;
+        commitLog.add(rm1);
+
+        final Mutation rm2 = new Mutation(KEYSPACE1, bytes("k2"));
+        rm2.add(CF1, Util.cellname("c2"), ByteBufferUtil.bytes("this is a string"), 0);
+        cellCount += 1;
+        commitLog.add(rm2);
+
+        commitLog.sync(true);
+
+        Replayer replayer = new Replayer(ReplayPosition.NONE);
+        List<String> activeSegments = commitLog.getActiveSegmentNames();
+        Assert.assertFalse(activeSegments.isEmpty());
+
+        for (String file : activeSegments)
+            replayer.recover(new File(commitLog.location, file));
+
+        Assert.assertEquals(cellCount, replayer.cells);
+    }
+
+    private void replayWithDiscard(CommitLog commitLog) throws IOException
+    {
+        int cellCount = 0;
+        int max = 1024;
+        int discardPosition = (int)(max * .8); // an arbitrary number of entries that we'll skip on the replay
+        ReplayPosition replayPosition = null;
+
+        for (int i = 0; i < max; i++)
+        {
+            final Mutation rm1 = new Mutation(KEYSPACE1, bytes("k" + i));
+            rm1.add(CF1, Util.cellname("c1"), ByteBufferUtil.bytes("this is a string"), 0);
+            ReplayPosition position = commitLog.add(rm1);
+            System.out.format("***** on write, pos = %d\n", position.position);
+
+            if (i == discardPosition)
+                replayPosition = position;
+            if (i > discardPosition)
+            {
+                cellCount += 1;
+            }
+        }
+
+        commitLog.sync(true);
+        System.out.format("***** discard position = %d\n", replayPosition.position);
+
+        Replayer replayer = new Replayer(replayPosition);
+        List<String> activeSegments = commitLog.getActiveSegmentNames();
+        Assert.assertFalse(activeSegments.isEmpty());
+
+        for (String file : activeSegments)
+            replayer.recover(new File(commitLog.location, file));
+
+        Assert.assertEquals(cellCount, replayer.cells);
+    }
+
+    class Replayer extends CommitLogReplayer
+    {
+        private final ReplayPosition filterPosition;
+        int cells;
+        int skipped;
+
+        Replayer(ReplayPosition filterPosition)
+        {
+            super(filterPosition, null, ReplayFilter.create());
+            this.filterPosition = filterPosition;
+        }
+
+        void replayMutation(byte[] inputBuffer, int size, final long entryLocation, final CommitLogDescriptor desc) throws IOException
+        {
+            System.out.format("**** entry loc = %d\n", entryLocation);
+            if (entryLocation <= filterPosition.position)
+            {
+                // Skip over this mutation.
+                skipped++;
+                return;
+            }
+            else
+            {
+                int f = 4;
+            }
+
+            FastByteArrayInputStream bufIn = new FastByteArrayInputStream(inputBuffer, 0, size);
+            Mutation mutation = Mutation.serializer.deserialize(new DataInputStream(bufIn), desc.getMessagingVersion(), ColumnSerializer.Flag.LOCAL);
+            for (ColumnFamily cf : mutation.getColumnFamilies())
+                cells += cf.getSortedColumns().size();
         }
     }
 }
