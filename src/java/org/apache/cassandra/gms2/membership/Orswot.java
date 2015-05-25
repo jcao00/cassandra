@@ -75,7 +75,7 @@ public class Orswot<T, A>
     }
 
     @VisibleForTesting
-    OrswotClock<A> add(T t, A a)
+    public OrswotClock<A> add(T t, A a)
     {
         // perform an atomic swap of the wrapper (which contains the clock and the set)
         SetAndClock<T, A> current, next = null;
@@ -146,6 +146,7 @@ public class Orswot<T, A>
                     return false;
 
                 // merge clocks
+                // TODO I think this might be incorrect :-/ , but what do we do when clocks are disjoint?
                 clock = clock.merge(existingClock);
                 if (!clock.dominates(existingClock))
                 {
@@ -397,6 +398,14 @@ public class Orswot<T, A>
         return removeTimestamps;
     }
 
+    public boolean equals(Orswot<T, A> orswot)
+    {
+        if (orswot == null)
+            return false;
+        if (orswot == this)
+            return true;
+        return wrapper.get().equals(orswot.wrapper.get());
+    }
     /**
      * A wrapper class class that holds a state of the orswot at a given moment
      *
@@ -425,6 +434,15 @@ public class Orswot<T, A>
         {
             return "Orswort state: master clock = " + clock.toString() +
                    ", tagged entries = " + elements.toString();
+        }
+
+        public boolean equals(SetAndClock<T, A> other)
+        {
+            if (other == null)
+                return false;
+            if (other == this)
+                return true;
+            return clock.equals(other.clock) && elements.equals(other.elements);
         }
     }
 

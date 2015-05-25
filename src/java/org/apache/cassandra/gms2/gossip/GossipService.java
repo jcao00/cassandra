@@ -55,6 +55,7 @@ public class GossipService
         antiEntropyService.register(membershipService);
 
         // TODO: get all membership data from peers - not exactly sure where that happens
+        membershipService.init(scheduledService);
     }
 
     public void register(BroadcastClient client)

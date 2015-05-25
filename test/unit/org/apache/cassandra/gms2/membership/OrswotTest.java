@@ -232,9 +232,12 @@ public class OrswotTest
         clock.put(localAddr, 1);
         OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
 
+        OrswotClock<InetAddress> beforeMasterClock = orswot.getClock();
         Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
 
         Orswot.SetAndClock<InetAddress, InetAddress> currentState = orswot.getCurrentState();
+        Assert.assertTrue(currentState.clock.dominates(beforeMasterClock));
+        Assert.assertTrue(currentState.clock.descends(orswotClock));
         Map<InetAddress, Integer> masterClock = currentState.clock.getClock();
         Assert.assertEquals(1, masterClock.size());
         Assert.assertTrue(masterClock.containsKey(localAddr));
@@ -252,12 +255,16 @@ public class OrswotTest
         Map<InetAddress, Integer> clock = new HashMap<>();
         clock.put(localAddr, 1);
         OrswotClock<InetAddress> orswotClock = new OrswotClock<>(clock);
+        OrswotClock<InetAddress> beforeMasterClock = orswot.getClock();
         Assert.assertTrue(orswot.applyAdd(addr1, orswotClock));
 
         OrswotClock<InetAddress> incrementedClock = orswotClock.increment(localAddr);
         Assert.assertTrue(orswot.applyAdd(addr1, incrementedClock));
 
         Orswot.SetAndClock<InetAddress, InetAddress> currentState = orswot.getCurrentState();
+        Assert.assertTrue(currentState.clock.dominates(beforeMasterClock));
+        Assert.assertTrue(currentState.clock.descends(orswotClock));
+
         Map<InetAddress, Integer> masterClock = currentState.clock.getClock();
         Assert.assertEquals(1, masterClock.size());
         Assert.assertTrue(masterClock.containsKey(localAddr));
@@ -547,5 +554,20 @@ public class OrswotTest
         Assert.assertFalse(orswot.removeFromRemoveTimestamps(removeTimestamps, addr1, orswotClock));
         Assert.assertEquals(1, removeTimestamps.size());
         Assert.assertEquals(orswotClock, removeTimestamps.get(addr1));
+    }
+
+    @Test
+    public void copyConstructor()
+    {
+        orswot.add(addr1, localAddr);
+        orswot.add(addr2, remoteSeed);
+        orswot.add(addr3, remoteSeed);
+
+        Orswot<InetAddress, InetAddress> copy = new Orswot<>(orswot);
+        Assert.assertTrue(copy.equals(orswot));
+        Assert.assertEquals(copy.getClock(), copy.getClock());
+        Assert.assertEquals(copy.getClock(addr1), copy.getClock(addr1));
+        Assert.assertEquals(copy.getClock(addr2), copy.getClock(addr2));
+        Assert.assertEquals(copy.getClock(addr3), copy.getClock(addr3));
     }
 }

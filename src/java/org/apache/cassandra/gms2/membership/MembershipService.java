@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Objects;
 
@@ -57,12 +58,18 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         peerStateMap = new ConcurrentHashMap<>();
     }
 
+    public void init(ScheduledExecutorService scheduledService)
+    {
+        // TODO: is there anything that *really* needs to scheduled??
+
+        // TODO: send one-way msg to seed to Add ... and block for response!!!
+        broadcaster.
+    }
+
     /**
      * Process an event directly from a peer that wants to join/rejoin/leave/be kicked out of the cluster.
      * Typically, these messages are processed by a seed node, but the receiving node does not need to think itself
      * is a seed node.
-     *
-     * @param message
      */
     public void handle(ClusterMembershipMessage message, InetAddress sender)
     {
@@ -81,16 +88,24 @@ public class MembershipService implements BroadcastClient, AntiEntropyClient
         // TODO: add metatdata to map
         // TODO: broadcast add msg
 
+       // ClusterMembershipMessage msg = new ClusterMembershipMessage();
+      //  broadcaster.broadcast(ID, msg.generateId(), msg);
+
         // TODO: send response back to sender (with full clock and metadata)
+        // need a one-way function
     }
 
     void handleRemove(ClusterMembershipMessage message, InetAddress sender)
     {
-        members.remove(new MemberEntry(message.getAddress()));
+        OrswotClock<InetAddress> removeClock = members.remove(new MemberEntry(message.getAddress()));
         // TODO: broadcast remove msg
 
         // TODO: send response back to sender ??
     }
+
+    /*
+        methods for BroadcastClient
+    */
 
     public boolean receiveBroadcast(Object messageId, Object message) throws IOException
     {
