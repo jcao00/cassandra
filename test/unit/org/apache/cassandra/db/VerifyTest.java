@@ -24,7 +24,6 @@ import com.google.common.base.Charsets;
 import org.apache.cassandra.OrderedJUnit4ClassRunner;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
-import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.KSMetaData;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.compaction.CompactionManager;
@@ -80,7 +79,7 @@ public class VerifyTest
     @BeforeClass
     public static void defineSchema() throws ConfigurationException
     {
-        CompressionParameters compressionParameters = new CompressionParameters(SnappyCompressor.instance, 32768, new HashMap<String, String>());
+        CompressionParameters compressionParameters = new CompressionParameters(SnappyCompressor.class.getName(), 32768, new HashMap<String, String>());
 
         SchemaLoader.loadSchema();
         SchemaLoader.createKeyspace(KEYSPACE,

@@ -35,8 +35,8 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  */
 public class CommitLogEncryptionUtils
 {
-    static final int COMPRESSED_BLOCK_HEADER_SIZE = 4;
-    static final int ENCRYPTED_BLOCK_HEADER_SIZE = 8;
+    public static final int COMPRESSED_BLOCK_HEADER_SIZE = 4;
+    public static final int ENCRYPTED_BLOCK_HEADER_SIZE = 8;
 
     /**
      * Compress the raw data, as well as manage sizing of the {@code outputBuffer}; if the buffer is not big enough,
@@ -44,12 +44,12 @@ public class CommitLogEncryptionUtils
      * Write the two header lengths (plain text length, compressed length) to the beginning of the buffer as we want those
      * values encapsulated in the encrypted block, as well.
      */
-    public static ByteBuffer compress(ByteBuffer inputBuffer, ByteBuffer outputBuffer, ICompressor compressor) throws IOException
+    public static ByteBuffer compress(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, ICompressor compressor) throws IOException
     {
         ByteBuffer inputBufferSlice = inputBuffer.duplicate();
         int inputLength = inputBuffer.remaining();
         final int compressedLength = compressor.initialCompressedBufferLength(inputLength);
-        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, compressedLength + COMPRESSED_BLOCK_HEADER_SIZE);
+        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, compressedLength + COMPRESSED_BLOCK_HEADER_SIZE, allowBufferResize);
 
         outputBuffer.putInt(inputLength);
         compressor.compress(inputBufferSlice, outputBuffer);
@@ -62,12 +62,12 @@ public class CommitLogEncryptionUtils
      * Encrypt the input data, as well as manage sizing of the {@code outputBuffer}; if the buffer is not big enough,
      * deallocate current, and allocate a large enough buffer (and stash back into the the thread local buffer holder).
      */
-    public static ByteBuffer encrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer, Cipher cipher) throws IOException
+    public static ByteBuffer encrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, Cipher cipher) throws IOException
     {
         final int plainTextLength = inputBuffer.remaining();
         final int encryptLength = cipher.getOutputSize(plainTextLength);
         final int outputLength = encryptLength + ENCRYPTED_BLOCK_HEADER_SIZE;
-        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, outputLength);
+        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, outputLength, allowBufferResize);
         outputBuffer.putInt(encryptLength);
         outputBuffer.putInt(plainTextLength);
 
@@ -89,14 +89,14 @@ public class CommitLogEncryptionUtils
      * Decrypt the input data, as well as manage sizing of the {@code outputBuffer}; if the buffer is not big enough,
      * deallocate current, and allocate a large enough buffer (and stash back into the the thread local buffer holder).
      */
-    public static ByteBuffer decrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer, Cipher cipher) throws BadPaddingException, ShortBufferException, IllegalBlockSizeException
+    public static ByteBuffer decrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, Cipher cipher) throws BadPaddingException, ShortBufferException, IllegalBlockSizeException
     {
         ByteBuffer inBuf = inputBuffer.duplicate();
         int encryptedLength = inBuf.getInt();
         int plainTextLength = inBuf.getInt();
 
         inBuf.limit(inBuf.position() + encryptedLength);
-        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, Math.max(plainTextLength, encryptedLength));
+        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, Math.max(plainTextLength, encryptedLength), allowBufferResize);
 
         cipher.doFinal(inBuf, outputBuffer);
         outputBuffer.position(0).limit(plainTextLength);
@@ -109,10 +109,10 @@ public class CommitLogEncryptionUtils
      * Uncompress the input data, as well as manage sizing of the {@code outputBuffer}; if the buffer is not big enough,
      * deallocate current, and allocate a large enough buffer (and stash back into the the thread local buffer holder).
      */
-    public static ByteBuffer uncompress(ByteBuffer inputBuffer, ByteBuffer outputBuffer, ICompressor compressor) throws IOException
+    public static ByteBuffer uncompress(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, ICompressor compressor) throws IOException
     {
         int outputLength = inputBuffer.getInt();
-        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, outputLength);
+        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, outputLength, allowBufferResize);
         compressor.uncompress(inputBuffer, outputBuffer);
         outputBuffer.position(0).limit(outputLength);
 

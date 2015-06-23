@@ -31,6 +31,7 @@ import com.google.common.collect.Iterators;
 import com.google.common.primitives.Ints;
 
 import org.apache.cassandra.io.compress.CompressionMetadata;
+import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.utils.WrappedRunnable;
 
 /**
@@ -39,6 +40,7 @@ import org.apache.cassandra.utils.WrappedRunnable;
 public class CompressedInputStream extends InputStream
 {
     private final CompressionInfo info;
+    private final ICompressor compressor;
     // chunk buffer
     private final BlockingQueue<byte[]> dataBuffer;
 
@@ -68,6 +70,7 @@ public class CompressedInputStream extends InputStream
     public CompressedInputStream(InputStream source, CompressionInfo info)
     {
         this.info = info;
+        compressor = info.parameters.getCompressorInstance();
         this.checksum =  new Adler32();
         this.buffer = new byte[info.parameters.chunkLength()];
         // buffer is limited to store up to 1024 chunks
@@ -107,7 +110,7 @@ public class CompressedInputStream extends InputStream
     private void decompress(byte[] compressed) throws IOException
     {
         // uncompress
-        validBufferBytes = info.parameters.sstableCompressor.uncompress(compressed, 0, compressed.length - checksumBytes.length, buffer, 0);
+        validBufferBytes = compressor.uncompress(compressed, 0, compressed.length - checksumBytes.length, buffer, 0);
         totalCompressedBytesRead += compressed.length;
 
         // validate crc randomly

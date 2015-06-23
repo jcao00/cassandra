@@ -53,8 +53,8 @@ import org.apache.cassandra.security.CipherFactory;
     {
         byte[] buf = new byte[(1 << 13) - 13];
         random.nextBytes(buf);
-        ByteBuffer compressedBuffer = CommitLogEncryptionUtils.compress(ByteBuffer.wrap(buf), ByteBuffer.allocate(0), compressor);
-        ByteBuffer uncompressedBuffer = CommitLogEncryptionUtils.uncompress(compressedBuffer, ByteBuffer.allocate(0), compressor);
+        ByteBuffer compressedBuffer = CommitLogEncryptionUtils.compress(ByteBuffer.wrap(buf), ByteBuffer.allocate(0), true, compressor);
+        ByteBuffer uncompressedBuffer = CommitLogEncryptionUtils.uncompress(compressedBuffer, ByteBuffer.allocate(0), true, compressor);
         Assert.assertArrayEquals(buf, uncompressedBuffer.array());
     }
 
@@ -67,11 +67,11 @@ import org.apache.cassandra.security.CipherFactory;
         // encrypt
         CipherFactory cipherFactory = new CipherFactory(tdeOptions);
         Cipher encryptor = cipherFactory.getEncryptor(tdeOptions.cipher, tdeOptions.key_alias);
-        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(ByteBuffer.wrap(buf), ByteBuffer.allocate(0), encryptor);
+        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(ByteBuffer.wrap(buf), ByteBuffer.allocate(0), true, encryptor);
 
         // decrypt
         Cipher decryptor = cipherFactory.getDecryptor(tdeOptions.cipher, tdeOptions.key_alias, encryptor.getIV());
-        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(encryptedBuffer, ByteBuffer.allocate(0), decryptor);
+        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(encryptedBuffer, ByteBuffer.allocate(0), true, decryptor);
 
         // normally, we'd just call BB.array(), but that gives you the *entire* backing array, not with any of the offsets (position,limit) applied.
         // thus, just for this test, we copy the array and perform an array-level comparison with those offsets
@@ -87,19 +87,19 @@ import org.apache.cassandra.security.CipherFactory;
         // compress
         byte[] buf = new byte[(1 << 12) - 7];
         random.nextBytes(buf);
-        ByteBuffer compressedBuffer = CommitLogEncryptionUtils.compress(ByteBuffer.wrap(buf), ByteBuffer.allocate(0), compressor);
+        ByteBuffer compressedBuffer = CommitLogEncryptionUtils.compress(ByteBuffer.wrap(buf), ByteBuffer.allocate(0), true, compressor);
 
         // encrypt
         CipherFactory cipherFactory = new CipherFactory(tdeOptions);
         Cipher encryptor = cipherFactory.getEncryptor(tdeOptions.cipher, tdeOptions.key_alias);
-        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(compressedBuffer, ByteBuffer.allocate(0), encryptor);
+        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(compressedBuffer, ByteBuffer.allocate(0), true, encryptor);
 
         // decrypt
         Cipher decryptor = cipherFactory.getDecryptor(tdeOptions.cipher, tdeOptions.key_alias, encryptor.getIV());
-        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(encryptedBuffer, ByteBuffer.allocate(0), decryptor);
+        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(encryptedBuffer, ByteBuffer.allocate(0), true, decryptor);
 
         // uncompress
-        ByteBuffer uncompressedBuffer = CommitLogEncryptionUtils.uncompress(decryptedBuffer, ByteBuffer.allocate(0), compressor);
+        ByteBuffer uncompressedBuffer = CommitLogEncryptionUtils.uncompress(decryptedBuffer, ByteBuffer.allocate(0), true, compressor);
         Assert.assertArrayEquals(buf, uncompressedBuffer.array());
     }
 }

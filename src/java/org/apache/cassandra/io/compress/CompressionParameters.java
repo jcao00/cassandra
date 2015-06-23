@@ -38,6 +38,7 @@ import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.utils.FBUtilities;
 
 public class CompressionParameters
 {
@@ -51,7 +52,8 @@ public class CompressionParameters
 
     public static final Set<String> GLOBAL_OPTIONS = ImmutableSet.of(CRC_CHECK_CHANCE);
 
-    public final ICompressor sstableCompressor;
+    public final Class<? extends ICompressor> sstableCompressionClass;
+    private final Method compressorCreate;
     private final Integer chunkLength;
     private volatile double crcCheckChance;
     public final Map<String, String> otherOptions; // Unrecognized options, can be use by the compressor
@@ -69,23 +71,25 @@ public class CompressionParameters
         return cp;
     }
 
-    public CompressionParameters(String sstableCompressorClass, Integer chunkLength, Map<String, String> otherOptions) throws ConfigurationException
+    public CompressionParameters(String sstableCompressor)
     {
-        this(createCompressor(parseCompressorClass(sstableCompressorClass), otherOptions), chunkLength, otherOptions);
+        this(sstableCompressor, null, Collections.emptyMap());
     }
 
-    public CompressionParameters(ICompressor sstableCompressor)
+    public CompressionParameters(String sstableCompressor, Integer chunkLength, Map<String, String> otherOptions) throws ConfigurationException
     {
-        // can't try/catch as first statement in the constructor, thus repeating constructor code here.
-        this.sstableCompressor = sstableCompressor;
-        chunkLength = null;
-        otherOptions = Collections.emptyMap();
-        crcCheckChance = DEFAULT_CRC_CHECK_CHANCE;
-    }
+        this.sstableCompressionClass = parseCompressorClass(sstableCompressor);
+        try
+        {
+            compressorCreate = sstableCompressionClass != null
+                               ? sstableCompressionClass.getMethod("create", Map.class)
+                               : null;
+        }
+        catch (NoSuchMethodException e)
+        {
+            throw new ConfigurationException("compressor has no create() method: " + sstableCompressor, e);
+        }
 
-    public CompressionParameters(ICompressor sstableCompressor, Integer chunkLength, Map<String, String> otherOptions) throws ConfigurationException
-    {
-        this.sstableCompressor = sstableCompressor;
         this.chunkLength = chunkLength;
         this.otherOptions = otherOptions;
         String chance = otherOptions.get(CRC_CHECK_CHANCE);
@@ -94,7 +98,8 @@ public class CompressionParameters
 
     public CompressionParameters copy()
     {
-        return new CompressionParameters(sstableCompressor, chunkLength, new HashMap<>(otherOptions));
+        String compressor = sstableCompressionClass == null ? null : sstableCompressionClass.getName();
+        return new CompressionParameters(compressor, chunkLength, new HashMap<>(otherOptions));
     }
 
     public void setLiveMetadata(final CFMetaData liveMetadata)
@@ -144,7 +149,7 @@ public class CompressionParameters
         return chunkLength == null ? DEFAULT_CHUNK_LENGTH : chunkLength;
     }
 
-    private static Class<?> parseCompressorClass(String className) throws ConfigurationException
+    private static Class<? extends ICompressor> parseCompressorClass(String className) throws ConfigurationException
     {
         if (className == null || className.isEmpty())
             return null;
@@ -152,7 +157,11 @@ public class CompressionParameters
         className = className.contains(".") ? className : "org.apache.cassandra.io.compress." + className;
         try
         {
-            return Class.forName(className);
+            Class<ICompressor> compressionType = FBUtilities.classForName(className, "compression type");
+            if (!ICompressor.class.isAssignableFrom(compressionType))
+                throw new ConfigurationException(String.format("Specified compression class (%s) is not derived from ICompressor", className));
+
+            return compressionType;
         }
         catch (Exception e)
         {
@@ -160,7 +169,7 @@ public class CompressionParameters
         }
     }
 
-    private static ICompressor createCompressor(Class<?> compressorClass, Map<String, String> compressionOptions) throws ConfigurationException
+    public static ICompressor createCompressor(Class<?> compressorClass, Map<String, String> compressionOptions) throws ConfigurationException
     {
         if (compressorClass == null)
         {
@@ -206,8 +215,50 @@ public class CompressionParameters
         }
     }
 
-    public static ICompressor createCompressor(ParameterizedClass compression) throws ConfigurationException {
+    public static ICompressor createCompressor(ParameterizedClass compression) throws ConfigurationException
+    {
         return createCompressor(parseCompressorClass(compression.class_name), copyOptions(compression.parameters));
+    }
+
+    public ICompressor getCompressorInstance()
+    {
+        if (sstableCompressionClass == null)
+        {
+            if (!otherOptions.isEmpty())
+                throw new RuntimeException("Unknown compression options (" + otherOptions.keySet() + ") since no compression class found");
+            return null;
+        }
+
+        try
+        {
+            ICompressor compressor = (ICompressor)compressorCreate.invoke(null, otherOptions);
+            // Check for unknown options
+            AbstractSet<String> supportedOpts = Sets.union(compressor.supportedOptions(), GLOBAL_OPTIONS);
+            for (String provided : otherOptions.keySet())
+                if (!supportedOpts.contains(provided))
+                    throw new RuntimeException("Unknown compression options " + provided);
+            return compressor;
+        }
+        catch (SecurityException e)
+        {
+            throw new RuntimeException("Access forbiden", e);
+        }
+        catch (IllegalAccessException e)
+        {
+            throw new RuntimeException("Cannot access method create in " + sstableCompressionClass.getName(), e);
+        }
+        catch (InvocationTargetException e)
+        {
+            Throwable cause = e.getCause();
+            throw new RuntimeException(String.format("%s.create() threw an error: %s",
+                                                     sstableCompressionClass.getSimpleName(),
+                                                     cause == null ? e.getClass().getName() + " " + e.getMessage() : cause.getClass().getName() + " " + cause.getMessage()),
+                                       e);
+        }
+        catch (ExceptionInInitializerError e)
+        {
+            throw new RuntimeException("Cannot initialize class " + sstableCompressionClass.getName());
+        }
     }
 
     private static Map<String, String> copyOptions(Map<? extends CharSequence, ? extends CharSequence> co)
@@ -280,10 +331,10 @@ public class CompressionParameters
     public Map<String, String> asThriftOptions()
     {
         Map<String, String> options = new HashMap<String, String>(otherOptions);
-        if (sstableCompressor == null)
+        if (sstableCompressionClass == null)
             return options;
 
-        options.put(SSTABLE_COMPRESSION, sstableCompressor.getClass().getName());
+        options.put(SSTABLE_COMPRESSION, sstableCompressionClass.getName());
         if (chunkLength != null)
             options.put(CHUNK_LENGTH_KB, chunkLengthInKB());
         return options;
@@ -308,8 +359,8 @@ public class CompressionParameters
 
         CompressionParameters cp = (CompressionParameters) obj;
         return new EqualsBuilder()
-            .append(sstableCompressor, cp.sstableCompressor)
-            .append(chunkLength, cp.chunkLength)
+            .append(sstableCompressionClass, cp.sstableCompressionClass)
+            .append(chunkLength(), cp.chunkLength.intValue())
             .append(otherOptions, cp.otherOptions)
             .isEquals();
     }
@@ -318,7 +369,7 @@ public class CompressionParameters
     public int hashCode()
     {
         return new HashCodeBuilder(29, 1597)
-            .append(sstableCompressor)
+            .append(sstableCompressionClass)
             .append(chunkLength)
             .append(otherOptions)
             .toHashCode();
@@ -328,7 +379,7 @@ public class CompressionParameters
     {
         public void serialize(CompressionParameters parameters, DataOutputPlus out, int version) throws IOException
         {
-            out.writeUTF(parameters.sstableCompressor.getClass().getSimpleName());
+            out.writeUTF(parameters.sstableCompressionClass.getSimpleName());
             out.writeInt(parameters.otherOptions.size());
             for (Map.Entry<String, String> entry : parameters.otherOptions.entrySet())
             {
@@ -364,7 +415,7 @@ public class CompressionParameters
 
         public long serializedSize(CompressionParameters parameters, int version)
         {
-            long size = TypeSizes.NATIVE.sizeof(parameters.sstableCompressor.getClass().getSimpleName());
+            long size = TypeSizes.NATIVE.sizeof(parameters.sstableCompressionClass.getSimpleName());
             size += TypeSizes.NATIVE.sizeof(parameters.otherOptions.size());
             for (Map.Entry<String, String> entry : parameters.otherOptions.entrySet())
             {

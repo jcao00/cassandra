@@ -124,7 +124,7 @@ public class LegacySchemaTablesTest
 
                 // Testing with compression to catch #3558
                 CFMetaData withCompression = cfm.copy();
-                withCompression.compressionParameters(new CompressionParameters(SnappyCompressor.instance, 32768, new HashMap<String, String>()));
+                withCompression.compressionParameters(new CompressionParameters(SnappyCompressor.class.getName(), 32768, new HashMap<String, String>()));
                 checkInverses(withCompression);
             }
         }

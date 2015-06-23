@@ -20,6 +20,7 @@ package org.apache.cassandra.io.compress;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -53,6 +54,11 @@ public class LZ4Compressor implements ICompressor
     public int initialCompressedBufferLength(int chunkLength)
     {
         return INTEGER_BYTES + compressor.maxCompressedLength(chunkLength);
+    }
+
+    public Map<String, String> compressionParameters()
+    {
+        return Collections.emptyMap();
     }
 
     public void compress(ByteBuffer input, ByteBuffer output) throws IOException

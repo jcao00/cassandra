@@ -587,11 +587,12 @@ public class ByteBufferUtil
      *
      * @param buf buffer to test the size of; may be null, in which case, a new buffer is allocated.
      * @param outputLength the minimum target size of the buffer
+     * @param allowBufferResize true if resizing (reallocating) the buffer is allowed
      * @return {@code buf} if it was large enough, else a newly allocated buffer.
      */
-    public static ByteBuffer ensureCapacity(ByteBuffer buf, int outputLength)
+    public static ByteBuffer ensureCapacity(ByteBuffer buf, int outputLength, boolean allowBufferResize)
     {
-        return ensureCapacity(buf, outputLength, BufferType.ON_HEAP);
+        return ensureCapacity(buf, outputLength, allowBufferResize, BufferType.ON_HEAP);
     }
 
     /**
@@ -600,15 +601,18 @@ public class ByteBufferUtil
      *
      * @param buf buffer to test the size of; may be null, in which case, a new buffer is allocated.
      * @param outputLength the minimum target size of the buffer
+     * @param allowBufferResize true if resizing (reallocating) the buffer is allowed
      * @param bufferType on- or off- heap byte buffer
      * @return {@code buf} if it was large enough, else a newly allocated buffer.
      */
-    public static ByteBuffer ensureCapacity(ByteBuffer buf, int outputLength, BufferType bufferType)
+    public static ByteBuffer ensureCapacity(ByteBuffer buf, int outputLength, boolean allowBufferResize, BufferType bufferType)
     {
         if (0 > outputLength)
             throw new IllegalArgumentException("invalid size for output buffer: " + outputLength);
         if (buf == null || buf.capacity() < outputLength)
         {
+            if (!allowBufferResize)
+                throw new IllegalStateException(String.format("output buffer is not large enough for data: current capacity %d, required %d", buf.capacity(), outputLength));
             FileUtils.clean(buf);
             buf = bufferType.allocate(outputLength);
         }

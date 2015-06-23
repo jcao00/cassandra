@@ -84,19 +84,16 @@ public class EncryptionContext
     }
 
     /**
-     * If encryption headers are found in the {@code commitLogParameters},
+     * If encryption headers are found in the {@code parameters},
      * those headers are merged with the application-wide {@code encryptionContext}.
-     *
-     * @param commitLogParameters
-     * @param encryptionContext
      */
-    public static EncryptionContext createFromCommitLog(Map<?, ?> commitLogParameters, EncryptionContext encryptionContext)
+    public static EncryptionContext createFromMap(Map<?, ?> parameters, EncryptionContext encryptionContext)
     {
-        if (commitLogParameters == null || commitLogParameters.isEmpty())
+        if (parameters == null || parameters.isEmpty())
             return new EncryptionContext(new TransparentDataEncryptionOptions(false));
 
-        String keyAlias = (String)commitLogParameters.get(ENCRYPTION_KEY_ALIAS);
-        String cipher = (String)commitLogParameters.get(ENCRYPTION_CIPHER);
+        String keyAlias = (String)parameters.get(ENCRYPTION_KEY_ALIAS);
+        String cipher = (String)parameters.get(ENCRYPTION_CIPHER);
         if (keyAlias == null || cipher == null)
             return new EncryptionContext(new TransparentDataEncryptionOptions(false));
 
@@ -144,7 +141,7 @@ public class EncryptionContext
         return Objects.equal(tdeOptions, other.tdeOptions) && Objects.equal(compressor, other.compressor);
     }
 
-    public Map<String, String> toCommitLogHeaderParameters()
+    public Map<String, String> toHeaderParameters()
     {
         Map<String, String> map = new HashMap<>(2);
         // add compresison options, someday ...

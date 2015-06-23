@@ -79,6 +79,11 @@ public class SnappyCompressor implements ICompressor
         return Snappy.maxCompressedLength(chunkLength);
     }
 
+    public Map<String, String> compressionParameters()
+    {
+        return Collections.emptyMap();
+    }
+
     public void compress(ByteBuffer input, ByteBuffer output) throws IOException
     {
         int dlimit = output.limit();

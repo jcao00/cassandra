@@ -102,7 +102,7 @@ public class EncryptedSegment extends FileDirectSegment
 
     protected Map<String, String> additionalHeaderParameters()
     {
-        Map<String, String> map = encryptionContext.toCommitLogHeaderParameters();
+        Map<String, String> map = encryptionContext.toHeaderParameters();
         map.put(EncryptionContext.ENCRYPTION_IV, Hex.bytesToHex(cipher.getIV()));
         return map;
     }
@@ -139,14 +139,10 @@ public class EncryptedSegment extends FileDirectSegment
                 ByteBuffer slice = inputBuffer.duplicate();
                 slice.limit(contentStart + nextBlockSize).position(contentStart);
 
-                ByteBuffer freakingCopy = slice.duplicate();
-                ByteBuffer bb = ByteBuffer.allocate(freakingCopy.remaining());
-                bb.put(freakingCopy);
-
-                ByteBuffer retBuf = CommitLogEncryptionUtils.compress(slice, compressedBuffer, compressor);
+                ByteBuffer retBuf = CommitLogEncryptionUtils.compress(slice, compressedBuffer, true, compressor);
                 compressedBuffer = maybeSwap(compressedBuffer, retBuf, compressedBufferHolder);
 
-                retBuf = CommitLogEncryptionUtils.encrypt(compressedBuffer, encryptedBuffer, cipher);
+                retBuf = CommitLogEncryptionUtils.encrypt(compressedBuffer, encryptedBuffer, true, cipher);
                 encryptedBuffer = maybeSwap(encryptedBuffer, retBuf, encryptedBufferHolder);
 
                 channel.write(encryptedBuffer);
@@ -158,7 +154,7 @@ public class EncryptedSegment extends FileDirectSegment
 
             // rewind to the beginning of the section and write out the sync marker,
             // reusing the one of the existing buffers
-            encryptedBuffer = ByteBufferUtil.ensureCapacity(encryptedBuffer, ENCRYPTED_SECTION_HEADER_SIZE);
+            encryptedBuffer = ByteBufferUtil.ensureCapacity(encryptedBuffer, ENCRYPTED_SECTION_HEADER_SIZE, true);
             writeSyncMarker(encryptedBuffer, 0, (int) syncMarkerPosition, (int) lastWrittenPos);
             encryptedBuffer.putInt(SYNC_MARKER_SIZE, length);
             encryptedBuffer.position(0).limit(ENCRYPTED_SECTION_HEADER_SIZE);

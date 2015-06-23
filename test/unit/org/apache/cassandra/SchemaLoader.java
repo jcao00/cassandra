@@ -385,7 +385,7 @@ public class SchemaLoader
         {
             for (CFMetaData cfm : ksm.cfMetaData().values())
             {
-                cfm.compressionParameters(new CompressionParameters(SnappyCompressor.instance));
+                cfm.compressionParameters(new CompressionParameters(SnappyCompressor.class.getName()));
             }
         }
     }
@@ -451,7 +451,7 @@ public class SchemaLoader
     public static CompressionParameters getCompressionParameters(Integer chunkSize)
     {
         if (Boolean.parseBoolean(System.getProperty("cassandra.test.compression", "false")))
-            return new CompressionParameters(SnappyCompressor.instance, chunkSize, Collections.<String, String>emptyMap());
+            return new CompressionParameters(SnappyCompressor.class.getName(), chunkSize, Collections.<String, String>emptyMap());
         else
             return new CompressionParameters(null);
     }

@@ -76,7 +76,7 @@ public class SegmentedReaderTest
 
         int uncompressedHeaderSize = 4;  // need to add in the plain text size to the block we write out
         int length = compressor.initialCompressedBufferLength(rawSize);
-        ByteBuffer compBuffer = ByteBufferUtil.ensureCapacity(null, length + uncompressedHeaderSize, compressor.preferredBufferType());
+        ByteBuffer compBuffer = ByteBufferUtil.ensureCapacity(null, length + uncompressedHeaderSize, true, compressor.preferredBufferType());
         compBuffer.putInt(rawSize);
         compressor.compress(plainTextBuffer, compBuffer);
         compBuffer.flip();
@@ -113,9 +113,9 @@ public class SegmentedReaderTest
         ByteBuffer plainTextBuffer = ByteBuffer.allocate(plainTextLength);
         random.nextBytes(plainTextBuffer.array());
 
-        ByteBuffer compressedBuffer = CommitLogEncryptionUtils.compress(plainTextBuffer, null, context.getCompressor());
+        ByteBuffer compressedBuffer = CommitLogEncryptionUtils.compress(plainTextBuffer, null, true, context.getCompressor());
         Cipher cipher = cipherFactory.getEncryptor(context.getTransparentDataEncryptionOptions().cipher, context.getTransparentDataEncryptionOptions().key_alias);
-        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(compressedBuffer, null, cipher);
+        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(compressedBuffer, null, true, cipher);
 
         File encryptedFile = File.createTempFile("encrypted-segment-", ".log");
         encryptedFile.deleteOnExit();

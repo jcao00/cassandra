@@ -139,7 +139,7 @@ public class CommitLogDescriptor
             params.put(COMPRESSION_CLASS_KEY, compression.class_name);
         }
         if (encryptionContext != null)
-            params.putAll(encryptionContext.toCommitLogHeaderParameters());
+            params.putAll(encryptionContext.toHeaderParameters());
         params.putAll(additionalHeaders);
         return JSONValue.toJSONString(params);
     }
@@ -183,7 +183,7 @@ public class CommitLogDescriptor
         if (crc == checkcrc.getCrc())
         {
             Map<?, ?> map = (Map<?, ?>) JSONValue.parse(new String(parametersBytes, StandardCharsets.UTF_8));
-            return new CommitLogDescriptor(version, id, parseCompression(map), EncryptionContext.createFromCommitLog(map, encryptionContext), map);
+            return new CommitLogDescriptor(version, id, parseCompression(map), EncryptionContext.createFromMap(map, encryptionContext), map);
         }
         return null;
     }

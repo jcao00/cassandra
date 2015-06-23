@@ -287,8 +287,8 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
                         return null;
                     try
                     {
-                        decryptedBuffer = CommitLogEncryptionUtils.decrypt(input, decryptedBuffer, cipher);
-                        uncompressedBuffer = CommitLogEncryptionUtils.uncompress(decryptedBuffer, uncompressedBuffer, compressor);
+                        decryptedBuffer = CommitLogEncryptionUtils.decrypt(input, decryptedBuffer, true, cipher);
+                        uncompressedBuffer = CommitLogEncryptionUtils.uncompress(decryptedBuffer, uncompressedBuffer, true, compressor);
                         return uncompressedBuffer;
                     }
                     catch (IOException | ShortBufferException | BadPaddingException | IllegalBlockSizeException e)
@@ -303,7 +303,7 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
         {
             // read the entire sync segment in one go; then, iterate for each encrypted block
             int length = nextSectionStartPosition - startPosition;
-            fileReadBuffer = ByteBufferUtil.ensureCapacity(fileReadBuffer, length);
+            fileReadBuffer = ByteBufferUtil.ensureCapacity(fileReadBuffer, length, true);
             reader.getChannel().readFully(fileReadBuffer, startPosition);
             fileReadBuffer.flip();
             int plainTextLength = fileReadBuffer.getInt();

@@ -66,6 +66,11 @@ public class DeflateCompressor implements ICompressor
         return Collections.emptySet();
     }
 
+    public Map<String, String> compressionParameters()
+    {
+        return Collections.emptyMap();
+    }
+
     public int initialCompressedBufferLength(int sourceLen)
     {
         // Taken from zlib deflateBound(). See http://www.zlib.net/zlib_tech.html.

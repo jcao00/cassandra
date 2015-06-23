@@ -140,7 +140,7 @@ public class CompressionMetadata
 
     public ICompressor compressor()
     {
-        return parameters.sstableCompressor;
+        return parameters.getCompressorInstance();
     }
 
     public int chunkLength()
@@ -303,9 +303,17 @@ public class CompressionMetadata
         {
             try
             {
-                out.writeUTF(parameters.sstableCompressor.getClass().getSimpleName());
-                out.writeInt(parameters.otherOptions.size());
-                for (Map.Entry<String, String> entry : parameters.otherOptions.entrySet())
+                ICompressor compressor = parameters.getCompressorInstance();
+                out.writeUTF(compressor.getClass().getSimpleName());
+
+                Map<String, String> options = new HashMap<>();
+                options.putAll(parameters.otherOptions);
+                Map<String, String> customOptions = compressor.compressionParameters();
+                if (customOptions != null && customOptions.size() > 0)
+                    options.putAll(customOptions);
+
+                out.writeInt(options.size());
+                for (Map.Entry<String, String> entry : options.entrySet())
                 {
                     out.writeUTF(entry.getKey());
                     out.writeUTF(entry.getValue());

@@ -19,13 +19,19 @@ package org.apache.cassandra.io.compress;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Map;
 import java.util.Set;
 
+/**
+ * It is expected that implementing classes also implement a static creation method, as well:
+ *
+ * public static ICompressor create(Map<String, String> compressionOptions)
+ */
 public interface ICompressor
 {
-    public int initialCompressedBufferLength(int chunkLength);
+    int initialCompressedBufferLength(int chunkLength);
 
-    public int uncompress(byte[] input, int inputOffset, int inputLength, byte[] output, int outputOffset) throws IOException;
+    int uncompress(byte[] input, int inputOffset, int inputLength, byte[] output, int outputOffset) throws IOException;
 
     /**
      * Compression for ByteBuffers.
@@ -33,7 +39,7 @@ public interface ICompressor
      * The data between input.position() and input.limit() is compressed and placed into output starting from output.position().
      * Positions in both buffers are moved to reflect the bytes read and written. Limits are not changed.
      */
-    public void compress(ByteBuffer input, ByteBuffer output) throws IOException;
+    void compress(ByteBuffer input, ByteBuffer output) throws IOException;
 
     /**
      * Decompression for DirectByteBuffers.
@@ -41,12 +47,12 @@ public interface ICompressor
      * The data between input.position() and input.limit() is uncompressed and placed into output starting from output.position().
      * Positions in both buffers are moved to reflect the bytes read and written. Limits are not changed.
      */
-    public void uncompress(ByteBuffer input, ByteBuffer output) throws IOException;
+    void uncompress(ByteBuffer input, ByteBuffer output) throws IOException;
 
     /**
      * Returns the preferred (most efficient) buffer type for this compressor.
      */
-    public BufferType preferredBufferType();
+    BufferType preferredBufferType();
 
     /**
      * Checks if the given buffer would be supported by the compressor. If a type is supported the compressor must be
@@ -54,7 +60,13 @@ public interface ICompressor
      *
      * Direct and memory-mapped buffers must be supported by all compressors.
      */
-    public boolean supports(BufferType bufferType);
+    boolean supports(BufferType bufferType);
 
-    public Set<String> supportedOptions();
+    Set<String> supportedOptions();
+
+    /**
+     * Retrieve instance-specific parameters for this compressor.
+     * @return custom map of name-value pairs; else, an empty map.
+     */
+    Map<String, String> compressionParameters();
 }
