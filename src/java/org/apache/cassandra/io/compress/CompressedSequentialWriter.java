@@ -67,6 +67,7 @@ public class CompressedSequentialWriter extends SequentialWriter
                                       MetadataCollector sstableMetadataCollector)
     {
         super(file, parameters.chunkLength(), parameters.getSstableCompressor().preferredBufferType());
+        parameters = parameters.copyWithFreshCompressor();
         this.compressor = parameters.getSstableCompressor();
 
         // buffer for compression should be the same size as buffer itself

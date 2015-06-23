@@ -653,7 +653,7 @@ public class ThriftConversion
         if (!parameters.isEnabled())
             return Collections.emptyMap();
 
-        Map<String, String> options = new HashMap<>(parameters.getOtherOptions());
+        Map<String, String> options = new HashMap<>(parameters.getOtherOptions(false));
         Class<? extends ICompressor> klass = parameters.getSstableCompressor().getClass();
         options.put(CompressionParams.SSTABLE_COMPRESSION, klass.getName());
         options.put(CompressionParams.CHUNK_LENGTH_KB, parameters.chunkLengthInKB());

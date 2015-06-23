@@ -75,7 +75,7 @@ public class EncryptionContext
         {
             try
             {
-                factory = new CipherFactory(tdeOptions);
+                factory = CipherFactory.instance(tdeOptions);
             }
             catch (Exception e)
             {
@@ -90,6 +90,7 @@ public class EncryptionContext
     {
         return compressor;
     }
+
 
     public Cipher getEncryptor() throws IOException
     {

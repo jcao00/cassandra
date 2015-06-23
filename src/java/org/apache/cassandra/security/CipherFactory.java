@@ -44,23 +44,67 @@ import org.apache.cassandra.config.TransparentDataEncryptionOptions;
 /**
  * A factory for loading encryption keys from {@link KeyProvider} instances.
  * Maintains a cache of loaded keys to avoid invoking the key provider on every call.
+ *
+ * Expected use pattern is like:
+ * <pre>
+ *     CipherFactory cipherFactory = CipherFactory.getFactory(TransparentDataEncryptionOptions);
+ *     Cipher cipher = cipherFactory.getEncryptor(...);
+ * </pre>
  */
 public class CipherFactory
 {
-    private final Logger logger = LoggerFactory.getLogger(CipherFactory.class);
+    private static final Logger logger = LoggerFactory.getLogger(CipherFactory.class);
 
     /**
-     * Keep around thread local instances of Cipher as they are quite expensive to instantiate (@code Cipher#getInstance).
+     * {@link SecureRandom} instance can be a static final member as all the calls that we will perform on it,
+     * albeit very infrequently, are synchronized.
+     */
+    private static final SecureRandom secureRandom;
+
+    /**
+     * A cache of keyProvider-specific instances. The cache size will almost always 1, but this cache acts as a memoization
+     * mechanism more than anything as it assumes initializing {@link KeyProvider} instances is expensive.
+     */
+    private static final LoadingCache<FactoryCacheKey, CipherFactory> factories;
+
+    /**
+     * Keep around thread local instances of {@link Cipher} as they are quite expensive to instantiate (@code Cipher#getInstance).
      * Bonus points if you can avoid calling (@code Cipher#init); hence, the point of the supporting struct
      * for caching Cipher instances.
      */
-    private static final ThreadLocal<CachedCipher> cipherThreadLocal = new ThreadLocal<>();
+    private static final ThreadLocal<CachedCipher> cachedCiphers = new ThreadLocal<>();
 
-    private final SecureRandom secureRandom;
+    static
+    {
+        try
+        {
+            secureRandom = SecureRandom.getInstance("SHA1PRNG");
+        }
+        catch (NoSuchAlgorithmException e)
+        {
+            throw new RuntimeException("unable to create SecureRandom", e);
+        }
+
+        factories = CacheBuilder.newBuilder() // by default cache is unbounded
+                                .maximumSize(8) // a value large enough that we should never even get close (so nothing gets evicted)
+                                .build(new CacheLoader<FactoryCacheKey, CipherFactory>()
+                                {
+                                    public CipherFactory load(FactoryCacheKey entry) throws Exception
+                                    {
+                                        return new CipherFactory(entry.options);
+                                    }
+                                });
+    }
+
+    /**
+     * A cache of loaded {@link Key} instances. The cache size is expected to be almost always 1,
+     * but this cache acts as a memoization mechanism more than anything as it assumes loading keys is expensive.
+     */
     private final LoadingCache<String, Key> cache;
     private final int ivLength;
     private final KeyProvider keyProvider;
 
+    @VisibleForTesting
     public CipherFactory(TransparentDataEncryptionOptions options)
     {
         logger.info("initializing CipherFactory");
@@ -68,7 +112,6 @@ public class CipherFactory
 
         try
         {
-            secureRandom = SecureRandom.getInstance("SHA1PRNG");
             Class<KeyProvider> keyProviderClass = (Class<KeyProvider>)Class.forName(options.key_provider.class_name);
             Constructor ctor = keyProviderClass.getConstructor(TransparentDataEncryptionOptions.class);
             keyProvider = (KeyProvider)ctor.newInstance(options);
@@ -80,7 +123,6 @@ public class CipherFactory
 
         cache = CacheBuilder.newBuilder() // by default cache is unbounded
                 .maximumSize(64) // a value large enough that we should never even get close (so nothing gets evicted)
-                .concurrencyLevel(Runtime.getRuntime().availableProcessors())
                 .removalListener(new RemovalListener<String, Key>()
                 {
                     public void onRemoval(RemovalNotification<String, Key> notice)
@@ -98,6 +140,18 @@ public class CipherFactory
                         return keyProvider.getSecretKey(alias);
                     }
                 });
+    }
+
+    public static CipherFactory instance(TransparentDataEncryptionOptions options)
+    {
+        try
+        {
+            return factories.get(new FactoryCacheKey(options));
+        }
+        catch (ExecutionException e)
+        {
+            throw new RuntimeException("failed to get cipher factory instance");
+        }
     }
 
     public Cipher getEncryptor(String transformation, String keyAlias) throws IOException
@@ -118,20 +172,22 @@ public class CipherFactory
     {
         try
         {
-            CachedCipher cachedCipher = cipherThreadLocal.get();
+            CachedCipher cachedCipher = cachedCiphers.get();
             if (cachedCipher != null)
             {
                 Cipher cipher = cachedCipher.cipher;
                 // rigorous checks to make sure we've absolutely got the correct instance (with correct alg/key/iv/...)
-                if (cachedCipher.mode == cipherMode && cipher.getAlgorithm().equals(transformation)
-                    && cachedCipher.keyAlias.equals(keyAlias) && Arrays.equals(cipher.getIV(), iv))
+                if (cachedCipher.mode == cipherMode
+                    && cipher.getAlgorithm().equals(transformation)
+                    && cachedCipher.keyAlias.equals(keyAlias)
+                    && Arrays.equals(cipher.getIV(), iv))
                     return cipher;
             }
 
             Key key = retrieveKey(keyAlias);
             Cipher cipher = Cipher.getInstance(transformation);
             cipher.init(cipherMode, key, new IvParameterSpec(iv));
-            cipherThreadLocal.set(new CachedCipher(cipherMode, keyAlias, cipher));
+            cachedCiphers.set(new CachedCipher(cipherMode, keyAlias, cipher));
             return cipher;
         }
         catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidAlgorithmParameterException | InvalidKeyException e)
@@ -170,6 +226,28 @@ public class CipherFactory
             this.mode = mode;
             this.keyAlias = keyAlias;
             this.cipher = cipher;
+        }
+    }
+
+    private static class FactoryCacheKey
+    {
+        private final TransparentDataEncryptionOptions options;
+        private final String key;
+
+        public FactoryCacheKey(TransparentDataEncryptionOptions options)
+        {
+            this.options = options;
+            key = options.key_provider.class_name;
+        }
+
+        public boolean equals(Object o)
+        {
+            return o instanceof FactoryCacheKey && key.equals(((FactoryCacheKey)o).key);
+        }
+
+        public int hashCode()
+        {
+            return key.hashCode();
         }
     }
 }

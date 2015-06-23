@@ -34,7 +34,7 @@ import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 /**
- * Encryption and decryption functions specific to the commit log.
+ * Encryption and decryption functions.
  * See comments in {@link EncryptedSegment} for details on the binary format.
  * The normal, and expected, invocation pattern is to compress then encrypt the data on the encryption pass,
  * then decrypt and uncompress the data on the decrypt pass.
@@ -163,10 +163,35 @@ public class EncryptionUtils
         return dupe;
     }
 
+    // path used when decrypting sstables
+    public static ByteBuffer decrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, Cipher cipher) throws IOException
+    {
+        return decrypt(new ByteByfferReadChannel(inputBuffer), outputBuffer, allowBufferResize, cipher);
+    }
+
     // path used when decrypting commit log files
     public static ByteBuffer decrypt(FileDataInput fileDataInput, ByteBuffer outputBuffer, boolean allowBufferResize, Cipher cipher) throws IOException
     {
         return decrypt(new DataInputReadChannel(fileDataInput), outputBuffer, allowBufferResize, cipher);
+    }
+
+    public static int decrypt(byte[] input, int inputOffset, byte[] output, int outputOffset, Cipher cipher) throws BadPaddingException, ShortBufferException, IllegalBlockSizeException
+    {
+        int encryptedLength = readInt(input, inputOffset);
+        inputOffset += 4;
+        // this is the length of the compressed data
+        int plainTextLength = readInt(input, inputOffset);
+        inputOffset += 4;
+
+        int maxLength = Math.max(plainTextLength, encryptedLength);
+        if (output.length - outputOffset < maxLength)
+        {
+            String msg = String.format("buffer to decrypt into is not large enough; buf size = %d, buf offset = %d, target size = %s",
+                                       output.length, outputOffset, maxLength);
+            throw new IllegalStateException(msg);
+        }
+
+        return cipher.doFinal(input, inputOffset, encryptedLength, output, outputOffset);
     }
 
     /**
@@ -227,6 +252,38 @@ public class EncryptionUtils
             int count = src.remaining();
             buffer.put(src);
             return count;
+        }
+
+        public boolean isOpen()
+        {
+            return true;
+        }
+
+        public void close()
+        {
+            // nop
+        }
+    }
+
+    private static class ByteByfferReadChannel implements ReadableByteChannel
+    {
+        private final ByteBuffer buffer;
+
+        private ByteByfferReadChannel(ByteBuffer buffer)
+        {
+            this.buffer = buffer;
+        }
+
+        public int read(ByteBuffer dst) throws IOException
+        {
+            int startPosition = buffer.position();
+            ByteBuffer dupe = buffer.duplicate();
+            dupe.limit(startPosition + dst.remaining());
+            dst.put(dupe);
+            dst.flip();
+
+            buffer.position(startPosition + dst.limit());
+            return dst.limit();
         }
 
         public boolean isOpen()

@@ -21,7 +21,6 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.zip.Checksum;
-import java.util.function.Supplier;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Ints;
@@ -126,7 +125,8 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             }
             finally
             {
-                buffer.flip();
+                if (buffer.position() != 0)
+                    buffer.flip();
             }
 
             if (getCrcCheckChance() > ThreadLocalRandom.current().nextDouble())
@@ -188,7 +188,8 @@ public class CompressedRandomAccessReader extends RandomAccessReader
             }
             finally
             {
-                buffer.flip();
+                if (buffer.position() != 0)
+                    buffer.flip();
             }
 
             if (getCrcCheckChance() > ThreadLocalRandom.current().nextDouble())

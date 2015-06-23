@@ -159,6 +159,12 @@ public final class CompressionParams
         return new CompressionParams(sstableCompressor, chunkLength, otherOptions);
     }
 
+    public CompressionParams copyWithFreshCompressor()
+    {
+        ICompressor compressor = createCompressor(sstableCompressor.getClass(), otherOptions);
+        return new CompressionParams(compressor, chunkLength, otherOptions);
+    }
+
     /**
      * Checks if compression is enabled.
      * @return {@code true} if compression is enabled, {@code false} otherwise.
@@ -177,9 +183,15 @@ public final class CompressionParams
         return sstableCompressor;
     }
 
-    public ImmutableMap<String, String> getOtherOptions()
+    /**
+     * @param withCompressorValues Include any instance-specific values from the {@code sstableCompressor}
+     */
+    public ImmutableMap<String, String> getOtherOptions(boolean withCompressorValues)
     {
-        return otherOptions;
+        if (!withCompressorValues)
+            return otherOptions;
+        return ImmutableMap.<String, String>builder().putAll(otherOptions)
+                           .putAll(sstableCompressor.compressionParameters()).build();
     }
 
     public int chunkLength()

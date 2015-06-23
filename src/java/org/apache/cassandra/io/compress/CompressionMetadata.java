@@ -49,14 +49,13 @@ import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.Memory;
 import org.apache.cassandra.io.util.SafeMemory;
 import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.utils.ChecksumType;
 import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.concurrent.Transactional;
 import org.apache.cassandra.utils.concurrent.Ref;
+import org.apache.cassandra.utils.concurrent.Transactional;
 
 /**
  * Holds metadata about compressed file
@@ -346,8 +345,9 @@ public class CompressionMetadata
             try
             {
                 out.writeUTF(parameters.getSstableCompressor().getClass().getSimpleName());
-                out.writeInt(parameters.getOtherOptions().size());
-                for (Map.Entry<String, String> entry : parameters.getOtherOptions().entrySet())
+                Map<String, String> options = parameters.getOtherOptions(true);
+                out.writeInt(options.size());
+                for (Map.Entry<String, String> entry : options.entrySet())
                 {
                     out.writeUTF(entry.getKey());
                     out.writeUTF(entry.getValue());
