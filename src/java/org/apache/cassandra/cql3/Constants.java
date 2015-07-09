@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.serializers.MarshalException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -180,6 +181,7 @@ public abstract class Constants
                     switch (nt)
                     {
                         case BIGINT:
+                        case BITMAP:
                         case COUNTER:
                         case DECIMAL:
                         case DOUBLE:
@@ -302,10 +304,19 @@ public abstract class Constants
 
         public void execute(ByteBuffer rowKey, ColumnFamily cf, ColumnNameBuilder prefix, UpdateParameters params) throws InvalidRequestException
         {
+            boolean isBitmap = false;
+            ColumnDefinition columnDefinition = cf.metadata().getColumnDefinition(columnName.key);
+            if (columnDefinition != null)
+            {
+                AbstractType<?> validator = columnDefinition.getValidator();
+                isBitmap = validator != null && validator.isCommutative();
+            }
+
             prefix = maybeUpdatePrefix(cf.metadata(), prefix);
             ByteBuffer cname = columnName == null ? prefix.build() : prefix.add(columnName.key).build();
             ByteBuffer value = t.bindAndGet(params.variables);
-            cf.addColumn(value == null ? params.makeTombstone(cname) : params.makeColumn(cname, value));
+            cf.addColumn(value == null ? params.makeTombstone(cname) :
+                         isBitmap ? params.makeBitmapColumn(cname, value) : params.makeColumn(cname, value));
         }
     }
 

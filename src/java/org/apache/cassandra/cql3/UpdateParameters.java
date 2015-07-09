@@ -64,6 +64,14 @@ public class UpdateParameters
         return Column.create(name, value, timestamp, ttl, metadata);
     }
 
+    public Column makeBitmapColumn(ByteBuffer name, ByteBuffer value)
+    {
+        if (value.remaining() < 8)
+            throw new IllegalStateException("not enough bytes for a long, buffer = " + value);
+        long l = value.getLong();
+        return new BitmapColumn(name, l);
+    }
+
     public Column makeCounter(ByteBuffer name, long delta) throws InvalidRequestException
     {
         QueryProcessor.validateCellName(name);

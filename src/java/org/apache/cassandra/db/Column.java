@@ -163,7 +163,12 @@ public class Column implements OnDiskAtom
 
     public int dataSize()
     {
-        return name().remaining() + value.remaining() + TypeSizes.NATIVE.sizeof(timestamp);
+        return name().remaining() + getValueSerializationSize() + TypeSizes.NATIVE.sizeof(timestamp);
+    }
+
+    protected int getValueSerializationSize()
+    {
+        return value.remaining();
     }
 
     public int serializedSize(TypeSizes typeSizes)
@@ -177,7 +182,7 @@ public class Column implements OnDiskAtom
          * + entire byte array.
         */
         int nameSize = name.remaining();
-        int valueSize = value.remaining();
+        int valueSize = getValueSerializationSize();
         return typeSizes.sizeof((short) nameSize) + nameSize + 1 + typeSizes.sizeof(timestamp) + typeSizes.sizeof(valueSize) + valueSize;
     }
 

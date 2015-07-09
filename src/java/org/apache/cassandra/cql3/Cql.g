@@ -1000,6 +1000,7 @@ comparatorType returns [CQL3Type t]
 native_type returns [CQL3Type t]
     : K_ASCII     { $t = CQL3Type.Native.ASCII; }
     | K_BIGINT    { $t = CQL3Type.Native.BIGINT; }
+    | K_BITMAP    { $t = CQL3Type.Native.BITMAP; }
     | K_BLOB      { $t = CQL3Type.Native.BLOB; }
     | K_BOOLEAN   { $t = CQL3Type.Native.BOOLEAN; }
     | K_COUNTER   { $t = CQL3Type.Native.COUNTER; }
@@ -1141,6 +1142,7 @@ K_PASSWORD:    P A S S W O R D;
 K_CLUSTERING:  C L U S T E R I N G;
 K_ASCII:       A S C I I;
 K_BIGINT:      B I G I N T;
+K_BITMAP:      B I T M A P;
 K_BLOB:        B L O B;
 K_BOOLEAN:     B O O L E A N;
 K_COUNTER:     C O U N T E R;

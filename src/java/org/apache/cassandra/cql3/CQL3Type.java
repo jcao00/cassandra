@@ -21,6 +21,7 @@ import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
+import org.apache.cassandra.db.marshal.BitmapType;
 
 public interface CQL3Type
 {
@@ -32,6 +33,7 @@ public interface CQL3Type
     {
         ASCII    (AsciiType.instance),
         BIGINT   (LongType.instance),
+        BITMAP   (BitmapType.instance),
         BLOB     (BytesType.instance),
         BOOLEAN  (BooleanType.instance),
         COUNTER  (CounterColumnType.instance),

@@ -123,7 +123,13 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
 
     public boolean isCounter()
     {
-        return cfm.getDefaultValidator().isCommutative();
+        return cfm.getDefaultValidator().isCounter();
+    }
+
+    public boolean isBitmap()
+    {
+        // TODO:JEB this seems a bit weak, but without rejiggering AbstractType this is probably the least unhygenic
+        return !cfm.getDefaultValidator().isCounter() && !cfm.getDefaultValidator().isCommutative();
     }
 
     public long getTimestamp(long now, List<ByteBuffer> variables) throws InvalidRequestException

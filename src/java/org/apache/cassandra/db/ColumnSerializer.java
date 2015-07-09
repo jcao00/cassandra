@@ -22,6 +22,7 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
+import com.apple.aml.bitmap.RoaringBitmap;
 import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.util.FileDataInput;
@@ -34,6 +35,7 @@ public class ColumnSerializer implements ISerializer<Column>
     public final static int COUNTER_MASK         = 0x04;
     public final static int COUNTER_UPDATE_MASK  = 0x08;
     public final static int RANGE_TOMBSTONE_MASK = 0x10;
+    public final static int BITMAP_MASK          = 0x20;
 
     /**
      * Flag affecting deserialization behavior.
@@ -58,6 +60,7 @@ public class ColumnSerializer implements ISerializer<Column>
         try
         {
             out.writeByte(column.serializationFlags());
+
             if (column instanceof CounterColumn)
             {
                 out.writeLong(((CounterColumn)column).timestampOfLastDelete());
@@ -68,7 +71,11 @@ public class ColumnSerializer implements ISerializer<Column>
                 out.writeInt(column.getLocalDeletionTime());
             }
             out.writeLong(column.timestamp());
-            ByteBufferUtil.writeWithLength(column.value(), out);
+
+            if (column instanceof BitmapColumn)
+                ((BitmapColumn)column).serialize(out);
+            else
+                ByteBufferUtil.writeWithLength(column.value(), out);
         }
         catch (IOException e)
         {
@@ -117,6 +124,11 @@ public class ColumnSerializer implements ISerializer<Column>
             long ts = in.readLong();
             ByteBuffer value = ByteBufferUtil.readWithLength(in);
             return ExpiringColumn.create(name, value, ts, ttl, expiration, expireBefore, flag);
+        }
+        else if ((mask & BITMAP_MASK) != 0)
+        {
+            // TODO:JEB impl me
+            return new BitmapColumn(in);
         }
         else
         {

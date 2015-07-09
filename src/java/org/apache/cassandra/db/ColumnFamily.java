@@ -128,7 +128,7 @@ public abstract class ColumnFamily implements Iterable<Column>, IRowCacheEntry
 
     public void addColumn(ByteBuffer name, ByteBuffer value, long timestamp, int timeToLive)
     {
-        assert !metadata().getDefaultValidator().isCommutative();
+        assert !metadata().getDefaultValidator().isCounter();
         Column column = Column.create(name, value, timestamp, timeToLive, metadata());
         addColumn(column);
     }
