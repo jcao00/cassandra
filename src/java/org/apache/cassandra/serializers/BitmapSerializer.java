@@ -15,11 +15,11 @@ public class BitmapSerializer implements TypeSerializer<RoaringBitmap>
 
     public ByteBuffer serialize(RoaringBitmap value)
     {
-        DataOutputBuffer in = new DataOutputBuffer(value.serializedSize());
+        DataOutputBuffer out = new DataOutputBuffer(value.serializedSize());
         try
         {
-            value.serialize(in);
-            return ByteBuffer.wrap(in.getData());
+            value.serialize(out);
+            return ByteBuffer.wrap(out.getData());
         }
         catch (IOException e)
         {

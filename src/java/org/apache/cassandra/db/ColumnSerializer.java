@@ -127,8 +127,8 @@ public class ColumnSerializer implements ISerializer<Column>
         }
         else if ((mask & BITMAP_MASK) != 0)
         {
-            // TODO:JEB impl me
-            return new BitmapColumn(in);
+            long ts = in.readLong();
+            return new BitmapColumn(name, in, ts);
         }
         else
         {

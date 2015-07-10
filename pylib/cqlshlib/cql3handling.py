@@ -72,6 +72,7 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
         ('default_time_to_live', None),
         ('speculative_retry', None),
         ('memtable_flush_period_in_ms', None),
+        ('table_type', None),
     )
 
     columnfamily_layout_map_options = (
@@ -446,6 +447,8 @@ def cf_prop_val_completer(ctxt, cass):
         return [Hint('<float_between_0_and_1>')]
     if this_opt in ('replicate_on_write', 'populate_io_cache_on_flush'):
         return ["'yes'", "'no'"]
+    if this_opt == "table_type":
+        return ["'Standard'", "'Graph'"]
     if this_opt in ('min_compaction_threshold', 'max_compaction_threshold',
                     'gc_grace_seconds', 'index_interval'):
         return [Hint('<integer>')]

@@ -23,7 +23,8 @@ package org.apache.cassandra.db;
 public enum ColumnFamilyType
 {
     Standard,
-    Super;
+    Super,
+    Graph;
 
     public static ColumnFamilyType create(String name)
     {

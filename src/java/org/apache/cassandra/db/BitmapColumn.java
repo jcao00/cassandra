@@ -2,6 +2,7 @@ package org.apache.cassandra.db;
 
 import java.io.DataInput;
 import java.io.DataOutput;
+import java.io.IOError;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -9,29 +10,13 @@ import java.security.MessageDigest;
 import com.apple.aml.bitmap.RoaringBitmap;
 import org.apache.cassandra.serializers.BitmapSerializer;
 import org.apache.cassandra.utils.Allocator;
+import org.apache.cassandra.utils.ByteBufferUtil;
+
+import static org.apache.cassandra.utils.ByteBufferUtil.EMPTY_BYTE_BUFFER;
 
 public class BitmapColumn extends Column
 {
     private final RoaringBitmap roaringBitmap;
-
-    public BitmapColumn(DataInput in) throws IOException
-    {
-        //TODO:JEB unbork this
-        super(null);
-        roaringBitmap = RoaringBitmap.deserialize(in);
-    }
-
-    BitmapColumn(ByteBuffer name)
-    {
-        super(name);
-        roaringBitmap = new RoaringBitmap();
-    }
-
-    public BitmapColumn(ByteBuffer name, ByteBuffer value)
-    {
-        super(name, value);
-        roaringBitmap = new RoaringBitmap();
-    }
 
     public BitmapColumn(ByteBuffer name, long l)
     {
@@ -40,22 +25,34 @@ public class BitmapColumn extends Column
         roaringBitmap.add(l);
     }
 
-    public BitmapColumn(ByteBuffer name, ByteBuffer value, long timestamp)
+    public BitmapColumn(ByteBuffer name, DataInput in, long timestamp)
     {
-        super(name, value, timestamp);
-        roaringBitmap = new RoaringBitmap();
+        super(name, EMPTY_BYTE_BUFFER, timestamp);
+        try
+        {
+            roaringBitmap = RoaringBitmap.deserialize(in);
+        }
+        catch (IOException e)
+        {
+            throw new IOError(e);
+        }
     }
 
     BitmapColumn(ByteBuffer name, RoaringBitmap bitmap, long timestamp)
     {
         //TODO:JEB this is prolly wrong...
-        super(name, null, timestamp);
+        super(name, EMPTY_BYTE_BUFFER, timestamp);
         roaringBitmap = bitmap;
+    }
+
+    public ByteBuffer value()
+    {
+        return BitmapSerializer.instance.serialize(roaringBitmap);
     }
 
     public Column withUpdatedName(ByteBuffer newName)
     {
-        return new BitmapColumn(newName, value, timestamp);
+        return new BitmapColumn(newName, roaringBitmap, timestamp());
     }
 
     protected int getValueSerializationSize()
@@ -103,9 +100,7 @@ public class BitmapColumn extends Column
 
     public Column localCopy(ColumnFamilyStore cfs, Allocator allocator)
     {
-        RoaringBitmap copy = new RoaringBitmap();
-        copy.or(roaringBitmap);
-        return new BitmapColumn(name(), copy, timestamp());
+        return new BitmapColumn(name(), roaringBitmap, timestamp());
     }
 
     public int serializationFlags()

@@ -30,7 +30,6 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.*;
-import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.AlreadyExistsException;
 import org.apache.cassandra.io.compress.CompressionParameters;
@@ -145,7 +144,7 @@ public class CreateTableStatement extends SchemaAlteringStatement
         CFMetaData newCFMD;
         newCFMD = new CFMetaData(keyspace(),
                                  columnFamily(),
-                                 ColumnFamilyType.Standard,
+                                 properties.getTableType(),
                                  comparator,
                                  null);
         applyPropertiesTo(newCFMD);

@@ -21,6 +21,7 @@ import java.util.*;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.CFMetaData.SpeculativeRetry;
+import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.db.compaction.AbstractCompactionStrategy;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
@@ -45,6 +46,7 @@ public class CFPropDefs extends PropertyDefinitions
 
     public static final String KW_COMPACTION = "compaction";
     public static final String KW_COMPRESSION = "compression";
+    public static final String KW_TABLE_TYPE = "table_type";
 
     public static final String COMPACTION_STRATEGY_CLASS_KEY = "class";
 
@@ -67,6 +69,7 @@ public class CFPropDefs extends PropertyDefinitions
         keywords.add(KW_COMPACTION);
         keywords.add(KW_COMPRESSION);
         keywords.add(KW_MEMTABLE_FLUSH_PERIOD);
+        keywords.add(KW_TABLE_TYPE);
     }
 
     private Class<? extends AbstractCompactionStrategy> compactionStrategyClass = null;
@@ -115,6 +118,13 @@ public class CFPropDefs extends PropertyDefinitions
         validateMinimumInt(KW_INDEX_INTERVAL, 1, CFMetaData.DEFAULT_INDEX_INTERVAL);
 
         SpeculativeRetry.fromString(getString(KW_SPECULATIVE_RETRY, SpeculativeRetry.RetryType.NONE.name()));
+
+        String tableType = getString(KW_TABLE_TYPE, null);
+        if (tableType != null)
+        {
+            if (null == ColumnFamilyType.create(tableType))
+                throw new ConfigurationException("incorrect table type: " + tableType);
+        }
     }
 
     public Class<? extends AbstractCompactionStrategy> getCompactionStrategy()
@@ -190,5 +200,17 @@ public class CFPropDefs extends PropertyDefinitions
             throw new ConfigurationException(String.format("%s cannot be smaller than %s, (default %s)",
                                                             field, minimumValue, defaultValue));
 
+    }
+
+    public ColumnFamilyType getTableType()
+    {
+        try
+        {
+            return ColumnFamilyType.create(getString(KW_TABLE_TYPE, null));
+        }
+        catch (SyntaxException e)
+        {
+            throw new RuntimeException("failed to get table type");
+        }
     }
 }

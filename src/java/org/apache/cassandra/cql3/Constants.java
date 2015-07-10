@@ -219,6 +219,7 @@ public abstract class Constants
                 case HEX:
                     switch (nt)
                     {
+                        case BITMAP:
                         case BLOB:
                             return true;
                     }

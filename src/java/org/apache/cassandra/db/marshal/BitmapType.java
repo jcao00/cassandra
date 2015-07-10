@@ -12,10 +12,7 @@ public class BitmapType extends AbstractType<RoaringBitmap>
 {
     public static final BitmapType instance = new BitmapType();
 
-    public BitmapType()
-    {
-        super();
-    }
+    BitmapType() { }
 
     public boolean isCommutative()
     {
