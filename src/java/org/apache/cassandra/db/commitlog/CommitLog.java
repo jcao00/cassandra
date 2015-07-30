@@ -44,6 +44,7 @@ import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.metrics.CommitLogMetrics;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 
@@ -70,6 +71,7 @@ public class CommitLog implements CommitLogMBean
 
     final ICompressor compressor;
     public ParameterizedClass compressorClass;
+    public EncryptionContext encryptionContext;
     final public String location;
 
     private static CommitLog construct()
@@ -95,6 +97,7 @@ public class CommitLog implements CommitLogMBean
         this.location = location;
         ICompressor compressor = compressorClass != null ? CompressionParameters.createCompressor(compressorClass) : null;
         DatabaseDescriptor.createAllDirectories();
+        encryptionContext = DatabaseDescriptor.getEncryptionContext();
 
         this.compressor = compressor;
         this.archiver = archiver;

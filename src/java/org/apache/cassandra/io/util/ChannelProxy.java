@@ -133,6 +133,39 @@ public final class ChannelProxy extends SharedCloseableImpl
         }
     }
 
+    /**
+     * Attempts to read the number of bytes remaining in the buffer from the file.
+     *
+     * @param buffer The buffer to populate; buffer positions should be set appropriately so we know what range to fill.
+     * @param position starting position in the file to read from.
+     * @return count of bytes read, which should be the same as the bytes remaining when the method is called.
+     */
+    public int readFully(ByteBuffer buffer, long position)
+    {
+        try
+        {
+            int total = 0;
+            while (buffer.remaining() > 0)
+            {
+                int cnt = channel.read(buffer, position);
+                if (cnt < 0)
+                    throw new IllegalStateException("read past the end of file");
+                if (cnt == 0)
+                    break;
+                position += cnt;
+                total += cnt;
+            }
+            if (buffer.remaining() > 0)
+                throw new IllegalStateException("could not read entire buffer's worth of data");
+
+            return total;
+        }
+        catch (Exception e)
+        {
+            throw new FSReadError(e, filePath);
+        }
+    }
+
     public long transferTo(long position, long count, WritableByteChannel target)
     {
         try
