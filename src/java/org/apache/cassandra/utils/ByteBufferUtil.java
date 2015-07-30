@@ -35,6 +35,7 @@ import java.util.UUID;
 import net.nicoulaj.compilecommand.annotations.Inline;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileUtils;
@@ -621,6 +622,44 @@ public class ByteBufferUtil
     {
         int length = readShortLength(bb);
         return readBytes(bb, length);
+    }
+
+    /**
+     * Ensure {@code buf} is large enough for {@code outputLength}. If not, it is cleaned up and a new buffer is allocated;
+     * else; buffer has it's position/limit set appropriately.
+     *
+     * @param buf buffer to test the size of; may be null, in which case, a new buffer is allocated.
+     * @param outputLength the minimum target size of the buffer
+     * @return {@code buf} if it was large enough, else a newly allocated buffer.
+     */
+    public static ByteBuffer ensureCapacity(ByteBuffer buf, int outputLength)
+    {
+        return ensureCapacity(buf, outputLength, BufferType.ON_HEAP);
+    }
+
+    /**
+     * Ensure {@code buf} is large enough for {@code outputLength}. If not, it is cleaned up and a new buffer is allocated;
+     * else; buffer has it's position/limit set appropriately.
+     *
+     * @param buf buffer to test the size of; may be null, in which case, a new buffer is allocated.
+     * @param outputLength the minimum target size of the buffer
+     * @param bufferType on- or off- heap byte buffer
+     * @return {@code buf} if it was large enough, else a newly allocated buffer.
+     */
+    public static ByteBuffer ensureCapacity(ByteBuffer buf, int outputLength, BufferType bufferType)
+    {
+        if (0 > outputLength)
+            throw new IllegalArgumentException("invalid size for output buffer: " + outputLength);
+        if (buf == null || buf.capacity() < outputLength)
+        {
+            FileUtils.clean(buf);
+            buf = bufferType.allocate(outputLength);
+        }
+        else
+        {
+            buf.position(0).limit(outputLength);
+        }
+        return buf;
     }
 
 }

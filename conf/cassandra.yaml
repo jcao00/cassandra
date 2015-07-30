@@ -887,9 +887,36 @@ tracetype_repair_ttl: 604800
 # As of Cassandra 3.0 there is a sandbox in place that should prevent execution of evil code.
 enable_user_defined_functions: false
 
+
 # The default Windows kernel timer and scheduling resolution is 15.6ms for power conservation.
 # Lowering this value on Windows can provide much tighter latency and better throughput, however
 # some virtualized environments may see a negative performance impact from changing this setting
 # below their system default. The sysinternals 'clockres' tool can confirm your system's default
 # setting.
 windows_timer_interval: 1
+
+# transparnet data encryption options encryptd data at rest.
+# when enabled is set to true, the following elements are encrypted
+# - commit logs
+#
+# The only real encyption cipher supported is AES/CBC/PKCS5Padding; 
+# you may expertiment with others, but YMMV.
+# The default key_provider, JKSKeyProvider, reads keys from a JKS keystore;
+# key_password is optional if the key's password is different from the keystore's.
+# If use a custom key_provider implementations, you can add custom parameters, as well, in the key_provider_parameters.
+#
+# NOTE: If you have transparent_data_encryption_options enabled for some time, and then disable it, 
+# you must leave the key_provider information in place so that any data that was previously encrypted
+# can be correctly decrypted.
+transparent_data_encryption_options:
+    enabled: false
+    chunk_length_kb: 64
+    cipher: AES/CBC/PKCS5Padding
+    key_alias: testing:1
+    key_provider: 
+      - class_name: org.apache.cassandra.security.JKSKeyProvider
+        parameters: 
+          - keystore: test/conf/cassandra.keystore
+            keystore_password: cassandra
+            store_type: JCEKS
+            key_password: cassandra

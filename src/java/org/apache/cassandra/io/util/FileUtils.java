@@ -338,6 +338,8 @@ public class FileUtils
 
     public static void clean(ByteBuffer buffer)
     {
+        if (buffer == null)
+            return;
         if (isCleanerAvailable() && buffer.isDirect())
         {
             DirectBuffer db = (DirectBuffer) buffer;
