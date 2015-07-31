@@ -617,7 +617,7 @@ public class DatabaseDescriptor
             throw new ConfigurationException("user_defined_function_warn_timeout must less than user_defined_function_fail_timeout", false);
 
         // always attempt to load the cipher factory, as we could be in the situation where the user has disabled encryption,
-        // but has existing commitlogs and sstables on disk that are still git addencrypted (and still need to be read)
+        // but has existing commitlogs and sstables on disk that are still encrypted (and still need to be read)
         encryptionContext = new EncryptionContext(config.transparent_data_encryption_options);
     }
 

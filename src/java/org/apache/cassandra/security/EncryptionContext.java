@@ -19,8 +19,6 @@ package org.apache.cassandra.security;
 
 import java.io.IOException;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 import javax.crypto.Cipher;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -75,30 +73,11 @@ public class EncryptionContext
             }
             catch (Exception e)
             {
-                if (tdeOptions.enabled)
-                    throw new ConfigurationException("failed to load key provider for transparent data encryption", e);
+                throw new ConfigurationException("failed to load key provider for transparent data encryption", e);
             }
         }
 
         cipherFactory = factory;
-    }
-
-    /**
-     * If encryption headers are found in the {@code parameters},
-     * those headers are merged with the application-wide {@code encryptionContext}.
-     */
-    public static EncryptionContext createFromMap(Map<?, ?> parameters, EncryptionContext encryptionContext)
-    {
-        if (parameters == null || parameters.isEmpty())
-            return new EncryptionContext(new TransparentDataEncryptionOptions(false));
-
-        String keyAlias = (String)parameters.get(ENCRYPTION_KEY_ALIAS);
-        String cipher = (String)parameters.get(ENCRYPTION_CIPHER);
-        if (keyAlias == null || cipher == null)
-            return new EncryptionContext(new TransparentDataEncryptionOptions(false));
-
-        TransparentDataEncryptionOptions tdeOptions = new TransparentDataEncryptionOptions(cipher, keyAlias, encryptionContext.getTransparentDataEncryptionOptions().key_provider);
-        return new EncryptionContext(tdeOptions);
     }
 
     public ICompressor getCompressor()
@@ -139,17 +118,5 @@ public class EncryptionContext
     public boolean equals(EncryptionContext other)
     {
         return Objects.equal(tdeOptions, other.tdeOptions) && Objects.equal(compressor, other.compressor);
-    }
-
-    public Map<String, String> toHeaderParameters()
-    {
-        Map<String, String> map = new HashMap<>(2);
-        // add compresison options, someday ...
-        if (tdeOptions.enabled)
-        {
-            map.put(ENCRYPTION_CIPHER, tdeOptions.cipher);
-            map.put(ENCRYPTION_KEY_ALIAS, tdeOptions.key_alias);
-        }
-        return map;
     }
 }

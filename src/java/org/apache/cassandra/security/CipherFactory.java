@@ -100,7 +100,7 @@ public class CipherFactory
 
     public Cipher getDecryptor(String transformation, String keyAlias, byte[] iv) throws IOException
     {
-        assert iv != null : "trying to decrypt, but the initialization vector is empty";
+        assert iv != null || iv.length > 0 : "trying to decrypt, but the initialization vector is empty";
         return buildCipher(transformation, keyAlias, iv, Cipher.DECRYPT_MODE);
     }
 
