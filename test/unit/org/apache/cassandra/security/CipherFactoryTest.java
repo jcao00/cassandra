@@ -1,6 +1,7 @@
 package org.apache.cassandra.security;
 
 import java.io.IOException;
+import java.security.SecureRandom;
 
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
@@ -21,10 +22,12 @@ public class CipherFactoryTest
                                    "—Introibo ad altare Dei.";
     TransparentDataEncryptionOptions encryptionOptions;
     CipherFactory cipherFactory;
+    SecureRandom secureRandom;
 
     @Before
     public void setup()
     {
+        secureRandom = new SecureRandom(new byte[] {0,1,2,3,4,5,6,7,8,9} );
         encryptionOptions = EncryptionContextGenerator.createEncryptionOptions();
         cipherFactory = new CipherFactory(encryptionOptions);
     }
@@ -39,5 +42,46 @@ public class CipherFactoryTest
         Cipher decryptor = cipherFactory.getDecryptor(encryptionOptions.cipher, encryptionOptions.key_alias, encryptor.getIV());
         byte[] decrypted = decryptor.doFinal(encrypted);
         Assert.assertEquals(ULYSSEUS, new String(decrypted, Charsets.UTF_8));
+    }
+
+    private byte[] nextIV()
+    {
+        byte[] b = new byte[16];
+        secureRandom.nextBytes(b);
+        return b;
+    }
+
+    @Test
+    public void buildCipher_SameParams() throws Exception
+    {
+        byte[] iv = nextIV();
+        Cipher c1 = cipherFactory.buildCipher(encryptionOptions.cipher, encryptionOptions.key_alias, iv, Cipher.ENCRYPT_MODE);
+        Cipher c2 = cipherFactory.buildCipher(encryptionOptions.cipher, encryptionOptions.key_alias, iv, Cipher.ENCRYPT_MODE);
+        Assert.assertTrue(c1 == c2);
+    }
+
+    @Test
+    public void buildCipher_DifferentModes() throws Exception
+    {
+        byte[] iv = nextIV();
+        Cipher c1 = cipherFactory.buildCipher(encryptionOptions.cipher, encryptionOptions.key_alias, iv, Cipher.ENCRYPT_MODE);
+        Cipher c2 = cipherFactory.buildCipher(encryptionOptions.cipher, encryptionOptions.key_alias, iv, Cipher.DECRYPT_MODE);
+        Assert.assertFalse(c1 == c2);
+    }
+
+    @Test
+    public void buildCipher_DifferentIVs() throws Exception
+    {
+        Cipher c1 = cipherFactory.buildCipher(encryptionOptions.cipher, encryptionOptions.key_alias, nextIV(), Cipher.ENCRYPT_MODE);
+        Cipher c2 = cipherFactory.buildCipher(encryptionOptions.cipher, encryptionOptions.key_alias, nextIV(), Cipher.DECRYPT_MODE);
+        Assert.assertFalse(c1 == c2);
+    }
+
+    @Test
+    public void buildCipher_DifferentAliases() throws Exception
+    {
+        Cipher c1 = cipherFactory.buildCipher(encryptionOptions.cipher, encryptionOptions.key_alias, nextIV(), Cipher.ENCRYPT_MODE);
+        Cipher c2 = cipherFactory.buildCipher(encryptionOptions.cipher, EncryptionContextGenerator.KEY_ALIAS_2, nextIV(), Cipher.DECRYPT_MODE);
+        Assert.assertFalse(c1 == c2);
     }
 }

@@ -28,6 +28,9 @@ import org.apache.cassandra.config.TransparentDataEncryptionOptions;
 
 public class EncryptionContextGenerator
 {
+    public static final String KEY_ALIAS_1 = "testing:1";
+    public static final String KEY_ALIAS_2 = "testing:2";
+
     public static EncryptionContext createContext(boolean init)
     {
         return new EncryptionContext(createEncryptionOptions(), init);
@@ -41,7 +44,7 @@ public class EncryptionContextGenerator
         params.put("store_type", "JCEKS");
         ParameterizedClass keyProvider = new ParameterizedClass(JKSKeyProvider.class.getName(), params);
 
-        return new TransparentDataEncryptionOptions("AES/CBC/PKCS5Padding", "testing:1", keyProvider);
+        return new TransparentDataEncryptionOptions("AES/CBC/PKCS5Padding", KEY_ALIAS_1, keyProvider);
     }
 
     public static EncryptionContext createDisabledContext()
