@@ -26,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.io.FSWriteError;
+import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -42,8 +43,8 @@ import org.apache.cassandra.utils.SyncUtil;
  * -- a sync section header, see {@link CommitLogSegment#writeSyncMarker(ByteBuffer, int, int, int)}
  * -- total plain text length for this section
  * -- a series of encrypted data blocks, each of which contains:
- * --- the length of the encrypted block
- * --- the length of the unencrypted data
+ * --- the length of the encrypted block (cipher text)
+ * --- the length of the unencrypted data (compressed text)
  * --- the encrypted block, which contains:
  * ---- the length of the plain text (raw) data
  * ---- block of compressed data
@@ -57,29 +58,6 @@ public class EncryptedSegment extends FileDirectSegment
     private static final Logger logger = LoggerFactory.getLogger(EncryptedSegment.class);
 
     private static final int ENCRYPTED_SECTION_HEADER_SIZE = SYNC_MARKER_SIZE + 4;
-
-    /**
-     * Note: we want to keep the compression buffers on-heap as we need those bytes for encryption,
-     * and we want to avoid copying from off-heap (compression buffer) to on-heap encryption APIs
-     */
-    private static final ThreadLocal<ByteBuffer> compressedBufferHolder = new ThreadLocal<ByteBuffer>()
-    {
-        protected ByteBuffer initialValue()
-        {
-            return ByteBuffer.allocate(0);
-        }
-    };
-
-    /**
-     * Note: we want to keep the encryption buffer on-heap.
-     */
-    private static final ThreadLocal<ByteBuffer> encryptedBufferHolder = new ThreadLocal<ByteBuffer>()
-    {
-        protected ByteBuffer initialValue()
-        {
-            return ByteBuffer.allocate(0);
-        }
-    };
 
     private final EncryptionContext encryptionContext;
     private final Cipher cipher;
@@ -109,7 +87,9 @@ public class EncryptedSegment extends FileDirectSegment
 
     ByteBuffer createBuffer(CommitLog commitLog)
     {
-        return createBuffer(commitLog.encryptionContext.getCompressor());
+        //Note: we want to keep the compression buffers on-heap as we need those bytes for encryption,
+        // and we want to avoid copying from off-heap (compression buffer) to on-heap encryption APIs
+        return createBuffer(BufferType.ON_HEAP);
     }
 
     void write(int startMarker, int nextMarker)
@@ -125,8 +105,7 @@ public class EncryptedSegment extends FileDirectSegment
         {
             ByteBuffer inputBuffer = buffer.duplicate();
             inputBuffer.limit(contentStart + length).position(contentStart);
-            ByteBuffer compressedBuffer = compressedBufferHolder.get();
-            ByteBuffer encryptedBuffer = encryptedBufferHolder.get();
+            ByteBuffer buffer = reusableBufferHolder.get();
 
             // save space for the sync marker at the beginning of this section
             final long syncMarkerPosition = lastWrittenPos;
@@ -139,29 +118,28 @@ public class EncryptedSegment extends FileDirectSegment
                 ByteBuffer slice = inputBuffer.duplicate();
                 slice.limit(contentStart + nextBlockSize).position(contentStart);
 
-                ByteBuffer retBuf = CommitLogEncryptionUtils.compress(slice, compressedBuffer, true, compressor);
-                compressedBuffer = maybeSwap(compressedBuffer, retBuf, compressedBufferHolder);
+                buffer = CommitLogEncryptionUtils.compress(slice, buffer, true, compressor);
 
-                retBuf = CommitLogEncryptionUtils.encrypt(compressedBuffer, encryptedBuffer, true, cipher);
-                encryptedBuffer = maybeSwap(encryptedBuffer, retBuf, encryptedBufferHolder);
+                // reuse the same buffer for the input and output of the encryption operation
+                ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(buffer, channel, true, cipher);
 
-                channel.write(encryptedBuffer);
                 contentStart += nextBlockSize;
                 commitLog.allocator.addSize(encryptedBuffer.limit());
+                buffer = maybeSwap(buffer, encryptedBuffer);
             }
 
             lastWrittenPos = channel.position();
 
             // rewind to the beginning of the section and write out the sync marker,
             // reusing the one of the existing buffers
-            encryptedBuffer = ByteBufferUtil.ensureCapacity(encryptedBuffer, ENCRYPTED_SECTION_HEADER_SIZE, true);
-            writeSyncMarker(encryptedBuffer, 0, (int) syncMarkerPosition, (int) lastWrittenPos);
-            encryptedBuffer.putInt(SYNC_MARKER_SIZE, length);
-            encryptedBuffer.position(0).limit(ENCRYPTED_SECTION_HEADER_SIZE);
-            commitLog.allocator.addSize(encryptedBuffer.limit());
+            buffer = ByteBufferUtil.ensureCapacity(buffer, ENCRYPTED_SECTION_HEADER_SIZE, true);
+            writeSyncMarker(buffer, 0, (int) syncMarkerPosition, (int) lastWrittenPos);
+            buffer.putInt(SYNC_MARKER_SIZE, length);
+            buffer.position(0).limit(ENCRYPTED_SECTION_HEADER_SIZE);
+            commitLog.allocator.addSize(buffer.limit());
 
             channel.position(syncMarkerPosition);
-            channel.write(encryptedBuffer);
+            channel.write(buffer);
 
             SyncUtil.force(channel, true);
         }
@@ -171,12 +149,12 @@ public class EncryptedSegment extends FileDirectSegment
         }
     }
 
-    private ByteBuffer maybeSwap(ByteBuffer originalBuffer, ByteBuffer resultBuffer, ThreadLocal<ByteBuffer> threadLocalBuffers)
+    private ByteBuffer maybeSwap(ByteBuffer originalBuffer, ByteBuffer resultBuffer)
     {
-        if (resultBuffer == originalBuffer)
+        if (originalBuffer.capacity() >= resultBuffer.capacity())
             return originalBuffer;
 
-        threadLocalBuffers.set(resultBuffer);
+        reusableBufferHolder.set(resultBuffer);
         return resultBuffer;
     }
 

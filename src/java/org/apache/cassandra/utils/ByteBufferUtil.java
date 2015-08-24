@@ -635,7 +635,8 @@ public class ByteBufferUtil
      */
     public static ByteBuffer ensureCapacity(ByteBuffer buf, int outputLength, boolean allowBufferResize)
     {
-        return ensureCapacity(buf, outputLength, allowBufferResize, BufferType.ON_HEAP);
+        BufferType bufferType = buf != null ? BufferType.typeOf(buf) : BufferType.ON_HEAP;
+        return ensureCapacity(buf, outputLength, allowBufferResize, bufferType);
     }
 
     /**

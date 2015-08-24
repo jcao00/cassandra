@@ -75,23 +75,12 @@ public class CommitLogDescriptor
     public final ParameterizedClass compression;
     private final EncryptionContext encryptionContext;
 
-    /**
-     * Any parameters found in the header while reading an existing commit log file.
-     */
-    public final Map<?, ?> headerParameters;
-
-    public CommitLogDescriptor(int version, long id, ParameterizedClass compression, EncryptionContext encryptionContext, Map<?, ?> headerParameters)
+    public CommitLogDescriptor(int version, long id, ParameterizedClass compression, EncryptionContext encryptionContext)
     {
         this.version = version;
         this.id = id;
         this.compression = compression;
         this.encryptionContext = encryptionContext;
-        this.headerParameters = headerParameters;
-    }
-
-    public CommitLogDescriptor(int version, long id, ParameterizedClass compression, EncryptionContext encryptionContext)
-    {
-        this(version, id, compression, encryptionContext, Collections.emptyMap());
     }
 
     public CommitLogDescriptor(long id, ParameterizedClass compression, EncryptionContext encryptionContext)
@@ -185,7 +174,7 @@ public class CommitLogDescriptor
         if (crc == (int) checkcrc.getValue())
         {
             Map<?, ?> map = (Map<?, ?>) JSONValue.parse(new String(parametersBytes, StandardCharsets.UTF_8));
-            return new CommitLogDescriptor(version, id, parseCompression(map), EncryptionContext.createFromMap(map, encryptionContext), map);
+            return new CommitLogDescriptor(version, id, parseCompression(map), EncryptionContext.createFromMap(map, encryptionContext));
         }
         return null;
     }

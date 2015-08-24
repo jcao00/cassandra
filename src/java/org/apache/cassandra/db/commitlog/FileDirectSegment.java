@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.FSWriteError;
+import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.io.util.FileUtils;
 
@@ -33,6 +34,14 @@ import org.apache.cassandra.io.util.FileUtils;
  */
 public abstract class FileDirectSegment extends CommitLogSegment
 {
+    protected static final ThreadLocal<ByteBuffer> reusableBufferHolder = new ThreadLocal<ByteBuffer>()
+    {
+        protected ByteBuffer initialValue()
+        {
+            return ByteBuffer.allocate(0);
+        }
+    };
+
     static Queue<ByteBuffer> bufferPool = new ConcurrentLinkedQueue<>();
 
     /**
@@ -63,15 +72,16 @@ public abstract class FileDirectSegment extends CommitLogSegment
         }
     }
 
-    ByteBuffer createBuffer(ICompressor compressor)
+    ByteBuffer createBuffer(BufferType bufferType)
     {
         ByteBuffer buf = bufferPool.poll();
-        if (buf == null)
+        if (buf != null)
         {
-            buf = compressor.preferredBufferType().allocate(DatabaseDescriptor.getCommitLogSegmentSize());
-        } else
             buf.clear();
-        return buf;
+            return buf;
+        }
+
+        return bufferType.allocate(DatabaseDescriptor.getCommitLogSegmentSize());
     }
 
     @Override

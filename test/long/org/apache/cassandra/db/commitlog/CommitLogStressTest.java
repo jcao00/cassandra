@@ -273,7 +273,8 @@ public class CommitLogStressTest
 
         int hash = 0;
         int cells = 0;
-        for (CommitlogThread t: threads) {
+        for (CommitlogThread t: threads)
+        {
             t.join();
             hash += t.hash;
             cells += t.cells;

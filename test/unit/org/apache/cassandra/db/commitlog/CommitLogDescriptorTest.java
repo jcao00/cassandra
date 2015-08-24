@@ -40,6 +40,8 @@ import org.apache.cassandra.security.EncryptionContextGenerator;
 
 public class CommitLogDescriptorTest
 {
+    private static final byte[] iv = new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+
     ParameterizedClass compression;
     TransparentDataEncryptionOptions enabledTdeOptions;
 
@@ -60,7 +62,7 @@ public class CommitLogDescriptorTest
         compression = new ParameterizedClass(LZ4Compressor.class.getName(), params);
 
         enabledTdeOptions = EncryptionContextGenerator.createEncryptionOptions();
-        enabledEncryption = new EncryptionContext(enabledTdeOptions, false);
+        enabledEncryption = new EncryptionContext(enabledTdeOptions, iv, false);
         
         neverEnabledEncryption = EncryptionContextGenerator.createDisabledContext();
         TransparentDataEncryptionOptions disaabledTdeOptions = new TransparentDataEncryptionOptions(false, enabledTdeOptions.cipher, enabledTdeOptions.key_alias, enabledTdeOptions.key_provider);
@@ -192,6 +194,7 @@ public class CommitLogDescriptorTest
         Assert.assertNotNull(result);
         Assert.assertNull(result.compression);
         Assert.assertTrue(result.getEncryptionContext().isEnabled());
+        Assert.assertArrayEquals(iv, result.getEncryptionContext().getIV());
     }
 
     /**
@@ -209,6 +212,7 @@ public class CommitLogDescriptorTest
         Assert.assertNotNull(result);
         Assert.assertNull(result.compression);
         Assert.assertTrue(result.getEncryptionContext().isEnabled());
+        Assert.assertArrayEquals(iv, result.getEncryptionContext().getIV());
     }
 
     /**
@@ -228,6 +232,7 @@ public class CommitLogDescriptorTest
         Assert.assertEquals(compression, result.compression);
         Assert.assertTrue(result.getEncryptionContext().isEnabled());
         Assert.assertEquals(enabledEncryption, result.getEncryptionContext());
+        Assert.assertArrayEquals(iv, result.getEncryptionContext().getIV());
     }
 
     @Test

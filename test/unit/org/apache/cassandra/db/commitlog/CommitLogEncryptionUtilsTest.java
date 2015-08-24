@@ -17,8 +17,11 @@
  */
 package org.apache.cassandra.db.commitlog;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.HashMap;
 import java.util.Random;
 import javax.crypto.BadPaddingException;
@@ -31,8 +34,11 @@ import org.junit.Before;
 import org.junit.Test;
 
 import org.apache.cassandra.config.TransparentDataEncryptionOptions;
+import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.io.compress.LZ4Compressor;
+import org.apache.cassandra.io.util.ChannelProxy;
+import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.security.CipherFactory;
 import org.apache.cassandra.security.EncryptionContextGenerator;
 
@@ -68,11 +74,16 @@ public class CommitLogEncryptionUtilsTest
         // encrypt
         CipherFactory cipherFactory = new CipherFactory(tdeOptions);
         Cipher encryptor = cipherFactory.getEncryptor(tdeOptions.cipher, tdeOptions.key_alias);
-        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(ByteBuffer.wrap(buf), ByteBuffer.allocate(0), true, encryptor);
+
+        File f = File.createTempFile("commitlog-enc-utils-", ".tmp");
+        f.deleteOnExit();
+        FileChannel channel = new RandomAccessFile(f, "rw").getChannel();
+        CommitLogEncryptionUtils.encrypt(ByteBuffer.wrap(buf), channel, true, encryptor);
+        channel.close();
 
         // decrypt
         Cipher decryptor = cipherFactory.getDecryptor(tdeOptions.cipher, tdeOptions.key_alias, encryptor.getIV());
-        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(encryptedBuffer, ByteBuffer.allocate(0), true, decryptor);
+        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(RandomAccessReader.open(f), ByteBuffer.allocate(0), true, decryptor);
 
         // normally, we'd just call BB.array(), but that gives you the *entire* backing array, not with any of the offsets (position,limit) applied.
         // thus, just for this test, we copy the array and perform an array-level comparison with those offsets
@@ -93,11 +104,14 @@ public class CommitLogEncryptionUtilsTest
         // encrypt
         CipherFactory cipherFactory = new CipherFactory(tdeOptions);
         Cipher encryptor = cipherFactory.getEncryptor(tdeOptions.cipher, tdeOptions.key_alias);
-        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(compressedBuffer, ByteBuffer.allocate(0), true, encryptor);
+        File f = File.createTempFile("commitlog-enc-utils-", ".tmp");
+        f.deleteOnExit();
+        FileChannel channel = new RandomAccessFile(f, "rw").getChannel();
+        CommitLogEncryptionUtils.encrypt(compressedBuffer, channel, true, encryptor);
 
         // decrypt
         Cipher decryptor = cipherFactory.getDecryptor(tdeOptions.cipher, tdeOptions.key_alias, encryptor.getIV());
-        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(encryptedBuffer, ByteBuffer.allocate(0), true, decryptor);
+        ByteBuffer decryptedBuffer = CommitLogEncryptionUtils.decrypt(RandomAccessReader.open(f), ByteBuffer.allocate(0), true, decryptor);
 
         // uncompress
         ByteBuffer uncompressedBuffer = CommitLogEncryptionUtils.uncompress(decryptedBuffer, ByteBuffer.allocate(0), true, compressor);

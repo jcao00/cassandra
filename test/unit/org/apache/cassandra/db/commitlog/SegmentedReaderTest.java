@@ -17,13 +17,13 @@
  */
 package org.apache.cassandra.db.commitlog;
 
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.Random;
-
 import javax.crypto.Cipher;
 
 import org.junit.Assert;
@@ -42,7 +42,6 @@ import org.apache.cassandra.security.CipherFactory;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.security.EncryptionContextGenerator;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.Hex;
 
 public class SegmentedReaderTest
 {
@@ -116,24 +115,23 @@ public class SegmentedReaderTest
 
         ByteBuffer compressedBuffer = CommitLogEncryptionUtils.compress(plainTextBuffer, null, true, context.getCompressor());
         Cipher cipher = cipherFactory.getEncryptor(context.getTransparentDataEncryptionOptions().cipher, context.getTransparentDataEncryptionOptions().key_alias);
-        ByteBuffer encryptedBuffer = CommitLogEncryptionUtils.encrypt(compressedBuffer, null, true, cipher);
-
         File encryptedFile = File.createTempFile("encrypted-segment-", ".log");
         encryptedFile.deleteOnExit();
-        FileOutputStream fos = new FileOutputStream(encryptedFile);
-        DataOutputStream dos = new DataOutputStream(fos);
-        dos.writeInt(plainTextLength);
-        fos.getChannel().write(encryptedBuffer);
-        fos.close();
+        FileChannel channel = new RandomAccessFile(encryptedFile, "rw").getChannel();
+        channel.write(ByteBufferUtil.bytes(plainTextLength));
+        CommitLogEncryptionUtils.encrypt(compressedBuffer, channel, true, cipher);
+        channel.close();
 
         try (RandomAccessReader reader = RandomAccessReader.open(encryptedFile))
         {
-            EncryptedSegmenter segmenter = new EncryptedSegmenter(reader, context, Hex.bytesToHex(cipher.getIV()));
-            SyncSegment syncSegment = segmenter.nextSegment(0, (int)reader.length());
+            context = EncryptionContextGenerator.createContext(cipher.getIV(), true);
+            EncryptedSegmenter segmenter = new EncryptedSegmenter(reader, context);
+            SyncSegment syncSegment = segmenter.nextSegment(0, (int) reader.length());
 
             // EncryptedSegmenter includes the Sync header length in the syncSegment.endPosition (value)
             Assert.assertEquals(plainTextLength, syncSegment.endPosition - CommitLogSegment.SYNC_MARKER_SIZE);
             ByteBuffer fileBuffer = syncSegment.input.readBytes(plainTextLength);
+            plainTextBuffer.position(0);
             Assert.assertEquals(plainTextBuffer, fileBuffer);
         }
     }

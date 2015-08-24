@@ -4,24 +4,21 @@ import java.io.DataInput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-import com.google.common.base.Function;
-
 import org.apache.cassandra.io.util.AbstractDataInput;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileMark;
 
 /**
  * Similar in spirit to {@link org.apache.cassandra.io.util.ByteBufferDataInput}, but allows a backing buffer
- * to be read in chunks, and transformed before being consumed. This is useful if the backing buffer is compressed
- * or encrypted data.
+ * (either from memory or disk) to be read in chunks, and transformed before being consumed.
+ * This is useful if the backing buffer is compressed or encrypted data.
  */
 public class RebufferingDataInput extends AbstractDataInput implements FileDataInput, DataInput
 {
-    private final ByteBuffer backingBuffer;
     private final String filename;
     private final long segmentOffset;
     private final int expectedLength;
-    private final Function<ByteBuffer, ByteBuffer> transform;
+    private final ChunkProvider chunkProvider;
 
     /**
      * current logical position through the input buffer(s).
@@ -33,16 +30,23 @@ public class RebufferingDataInput extends AbstractDataInput implements FileDataI
      */
     private ByteBuffer buffer;
 
-    public RebufferingDataInput(ByteBuffer backingBuffer, String filename, long segmentOffset, int position,
-                                int expectedLength, Function<ByteBuffer, ByteBuffer> transform)
+    public RebufferingDataInput(String filename, long segmentOffset, int position, int expectedLength, ChunkProvider chunkProvider)
     {
 
-        this.backingBuffer = backingBuffer;
         this.filename = filename;
         this.segmentOffset = segmentOffset;
         this.position = position;
         this.expectedLength = expectedLength;
-        this.transform = transform;
+        this.chunkProvider = chunkProvider;
+    }
+
+    public interface ChunkProvider
+    {
+        /**
+         * Get the next chunk from the backing provider, if any chunks remain.
+         * @return Next chunk, else null if no more chunks remain.
+         */
+        ByteBuffer nextChunk();
     }
 
     public String getPath()
@@ -96,7 +100,7 @@ public class RebufferingDataInput extends AbstractDataInput implements FileDataI
     public long bytesPastMark(FileMark mark)
     {
         // implement this complexity when we actually need it
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     public ByteBuffer readBytes(int length) throws IOException
@@ -131,10 +135,7 @@ public class RebufferingDataInput extends AbstractDataInput implements FileDataI
         if (buffer != null && buffer.remaining() > 0)
             return true;
 
-        if (backingBuffer.remaining() == 0)
-            return false;
-
-        buffer = transform.apply(backingBuffer);
+        buffer = chunkProvider.nextChunk();
 
         if (buffer == null)
             return false;

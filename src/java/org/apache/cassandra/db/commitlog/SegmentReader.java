@@ -21,7 +21,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.zip.CRC32;
-
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.IllegalBlockSizeException;
@@ -33,6 +32,7 @@ import com.google.common.collect.AbstractIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.db.commitlog.RebufferingDataInput.ChunkProvider;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.ICompressor;
@@ -41,7 +41,6 @@ import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.Hex;
 
 import static org.apache.cassandra.db.commitlog.CommitLogSegment.SYNC_MARKER_SIZE;
 import static org.apache.cassandra.utils.FBUtilities.updateChecksumInt;
@@ -236,11 +235,6 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
         private final Cipher cipher;
 
         /**
-         * we read the raw encrypted bytes, from the file, into this buffer.
-         */
-        private ByteBuffer fileReadBuffer;
-
-        /**
          * the result of the decryption is written into this buffer.
          */
         private ByteBuffer decryptedBuffer;
@@ -250,44 +244,43 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
          */
         private ByteBuffer uncompressedBuffer;
 
+        private final ChunkProvider chunkProvider;
+
+        private long currentSegmentEndPosition;
         private long nextLogicalStart;
-        private final Function<ByteBuffer, ByteBuffer> decryptFunction;
 
         public EncryptedSegmenter(RandomAccessReader reader, CommitLogDescriptor descriptor)
         {
-            this(reader, descriptor.getEncryptionContext(), (String)descriptor.headerParameters.get(EncryptionContext.ENCRYPTION_IV));
+            this(reader, descriptor.getEncryptionContext());
         }
 
         @VisibleForTesting
-        EncryptedSegmenter(RandomAccessReader reader, EncryptionContext encryptionContext, String iv)
+        EncryptedSegmenter(final RandomAccessReader reader, EncryptionContext encryptionContext)
         {
             this.reader = reader;
-            fileReadBuffer = ByteBuffer.allocate(0);
             decryptedBuffer = ByteBuffer.allocate(0);
             compressor = encryptionContext.getCompressor();
             nextLogicalStart = reader.getFilePointer();
 
             try
             {
-                if (iv == null || iv.isEmpty())
-                    throw new IllegalStateException("no initialization vector (IV) store with commit log, and cannot initialize decrypt operations");
-
-                cipher = encryptionContext.getDecryptor(Hex.hexToBytes(iv));
+                cipher = encryptionContext.getDecryptor();
             }
             catch (IOException ioe)
             {
                 throw new FSReadError(ioe, reader.getPath());
             }
 
-            decryptFunction = new Function<ByteBuffer, ByteBuffer>()
+            chunkProvider = new ChunkProvider()
             {
-                public ByteBuffer apply(ByteBuffer input)
+                public ByteBuffer nextChunk()
                 {
-                    if (input.remaining() == 0)
+                    if (reader.getFilePointer() >= currentSegmentEndPosition)
                         return null;
                     try
                     {
-                        decryptedBuffer = CommitLogEncryptionUtils.decrypt(input, decryptedBuffer, true, cipher);
+                        decryptedBuffer = CommitLogEncryptionUtils.decrypt(reader, ByteBuffer.allocate(0), true, cipher);
+//                        decryptedBuffer = CommitLogEncryptionUtils.decrypt(reader, decryptedBuffer, true, cipher);
                         uncompressedBuffer = CommitLogEncryptionUtils.uncompress(decryptedBuffer, uncompressedBuffer, true, compressor);
                         return uncompressedBuffer;
                     }
@@ -299,18 +292,14 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
             };
         }
 
-        public SyncSegment nextSegment(final int startPosition, final int nextSectionStartPosition) throws IOException
+        public SyncSegment nextSegment(int startPosition, int nextSectionStartPosition) throws IOException
         {
-            // read the entire sync segment in one go; then, iterate for each encrypted block
-            int length = nextSectionStartPosition - startPosition;
-            fileReadBuffer = ByteBufferUtil.ensureCapacity(fileReadBuffer, length, true);
-            reader.getChannel().readFully(fileReadBuffer, startPosition);
-            fileReadBuffer.flip();
-            int plainTextLength = fileReadBuffer.getInt();
+            int totalPlainTextLength = reader.readInt();
+            currentSegmentEndPosition = nextSectionStartPosition - 1;
 
             nextLogicalStart += SYNC_MARKER_SIZE;
-            FileDataInput input = new RebufferingDataInput(fileReadBuffer, reader.getPath(), nextLogicalStart, 0, plainTextLength, decryptFunction);
-            nextLogicalStart += plainTextLength;
+            FileDataInput input = new RebufferingDataInput(reader.getPath(), nextLogicalStart, 0, totalPlainTextLength, chunkProvider);
+            nextLogicalStart += totalPlainTextLength;
             return new SyncSegment(input, (int)nextLogicalStart);
         }
     }
