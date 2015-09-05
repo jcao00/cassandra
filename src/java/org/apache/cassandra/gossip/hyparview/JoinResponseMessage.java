@@ -1,0 +1,76 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.cassandra.gossip.hyparview;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.util.Optional;
+
+import org.apache.cassandra.gossip.GossipMessageId;
+import org.apache.cassandra.io.IVersionedSerializer;
+import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.MessageOut;
+import org.apache.cassandra.net.MessagingService;
+
+public class JoinResponseMessage extends HyParViewMessage
+{
+    public static final IVersionedSerializer<JoinResponseMessage> serializer = new Serializer();
+
+    public JoinResponseMessage(GossipMessageId messgeId, InetAddress sender, String datacenter, Optional<GossipMessageId> lastDisconnect)
+    {
+        super(messgeId, sender, datacenter, lastDisconnect);
+    }
+
+    @Override
+    HPVMessageType getMessageType()
+    {
+        return HPVMessageType.JOIN_RESPONSE;
+    }
+
+    @Override
+    public MessageOut<? extends HyParViewMessage> getMessageOut()
+    {
+        return new MessageOut<>(MessagingService.Verb.HYPARVIEW_JOIN_RESPONSE, this, serializer);
+    }
+
+    private static class Serializer implements IVersionedSerializer<JoinResponseMessage>
+    {
+        @Override
+        public void serialize(JoinResponseMessage joinResponseMessage, DataOutputPlus out, int version) throws IOException
+        {
+            serializeBaseFields(joinResponseMessage, out, version);
+            HyParViewMessage.serialize(joinResponseMessage.lastDisconnect, out, version);
+        }
+
+        @Override
+        public long serializedSize(JoinResponseMessage joinResponseMessage, int version)
+        {
+            return serializedSizeBaseFields(joinResponseMessage, version) +
+                   HyParViewMessage.serializedSize(joinResponseMessage.lastDisconnect, version);
+        }
+
+        @Override
+        public JoinResponseMessage deserialize(DataInputPlus in, int version) throws IOException
+        {
+            BaseMessageFields fields = deserializeBaseFields(in, version);
+            Optional<GossipMessageId> disconnect = deserializeOptionalMessageId(in, version);
+            return new JoinResponseMessage(fields.messgeId, fields.sender, fields.datacenter, disconnect);
+        }
+    }
+}

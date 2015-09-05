@@ -1,0 +1,1236 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.cassandra.gossip.hyparview;
+
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.gms.ApplicationState;
+import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
+import org.apache.cassandra.gms.IFailureDetectionEventListener;
+import org.apache.cassandra.gms.VersionedValue;
+import org.apache.cassandra.gossip.GossipMessageId;
+import org.apache.cassandra.gossip.PeerSamplingService;
+import org.apache.cassandra.gossip.PeerSamplingServiceListener;
+import org.apache.cassandra.gossip.hyparview.NeighborRequestMessage.Priority;
+import org.apache.cassandra.gossip.hyparview.NeighborResponseMessage.Result;
+import org.apache.cassandra.locator.SeedProvider;
+import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.Pair;
+
+/**
+ * An implementation of the <a href="http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf">HyParView</a> paper, Leitao, et al, (2008).
+ * Briefly, HyParView is a {@link PeerSamplingService} that maintains a partial view of the peers in cluster that is to be used
+ * by dependent modules (for example, upper-layer gossip broadcast components). HyParView uses a coordination protocol
+ * to ensure all nodes are included in at least one peer's view (ensuring complete coverage). Also, each node
+ * maintains a symmetric relationship with each peer in it's active view: if node A has node B in it's active view,
+ * B should have A in it's own active view.
+ *
+ * However, this implementation take some deviations from the paper. HyParView requires two views of peers in the cluster:
+ * an active view and a passive view. The active view is retained, but we can skip the backup view
+ * as we can piggy-back off the existing knowledge of the full cluster as a replacement
+ * for all the mechanics of maintaining the passive view (see section 4.4 of the paper, especially
+ * the part on the SHUFFLE messages). The needs of the passive view is still fulfilled (having a backlog
+ * of peers to use as a backup), but eliminate some extra code/network traffic/functionality.
+ *
+ * Messages:
+ * This implementation uses five of the messages defined in the HyParView paper, and adds in one extra. A full description
+ * of the messages can be found in the paper, but a here is a brief summary:
+ * - JOIN - when a node starts up, it send out a JOIN request, typically to a seed. Any peer that receives a JOIN message
+ * must add the sender to it's active view, and then send out FORWARD_JOIN messages to all the nodes in it's active view.
+ * - FORWARD_JOIN - The receipient of a JOIN forwards the join to the peers in it's active view, and so on, until the
+ * message's time-to-live (based on the Active Random Walk Length) hits zero. The Active Random Walk Length is essestially
+ * the number of times a FORWARD_JOIN should be forwarded before being accepted by a node.
+ * - JOIN_RESPONSE - an acknowledgement to the peer who sent out the JOIN message that it's join request has been accepted.
+ * While not defined in the original paper, this is a very useful and necessary addition.
+ * - NEIGHBOR_REQUEST - When a node needs to add entries to it's active view (either because it received a DISCONNECT
+ * or the cluster grew in size), it can send out a NEIGHBOR_REQUEST to a peer. If the node's active view is empty, the peer
+ * must accept the NEIGHBOR_REQUEST (due to the {@link NeighborRequestMessage.Priority#HIGH} value the node must send in the message).
+ * - NEIGHBOR_RESPONSE - The response to a NEIGHBOR_REQUEST, which can either be accept to deny.
+ * - DISCONNECT - sent whenever a node wants to disconnect (from a HyParView point of view) from a peer. This could happen
+ * because the node is shutting down, is accepting a JOIN or NEIGHBOR_REQUEST, and so on.
+ *
+ * State machine:
+ * A useful way to think about HyParView's active view is to consider it like a state machine, wherein each node controls how peers
+ * are allowed into the it's active view. We can consider the state machine with three states:
+ * - start: everything begins here, and directly transitions to ...
+ * - not in active view: a peer can transition to this state either by starting up or sending or receiving a DISCONNECT message
+ * - in active view: a node can transition into this state by receiving a JOIN, JOIN_REQUEST, and so on (read the code and paper for exact details).
+ *
+ * However, the complications arise as this state machine reflects a distributed system, with asynchronous messaging and processes
+ * that are allowed to fail/restart/bounce. Thus, we need to keep rules as to how the local view of the state transitions are allowed to happen.
+ * Each node maintains data in memory about DISCONNECT messages sent and received, and, further, DISCONNECT sends also need to track
+ * the last seen {@link GossipMessageId} of the peer to which it is sending this disconnect. This information is maintained so we can establish
+ * some "happens before" facts from which we know logically when one event preceeds another and if a given peer has seen a disconnect.
+ *
+ * The basic rule is a node should not transition a peer to the active view state if the peer's "connect" message
+ * (JOIN, JOIN_RESPONSE, and so on) cannot prove it has seen all DISCONNECT messages sent to it by the receiving node.
+ * This is expressed by sending along in the connect message the highest DISCONNECT message ID
+ * the peer has seen from the node it is attempting to connect to. The recipient will check against it's own maintained
+ * collection of sent DISCONNECT message IDs (capturing the highest DISCONNECT message ID sent to each peer),
+ * and if the connect message's "last seen disconnect message ID" is not less than the local value,
+ * then the peer has seen all the DISCONNECTs and we can safely to transition it to the local active view.
+ *
+ * As we are not persisting the DISCONNECT message IDs (sent or received), so when a node bounces it loses the history
+ * of the DISCONNECTs it has either sent or received. What this means is that on restart, we can't send any previously known
+ * DISCONNECT message IDs, and thus a peer receiving the connect message might decline the connect request as it would be lacking the
+ * proper DISCONNECT message ID. To alleviate that, each {@link GossipMessageId} contains an "epoch" field, which is incremented
+ * on each restart of a node (by reading from, updating, and writing a value from stable storage). Thus, a node receiving
+ * a connect request with a higher epoch than the last message ID from the peer (recorded with the disconnect sent to the peer)
+ * can safely assume the requestor bounced and thus consider it for inclusion in the active view, even though the request itself
+ * lacks the previous disconect data. We assume, due to the higher epoch in the request message, the disconnect
+ * "happened before" the new connect attempt.
+ *
+ * To transition out of the active view state, and into the "not in active view" state, is much simpler:
+ * 1) a node evicts a peer from the active view, and thus sends a DISCONNECT message to the peer.
+ * 2) a node receives a DISCONNECT message from a peer, and the message's ID is higher than the locally recorded DISCONNECT message ID
+ * for the peer.
+ * 3) a node is informed of a peer being decommissioned, removed, shutdown, etc., and thus via the peer's state changes,
+ * or the peer becomes unavailable (notifed via a failure detector).
+ *
+ * Datacenter concerns:
+ * As for the active view, we split it into two parts: a view of active peers for the local datacenter,
+ * and a map which will hold one active peer for each remote datacenter. This way, we can keep
+ * at least one node from every datacenter in the "aggregate active view". Note: the HyParView paper
+ * does not deal with network partitions (it was solving other problems), and so this is our way of handling
+ * the need to keep all DCs in the active view, as much as we can.
+ *
+ * Due to the requirement for symmetric connections between peers (that is, if B is in A's view, A should be in B's view),
+ * and the fact that datacenters can have different numbers of nodes, not all nodes will have connections to other datacenters.
+ * For example, if DC1 has 100 nodes and DC2 has 10 nodes, DC2 cannot support symmetric connections to all of the nodes in DC1
+ * (assuming each node has one connection for remote datacenters). However, because DC2 will have 10 connections to DC1,
+ * and because DC1 will connected overlay within itself, we are safe in knowing the two datacenters are connected and that
+ * events in DC2 will be propagated throughout DC1.
+ *
+ * Thread safety:
+ * This class is *NOT* thread-safe, and intentionally so, in order to keep it simple and efficient.
+ * With that restriction, though, is the requirement that all mutations to state *must* happen on the
+ * primary thread.
+ */
+public class HyParViewService implements PeerSamplingService, IFailureDetectionEventListener
+{
+    private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
+
+    /**
+     * A default value for the Active Random Walk Length. Not sure if we really need it configurable.
+     */
+    static final int ACTIVE_RANDOM_WALK_LENGTH = 3;
+
+    /**
+     * The maximum number of times to retry a given NEIGHBOT_REQUEST.
+     */
+    static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 3;
+
+    private final Set<PeerSamplingServiceListener> listeners;
+
+    @VisibleForTesting
+    public final EndpointStateSubscriber endpointStateSubscriber;
+
+    /**
+     * Active view of peers in the local datacenter. The max size of this collection
+     * should hover around the max fanout value (based on number of nodes in the datacenter).
+     */
+    private final LinkedList<InetAddress> localDatacenterView;
+
+    /**
+     * Mapping of a datacenter name to a single peer in that datacenter.
+     */
+    private final Map<String, InetAddress> remoteView;
+
+    /**
+     * The braodcast address of the local node. We memoize it here to avoid a hard dependency on {@link FBUtilities#getBroadcastAddress()}.
+     */
+    private final InetAddress localAddress;
+
+    /**
+     * logical datacenter this node is executing in.
+     */
+    private final String datacenter;
+
+    /**
+     * Provider of cluster seeds. Memoized here to avoid a dependency on {@link DatabaseDescriptor#getSeedProvider()}.
+     */
+    private final SeedProvider seedProvider;
+
+    /**
+     * Maximum number of steps (or times) a FORWARD_JOIN request should be forwarded before being accepted and processed.
+     */
+    private final int activeRandomWalkLength;
+
+    /**
+     * A fixed local random number generator, mainly to provide consistency in testing.
+     */
+    private final Random random;
+
+    private GossipMessageId.IdGenerator idGenerator;
+
+    /**
+     * Capture the highest {@link GossipMessageId} received from each peer.
+     */
+    private final Map<InetAddress, GossipMessageId> highestSeenMessageIds;
+
+    /**
+     * Capture the {@link GossipMessageId} of the last DISCONNECT message either received from or sent to a peer.
+     */
+    private final Map<InetAddress, Disconnects> lastDisconnect;
+
+    /**
+     * The primary thread upon which state mutations should occur.
+     */
+    private final ExecutorService executorService;
+    private final ScheduledExecutorService scheduler;
+
+    /**
+     * Flag that indicates if the instance is up, ready, and open for business; else it's down.
+     */
+    private final AtomicBoolean executing = new AtomicBoolean(false);
+
+    /**
+     * Simple flag to indicate if we've received at least one response to a join request. Reset each time a JOIN message is sent.
+     */
+    private volatile boolean hasJoined;
+
+    private ScheduledFuture<?> connectivityChecker;
+
+    public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider,
+                            ExecutorService executorService, ScheduledExecutorService scheduler)
+    {
+        this (localAddress, datacenter, seedProvider, executorService, scheduler, ACTIVE_RANDOM_WALK_LENGTH);
+    }
+
+    public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider,
+                            ExecutorService executorService, ScheduledExecutorService scheduler, int activeRandomWalkLength)
+    {
+        this.localAddress = localAddress;
+        this.datacenter = datacenter;
+        this.seedProvider = seedProvider;
+        this.activeRandomWalkLength = activeRandomWalkLength;
+        this.executorService = executorService;
+        this.scheduler = scheduler;
+
+        highestSeenMessageIds = new HashMap<>();
+        lastDisconnect = new HashMap<>();
+        random = new Random();
+        listeners = new HashSet<>();
+        endpointStateSubscriber = new EndpointStateSubscriber(localAddress, datacenter);
+
+        // explicitly using a LinkedList here - makes removals simpler
+        localDatacenterView = new LinkedList<>();
+        remoteView = new HashMap<>();
+    }
+
+    /**
+     * Start up the HyParView process. Schedules a task to execute the JOIN mechanics on the primary thread ({@link #executorService})
+     * as it's expected this method will not be invoked on that thread.
+     */
+    @Override
+    public void start(int epoch)
+    {
+        if (executing.compareAndSet(false, true))
+            return;
+        idGenerator = new GossipMessageId.IdGenerator(epoch);
+        executorService.execute(this::join);
+        connectivityChecker = scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), 1, 1, TimeUnit.MINUTES);
+    }
+
+    @VisibleForTesting
+    void testInit(int epoch, long connectivityCheckStartMillis, long connectivityCheckDelayMillis)
+    {
+        idGenerator = new GossipMessageId.IdGenerator(epoch);
+        executing.set(true);
+
+        if (0 < connectivityCheckDelayMillis)
+            connectivityChecker = scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), connectivityCheckStartMillis, connectivityCheckDelayMillis, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Randomly select a seed node and send it a JOIN message. Also sets up the {@link JoinChecker} to make sure
+     * a JOIN_RESPONSE is eventually received.
+     */
+    void join()
+    {
+        List<InetAddress> providedSeeds = seedProvider.getSeeds();
+        if (providedSeeds == null)
+        {
+            logger.warn("no seeds defined - this should be fixed (will not start gossiping without seeds");
+            return;
+        }
+
+        List<InetAddress> seeds = new ArrayList<>(providedSeeds);
+        seeds.remove(localAddress);
+        if (seeds.isEmpty())
+        {
+            logger.debug("no seeds left in the seed list (after removing this node), will wait for other nodes to join to start gossiping");
+            return;
+        }
+
+        hasJoined = false;
+        Collections.shuffle(seeds, random);
+        InetAddress seed = seeds.get(0);
+        MessagingService.instance().sendOneWay(new JoinMessage(idGenerator.generate(), localAddress, datacenter).getMessageOut(), seed);
+        scheduler.schedule(new JoinChecker(), 10, TimeUnit.SECONDS);
+    }
+
+    /**
+     * The primary method for handling incoming messages from peers.
+     */
+    void receiveMessage(HyParViewMessage message)
+    {
+        updatePeersInfo(message);
+        if (!executing.get())
+            return;
+
+        try
+        {
+            switch (message.getMessageType())
+            {
+                case JOIN:
+                    handleJoin((JoinMessage) message);
+                    break;
+                case JOIN_RESPONSE:
+                    handleJoinResponse((JoinResponseMessage) message);
+                    break;
+                case FORWARD_JOIN:
+                    handleForwardJoin((ForwardJoinMessage) message);
+                    break;
+                case NEIGHBOR_REQUEST:
+                    handleNeighborRequest((NeighborRequestMessage) message);
+                    break;
+                case NEIGHBOR_RESPONSE:
+                    handleNeighborResponse((NeighborResponseMessage) message);
+                    break;
+                case DISCONNECT:
+                    handleDisconnect((DisconnectMessage) message);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unhandled hyparview message type: " + message.getMessageType());
+            }
+        }
+        catch (Exception e)
+        {
+            logger.error(String.format("error while processing message %s", message), e);
+        }
+    }
+
+    @VisibleForTesting
+    void updatePeersInfo(HyParViewMessage message)
+    {
+        updatePeersInfo(message.sender, message.datacenter, message.messageId);
+        if (!message.sender.equals(message.getOriginator()))
+            updatePeersInfo(message.getOriginator(), message.getOriginatorDatacenter(), message.getOriginatorMessageId());
+    }
+
+    /**
+     * Capture info about the peer(s) from the message. In case there's a (distributed) data race of when we get
+     * an update that the peer was added versus when we receive a message from the peer, update our internal view
+     * of the cluster in {@link #endpointStateSubscriber} if we're out of date.
+     */
+    private void updatePeersInfo(InetAddress peer, String datacenter, GossipMessageId messgeId)
+    {
+        if (peer.equals(localAddress))
+            return;
+        GossipMessageId previousEntry = highestSeenMessageIds.get(peer);
+        if (previousEntry != null && messgeId.compareTo(previousEntry) <= 0)
+            return;
+
+        highestSeenMessageIds.put(peer, messgeId);
+        endpointStateSubscriber.add(peer, datacenter);
+    }
+
+    /**
+     * Handle an incoming request message to JOIN the HyParView subsystem. When a JOIN is received,
+     * always add that node to the local active view, possibly disconnecting from a peer currently in the active view
+     * (if the active view size limit is exceeded). Then send out a FORWARD_JOIN message to all peers in the active view.
+     */
+    @VisibleForTesting
+    void handleJoin(JoinMessage message)
+    {
+        if (!addToView(message))
+            return;
+
+        JoinResponseMessage responseMessage = new JoinResponseMessage(idGenerator.generate(), localAddress, datacenter, lastDisconnectMsgId(message.sender));
+        MessagingService.instance().sendOneWay(responseMessage.getMessageOut(), message.sender);
+
+        ForwardJoinMessage msg = new ForwardJoinMessage(idGenerator.generate(), localAddress, datacenter, message.sender, message.datacenter,
+                                                        activeRandomWalkLength, message.getOriginatorMessageId());
+        getPeers().stream().filter(peer -> !peer.equals(message.sender)).forEach(peer -> MessagingService.instance().sendOneWay(msg.getMessageOut(), peer));
+    }
+
+    private Optional<GossipMessageId> lastDisconnectMsgId(InetAddress peer)
+    {
+        Disconnects disconnects = lastDisconnect.get(peer);
+        return disconnects == null ? Optional.<GossipMessageId>empty() : Optional.ofNullable(disconnects.fromPeer);
+    }
+
+    /**
+     * Add a peer to the active view. Check to see if we've recieved a DISCONNECT message with a higher message id, and, if so,
+     * reject this add.
+     */
+    private boolean addToView(HyParViewMessage message)
+    {
+        return hasSeenDisconnect(message, lastDisconnect) &&
+               addPeerToView(message.getOriginator(), message.getOriginatorDatacenter());
+    }
+
+    /**
+     * Check if the peer has seen the last DISCONNECT message id we have sent it. Also checks to make sure we have not
+     * received a DISONNECT from the peer with a higher messgage id than the is in the current message (helps protect
+     * against duplicate messages).
+     *
+     * There's some rules as per each message type as to how it is processed:
+     *
+     * - JOIN, NEIGHBOR_REQEUST, NEIGHBOR_RESPONSE - the easier case. The sender must send along the highest DISCONNECT
+     * message id it has seen from the recipient. That way the recipient can prove the sender has seen the last DISCONNECT
+     * sent to it. If the sender is bounced (and either received or did not recieve the DISCONNECT from the recipient),
+     * it will no longer retain any DISCONNECT data, so therefore the recipient must check the epoch field of the incoming
+     * "connect" message against the last message ID seen when the DISCONNECT was sent. The epoch field is incremented only
+     * when a peer restarts, so thus we assume a node bounced and we can ignore the absence of DISCONNECT data.
+     *
+     * JOIN_RESPONSE, FORWARD_JOIN - the trickier case, the above conditions apply, plus these.
+     * As each of these could have been sent as part of a chain of forward joins, we need to retain the originating node's
+     * (the node that sent the JOIN) message id in the message chain. As JOIN only happens at node start, we can assume it has
+     * no DISCONNECT data that needs to be passed around (which would have to be sent/copied in the JOIN, FORWARD_JOIN, and
+     * JOIN_RESPONSE messages). Since we do not persist DISCONNECT information, it will be lost after shutdown, and thus will
+     * be null on startup and nothing to pass around.
+     */
+    @VisibleForTesting
+    boolean hasSeenDisconnect(HyParViewMessage message, Map<InetAddress, Disconnects> lastDisconnect)
+    {
+        Disconnects disconnects = lastDisconnect.get(message.getOriginator());
+        if (disconnects == null)
+            return true;
+        if (!disconnects.hasSeenMostRecentFromPeer(message.getOriginatorMessageId()))
+            return false;
+
+        if (!disconnects.hasSeenMostRecentToPeer(message.lastDisconnect.orElse(null), message.getOriginatorMessageId()))
+            return false;
+
+        return true;
+    }
+
+    private boolean addPeerToView(InetAddress peer, String datacenter)
+    {
+        if (peer.equals(localAddress))
+            return false;
+
+        boolean added;
+        if (this.datacenter.equalsIgnoreCase(datacenter))
+            added = addToLocalActiveView(peer);
+        else
+            added = addToRemoteActiveView(peer, datacenter);
+
+        if (added)
+            for (PeerSamplingServiceListener listener : listeners)
+                listener.neighborUp(peer);
+        return added;
+    }
+
+    /**
+     * A utility for testing to just put a peer into the appropriate views/structures.
+     */
+    @VisibleForTesting
+    boolean addPeerToView(InetAddress peer, String datacenter, GossipMessageId messageId)
+    {
+        highestSeenMessageIds.put(peer, messageId);
+        endpointStateSubscriber.add(peer, datacenter);
+        return addPeerToView(peer, datacenter);
+    }
+
+
+    /**
+     * Add peer to the local active view, if it is not already in the view.
+     *
+     * @return true if the node was added to the active view; else, false.
+     */
+    private boolean addToLocalActiveView(InetAddress peer)
+    {
+        if (localDatacenterView.contains(peer))
+            return false;
+
+        localDatacenterView.addLast(peer);
+//        logger.info(String.format("%s adding %s to local active view", localAddress, peer));
+        if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
+            expungeNode(localDatacenterView.removeFirst(), datacenter, true);
+        return true;
+    }
+
+    /**
+     * Disconnect from a peer. Record a new {@link GossipMessageId} in the {@link #lastDisconnect} for the peer,
+     * then send it DISCONNECT message.
+     */
+    private void expungeNode(InetAddress peer, String datacenter, boolean informListeners)
+    {
+        GossipMessageId id = idGenerator.generate();
+//        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
+
+        GossipMessageId previousMessageId = highestSeenMessageIds.get(peer);
+        Preconditions.checkNotNull(previousMessageId, String.format("%s has no previous message id from peer %s", localAddress, peer));
+        Disconnects disconnects = lastDisconnect.get(peer);
+        if (disconnects == null)
+            disconnects = new Disconnects(null, Pair.create(id, previousMessageId));
+        else
+            disconnects = disconnects.withNewToPeerMsgId(Pair.create(id, previousMessageId));
+
+        lastDisconnect.put(peer, disconnects);
+        MessagingService.instance().sendOneWay(new DisconnectMessage(id, localAddress, this.datacenter).getMessageOut(), peer);
+
+        if (informListeners)
+            for (PeerSamplingServiceListener listener : listeners)
+                listener.neighborDown(peer);
+    }
+
+    /**
+     * @return return true if a new peer was set as the peer for the datacenter; else, false (if the same peer is the current value).
+     */
+    private boolean addToRemoteActiveView(InetAddress peer, String datacenter)
+    {
+        InetAddress existing = remoteView.get(datacenter);
+        if (existing != null && existing.equals(peer))
+            return false;
+
+//        logger.info(String.format("%s adding %s to remote active view", localAddress, peer));
+        remoteView.put(datacenter, peer);
+        if (existing != null)
+            expungeNode(existing, datacenter, true);
+        return true;
+    }
+
+    /**
+     * A testing utility to force a node to be removed from the active view.
+     */
+    @VisibleForTesting
+    boolean removePeer(InetAddress peer, String datacenter)
+    {
+        if (localDatacenterView.remove(peer) || remoteView.remove(datacenter, peer))
+        {
+            expungeNode(peer, datacenter, true);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Handle a response to a JOIN request. Mostly just need to create the symmetric connection
+     * in the local active view, and disable any join checking mechanisms.
+     */
+    @VisibleForTesting
+    void handleJoinResponse(JoinResponseMessage message)
+    {
+        // we could add an additional check to see if the incoming message's epoch equals the current epoch
+        // in idGenerator, but it seems unecessary
+        if (addToView(message))
+            hasJoined = true;
+    }
+
+    /**
+     * Handle an incoming FORWARD_JOIN message. If the message's time-to-live is greater than 0,
+     * forward the message to a node from the active view (avoiding sending back to the peer that forwarded
+     * to us). If the message's time-to-live is 0, or we have <= 1 nodes in local DC's view (or remote datacenter view is empty),
+     * add the peer to the active view and respond back to requesting node.
+     *
+     * Note: we allow the TTL go below zero (-1 at the least) on the chance that if the (TTL == 0) node doesn't accept,
+     * we'll forward it along one more time to see if it gets lucky.
+     */
+    @VisibleForTesting
+    void handleForwardJoin(ForwardJoinMessage message)
+    {
+        int nextTTL = message.timeToLive - 1;
+        boolean added = false;
+        if (message.getOriginatorDatacenter().equals(datacenter))
+        {
+            if (nextTTL <= 0 || localDatacenterView.size() <= 1)
+                added = addToView(message);
+        }
+        else
+        {
+            if (nextTTL <= 0 || !remoteView.containsKey(message.getOriginatorDatacenter()))
+                added = addToView(message);
+        }
+
+        if (added)
+        {
+            JoinResponseMessage msg = new JoinResponseMessage(idGenerator.generate(), localAddress, datacenter, lastDisconnectMsgId(message.getOriginator()));
+            MessagingService.instance().sendOneWay(msg.getMessageOut(), message.getOriginator());
+        }
+        else if (nextTTL >= 0)
+        {
+            // make sure we don't send a FORWARD_JOIN back to the node who is trying to join, and avoid sending it to the node
+            // who sent it to us (unlesss there's no other peer in the active view to contact).
+            List<InetAddress> peers = getPeers();
+            Collections.shuffle(peers, random);
+            InetAddress peer = peers.stream()
+                                    .filter(addr -> !addr.equals(message.sender) && !addr.equals(message.getOriginator()))
+                                    .findAny()
+                                    .orElseGet(() -> message.sender);
+            ForwardJoinMessage msg = new ForwardJoinMessage(idGenerator.generate(), localAddress, datacenter,
+                                                            message.getOriginator(), message.getOriginatorDatacenter(), nextTTL,
+                                                            message.getOriginatorMessageId());
+            MessagingService.instance().sendOneWay(msg.getMessageOut(), peer);
+        }
+    }
+
+    /**
+     * Handle a neighbor connection request (NEIGHBOR_REQUEST). If the message has a high priority, it must be accepted -
+     * unless the peer has not seen this node's latest DISCONNECT that was sent to it (see {@link #addToView(HyParViewMessage)}).
+     * If a low priority, check if there is space in the active view (for the peer's datacenter), and accept
+     * the connect is there an open slot.
+     */
+    @VisibleForTesting
+    void handleNeighborRequest(NeighborRequestMessage message)
+    {
+        // if the node is already in our active view, go ahead and send an ACCEPT message
+        Optional<GossipMessageId> lastDisconnect = lastDisconnectMsgId(message.sender);
+        if (isPeerInActiveView(message.sender))
+        {
+            NeighborResponseMessage msg = new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
+                                                                      Result.ACCEPT, message.neighborRequestsCount, lastDisconnect);
+            MessagingService.instance().sendOneWay(msg.getMessageOut(), message.sender);
+            return;
+        }
+
+        if (message.priority == Priority.LOW)
+        {
+            if ((message.datacenter.equals(datacenter) && endpointStateSubscriber.fanout(datacenter, datacenter) <= localDatacenterView.size())
+                 || remoteView.containsKey(message.datacenter))
+            {
+                NeighborResponseMessage msg = new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
+                                                                          Result.DENY, message.neighborRequestsCount, lastDisconnect);
+                MessagingService.instance().sendOneWay(msg.getMessageOut(), message.sender);
+                return;
+            }
+        }
+
+        Result result = addToView(message) ? Result.ACCEPT : Result.DENY;
+        NeighborResponseMessage msg = new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
+                                                                  result, message.neighborRequestsCount, lastDisconnect);
+        MessagingService.instance().sendOneWay(msg.getMessageOut(), message.sender);
+    }
+
+    /**
+     * If the peer ACCEPTed the neighbor request, add the peer to the active view. Else, try sending another neighbor request
+     * to a different peer, unless we're over the limit for request attempts.
+     */
+    @VisibleForTesting
+    void handleNeighborResponse(NeighborResponseMessage message)
+    {
+        // if we get a duplicate response, or the peer has already found it's way into the active view, don't reprocess
+        if (isPeerInActiveView(message.sender))
+            return;
+
+        if (message.result == Result.ACCEPT && addToView(message))
+            return;
+
+        int nextRequestCount = message.neighborRequestsCount + 1;
+        if (nextRequestCount < MAX_NEIGHBOR_REQUEST_ATTEMPTS && shouldSendNeighborRequest(datacenter))
+            sendNeighborRequest(Optional.of(message.sender), message.datacenter, nextRequestCount);
+        else
+            logger.debug("neighbor request attempts exceeded. will wait for periodic task to connect to more peers.");
+    }
+
+    /**
+     * Only send a NEIGHBOR_REQUEST if:
+     * - the local datacenter active view is empty (the urgent case)
+     * - {@code datacenter} is the local datacenter, and the active view is not full.
+     * - {@code datacenter} is a remote datacenter, and the number of nodes in the local datacenter
+     * is less than or equal to the number in the remote datacenter. The idea here is that nodes in the smaller
+     * datacenter will then connect out to the larger datacenter. This way, we avoid bombarding the nodes in the smaller datacenter
+     * with requests that it will reject.
+     */
+    @VisibleForTesting
+    boolean shouldSendNeighborRequest(String datacenter)
+    {
+        if (localDatacenterView.isEmpty())
+            return true;
+        return datacenter.equals(this.datacenter)
+            ? endpointStateSubscriber.fanout(datacenter, datacenter) > localDatacenterView.size()
+            : endpointStateSubscriber.comapreDatacenterSizes(this.datacenter, datacenter) <= 0;
+    }
+
+    /**
+     * Remove the requestor from our active view, and, if it was actaully in our active view, try to replace it
+     * (via a NEIGHBOR_REQUEST message) with a node from the same datacenter as the disconnecting peer.
+     */
+    void handleDisconnect(DisconnectMessage message)
+    {
+        Disconnects disconnects = lastDisconnect.get(message.getOriginator());
+        if (disconnects == null)
+            lastDisconnect.put(message.getOriginator(), new Disconnects(message.messageId, null));
+        else if (disconnects.hasSeenMostRecentFromPeer(message.messageId))
+            lastDisconnect.put(message.getOriginator(), disconnects.withNewFromPeerMsgId(message.messageId));
+        else
+            return; // we received some duplicate or older message - ignore
+
+//        logger.info(String.format("%s removing %s", localAddress, message));
+
+        boolean removed = localDatacenterView.remove(message.sender) || remoteView.remove(message.datacenter, message.sender);
+        if (removed && shouldSendNeighborRequest(message.datacenter))
+            sendNeighborRequest(Optional.of(message.sender), message.datacenter, 1);
+
+        for (PeerSamplingServiceListener listener : listeners)
+            listener.neighborDown(message.sender);
+    }
+
+    /**
+     * Attempt to send a neighbor request to the given datacenter.
+     *
+     * @param filtered An additional peer to filter out; for example, if we received a negative response from a peer, and
+     *                 cannot send a message back to it but need to select another.
+     * @param datacenter The datacenter from which to select a peer.
+     */
+    void sendNeighborRequest(Optional<InetAddress> filtered, String datacenter)
+    {
+        sendNeighborRequest(filtered, datacenter, 0);
+    }
+
+    /**
+     * Attempt to send a neighbor request to the given datacenter. If the local datacenter's active view happens to be empty,
+     * consider it an urgent case and send the NEIGHBOR_REQUEST to a peer in the local datacenter instead of the requested
+     * datacenter.
+     *
+     * @param filtered An additional peer to filter out; for example, if we received a negative response from a peer, and
+     *                 cannot send a message back to it but need to select another.
+     * @param datacenter The datacenter from which to select a peer.
+     * @param messageRetryCount The retry count to set into the message.
+     */
+    void sendNeighborRequest(Optional<InetAddress> filtered, String datacenter, int messageRetryCount)
+    {
+        if (localDatacenterView.isEmpty())
+            datacenter = this.datacenter;
+
+        Optional<InetAddress> peer = getPassivePeer(filtered, datacenter);
+        if (!peer.isPresent())
+            return;
+
+        NeighborRequestMessage msg = new NeighborRequestMessage(idGenerator.generate(), localAddress, this.datacenter,
+                                                                determineNeighborPriority(), messageRetryCount,
+                                                                lastDisconnectMsgId(peer.get()));
+        MessagingService.instance().sendOneWay(msg.getMessageOut(), peer.get());
+    }
+
+    /**
+     * Filter the known peers in the datacenter by entries in the active view, and if any peers remain, select an arbitrary peer.
+     * Exclude the filtered peer, as well.
+     */
+    Optional<InetAddress> getPassivePeer(Optional<InetAddress> filtered, String datacenter)
+    {
+        List<InetAddress> candidates = new ArrayList<>(endpointStateSubscriber.peers.get(datacenter));
+        if (this.datacenter.equals(datacenter))
+        {
+            // filter out nodes already in the active view
+            candidates.removeAll(localDatacenterView);
+            candidates.remove(localAddress);
+        }
+        else
+        {
+            if (remoteView.containsKey(datacenter))
+                candidates.remove(remoteView.get(datacenter));
+        }
+
+        if (filtered.isPresent())
+            candidates.remove(filtered.get());
+        if (candidates.isEmpty())
+            return Optional.empty();
+        Collections.shuffle(candidates, random);
+        return Optional.of(candidates.get(0));
+    }
+
+    /**
+     * Normally, the priority is set to LOW unless there are no peers in the local active view, then it is set to HIGH.
+     */
+    Priority determineNeighborPriority()
+    {
+        return localDatacenterView.isEmpty() ? Priority.HIGH : Priority.LOW;
+    }
+
+    private boolean isPeerInActiveView(InetAddress peer)
+    {
+        return localDatacenterView.contains(peer) || remoteView.containsValue(peer);
+    }
+
+    /**
+     * @return A copy of all the peers in the active view.
+     */
+    @Override
+    public List<InetAddress> getPeers()
+    {
+        List<InetAddress> peers = new ArrayList<>(localDatacenterView.size() + remoteView.size());
+        peers.addAll(localDatacenterView);
+        peers.addAll(remoteView.values());
+
+        return peers;
+    }
+
+    @Override
+    public void register(PeerSamplingServiceListener listener)
+    {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void unregister(PeerSamplingServiceListener listener)
+    {
+        listeners.remove(listener);
+    }
+
+    @Override
+    public void shutdown()
+    {
+        if (!executing.compareAndSet(true, false))
+            return;
+
+        if (connectivityChecker != null)
+            connectivityChecker.cancel(true);
+
+        for (InetAddress peer : localDatacenterView)
+            expungeNode(peer, datacenter, false);
+        for (Map.Entry<String, InetAddress> peer : remoteView.entrySet())
+            expungeNode(peer.getValue(), peer.getKey(), false);
+
+        localDatacenterView.clear();
+        remoteView.clear();
+        lastDisconnect.clear();
+
+        // do not inform listeners, they should shutdown gracefully, as well
+    }
+
+    private void peerUnavailable(InetAddress peer)
+    {
+        Optional<String> datacenter = endpointStateSubscriber.getDatacenter(peer);
+        if (datacenter.isPresent())
+            peerUnavailable(peer, datacenter.get());
+    }
+
+    /**
+     * Utility for informing all listeners that a peer in the cluster is either unavailable or has been explicitly
+     * marked down.
+     */
+    private void peerUnavailable(InetAddress peer, String datacenter)
+    {
+        if (localDatacenterView.remove(peer) || remoteView.remove(datacenter, peer))
+        {
+            for (PeerSamplingServiceListener listener : listeners)
+                listener.neighborDown(peer);
+
+
+            if (shouldSendNeighborRequest(datacenter))
+                sendNeighborRequest(Optional.of(peer), datacenter);
+        }
+    }
+
+    private void executeCheckFullActiveView()
+    {
+        try
+        {
+            checkFullActiveView();
+        }
+        catch (Exception e)
+        {
+            logger.error("failed to check the hyparview active view size check", e);
+        }
+    }
+
+    /**
+     * A check that should run periodically to ensure this node is fully connected to the peer sampling service.
+     * For the local datacenter, this node should be connected the fanout number of nodes. For each remote datacenter,
+     * it should connected to, at the maximum, only one node. However, we could not be connected to a node in a remote
+     * datacenter if that datacenter has a lesser number of nodes.
+     */
+    void checkFullActiveView()
+    {
+        // let the join checker make sure we've joined rather than trying to double up here
+        if (!executing.get() || !hasJoined)
+            return;
+
+        Multimap<String, InetAddress> peers = endpointStateSubscriber.peers;
+        for (String datacenter : peers.keySet())
+        {
+            if (datacenter.equals(this.datacenter))
+            {
+                int fanout = endpointStateSubscriber.fanout(this.datacenter, datacenter);
+                if (localDatacenterView.size() < fanout)
+                {
+//                    logger.info(String.format("%s needs more peers in it's local DC", localAddress));
+                    List<InetAddress> localPeers = new ArrayList<>(peers.get(this.datacenter));
+                    localPeers.removeAll(localDatacenterView);
+                    localPeers.remove(localAddress);
+                    if (localPeers.isEmpty())
+                        continue;
+
+                    Collections.shuffle(localPeers, random);
+                    for (InetAddress peer : localPeers.subList(0, fanout - localDatacenterView.size()))
+                    {
+                        // don't let these messages spin in retry attempts - just try once, because we can try again on the next round
+                        int count = MAX_NEIGHBOR_REQUEST_ATTEMPTS - 1;
+                        NeighborRequestMessage msg = new NeighborRequestMessage(idGenerator.generate(), localAddress, this.datacenter, determineNeighborPriority(), count,
+                                                                                lastDisconnectMsgId(peer));
+                        MessagingService.instance().sendOneWay(msg.getMessageOut(), peer);
+                    }
+                }
+            }
+            else if (!remoteView.containsKey(datacenter))
+            {
+                // only attempt to add peers from the remote datacenter if it has an equal or greater number of nodes.
+                if (endpointStateSubscriber.comapreDatacenterSizes(this.datacenter, datacenter) <= 0)
+                    sendNeighborRequest(Optional.<InetAddress>empty(), datacenter);
+            }
+        }
+    }
+
+    /**
+     * Check to see if we've received at least one response to our join request. If not, attempt to join again.
+     */
+    private void checkJoinStatus()
+    {
+        if (!hasJoined)
+            join();
+    }
+
+    @VisibleForTesting
+    public Collection<InetAddress> getLocalDatacenterView()
+    {
+        return localDatacenterView;
+    }
+
+    @VisibleForTesting
+    public Map<String, InetAddress> getRemoteView()
+    {
+        return remoteView;
+    }
+
+    @VisibleForTesting
+    public InetAddress getLocalAddress()
+    {
+        return localAddress;
+    }
+
+    @VisibleForTesting
+    public String getDatacenter()
+    {
+        return datacenter;
+    }
+
+    @VisibleForTesting
+    public GossipMessageId getHighestSeenMessageId(InetAddress peer)
+    {
+        return highestSeenMessageIds.get(peer);
+    }
+
+    @VisibleForTesting
+    public void setHasJoined(boolean hasJoined)
+    {
+        this.hasJoined = hasJoined;
+    }
+
+    @Override
+    public String toString()
+    {
+        StringBuffer sb = new StringBuffer(256);
+        sb.append(localAddress).append(" (").append(datacenter).append("): local view = ").append(localDatacenterView);
+        sb.append(" remote view = ").append(remoteView);
+        return sb.toString();
+    }
+
+    /**
+     * Maintains an independent mapping of {datacenter->peer} of all the current members.
+     * Members are allowed to participcate in gossip operations.
+     *
+     * Note: when the {@link IEndpointStateChangeSubscriber} methods are invoked, they are not guaranteed to be on
+     * the single thread where all states mutations for the {@link HyParViewService} should occur. Thus, we move all
+     * of those calls to the main processing thread for safety.
+     */
+    class EndpointStateSubscriber implements IEndpointStateChangeSubscriber
+    {
+        /**
+         * The minimum size for the number of nodes in a local datacenter to be larger than
+         * to use the natural log for the fanout value.
+         */
+        static final int NATURAL_LOG_THRESHOLD = 5;
+
+        /**
+         * A constant value that is added to the size of the fanout (for the local datacenter).
+         * According to the HyParView paper (section 4.1), a small constant is added to the natural log
+         * of the cluster size to when determining the fanout.
+         */
+        static final int FANOUT_CONSTANT_ADDITION = 1;
+
+        /**
+         * Internal mapping of all nodes to their respective datacenters.
+         *
+         * As the current {@link Gossiper} is single-threaded, we can *probably* use the multimap
+         * with a decent degree of certainty we'll be thread-safe
+         */
+        private final Multimap<String, InetAddress> peers;
+
+        EndpointStateSubscriber(InetAddress address, String datacenter)
+        {
+            peers = HashMultimap.create();
+            peers.put(datacenter, address);
+        }
+
+        /**
+         * Determine the fanout (number of nodes to contact) for the target datacenter.
+         * If the target is different from the local datacenter, always returns 1. If it is
+         * the same datacenter, and if the number of nodes is below some threshold, return
+         * the number of nodes in the datacenter (to contact them all); else, if, there's a
+         * large number of nodes in the local datacenter, return the natural log of the cluster.
+         */
+        int fanout(String localDatacenter, String targetDatacenter)
+        {
+            if (!localDatacenter.equals(targetDatacenter))
+                return 1;
+
+            Collection<InetAddress> localPeers = peers.get(localDatacenter);
+            // don't consider current node as candidate for fanout size
+            int localPeerCount = localPeers.size() - 1;
+
+            if (localPeerCount <= 0)
+                return 1;
+            return localPeerCount >= NATURAL_LOG_THRESHOLD
+                        ? (int)Math.ceil(Math.log(localPeerCount)) + FANOUT_CONSTANT_ADDITION
+                        : localPeerCount;
+        }
+
+        public Optional<String> getDatacenter(InetAddress addr)
+        {
+            // hoping there's a more efficient way of getting the datacenter for a node...
+            for (Map.Entry<String, Collection<InetAddress>> entry : peers.asMap().entrySet())
+            {
+                if (entry.getValue().contains(addr))
+                    return Optional.of(entry.getKey());
+            }
+            return Optional.empty();
+        }
+
+        /**
+         * Compare the number of nodes in one datacenter to the number of nodes in another. Behaves like a typical
+         * {@link Comparable#compareTo(Object)} method.
+         */
+        int comapreDatacenterSizes(String dc1, String dc2)
+        {
+            Collection<InetAddress> dc1Nodes = peers.get(dc1);
+            Collection<InetAddress> dc2Nodes = peers.get(dc2);
+
+            if (dc1Nodes == null && dc2Nodes == null)
+                return 0;
+            if (dc1Nodes == null)
+                return -1;
+            if (dc2Nodes == null)
+                return 1;
+
+            return dc1Nodes.size() - dc2Nodes.size();
+        }
+
+        @VisibleForTesting
+        void add(InetAddress peer, String datacenter)
+        {
+            if (!peers.containsEntry(datacenter, peer))
+                peers.put(datacenter, peer);
+        }
+
+        @VisibleForTesting
+        Multimap<String, InetAddress> getPeers()
+        {
+            return peers;
+        }
+
+        @Override
+        public void onJoin(InetAddress endpoint, EndpointState epState)
+        {
+            // nop
+        }
+
+        @Override
+        public void beforeChange(InetAddress endpoint, EndpointState currentState, ApplicationState newStateKey, VersionedValue newValue)
+        {
+            // nop
+        }
+
+        @Override
+        public void onChange(InetAddress addr, ApplicationState state, VersionedValue value)
+        {
+            if (state == ApplicationState.DC)
+                executorService.execute(() -> add(addr, value.value));
+        }
+
+        @Override
+        public void onAlive(InetAddress endpoint, EndpointState state)
+        {
+            VersionedValue datacenter = state.getApplicationState(ApplicationState.DC);
+            if (datacenter == null)
+                return;
+            executorService.execute(() -> add(endpoint, datacenter.value));
+        }
+
+        @Override
+        public void onDead(final InetAddress endpoint, EndpointState state)
+        {
+            VersionedValue datacenter = state.getApplicationState(ApplicationState.DC);
+            if (datacenter == null)
+                return;
+            if (peers.remove(datacenter.value, endpoint))
+                executorService.submit(() -> peerUnavailable(endpoint, datacenter.value));
+        }
+
+        @Override
+        public void onRemove(final InetAddress endpoint)
+        {
+            Optional<String> datacenter = getDatacenter(endpoint);
+            if (!datacenter.isPresent())
+                return;
+            if (peers.remove(datacenter.get(), endpoint))
+                executorService.submit(() -> peerUnavailable(endpoint, datacenter.get()));
+        }
+
+        @Override
+        public void onRestart(InetAddress endpoint, EndpointState state)
+        {
+            onAlive(endpoint, state);
+        }
+    }
+
+    /*
+        method for IFailureDetectionEventListener
+     */
+    @Override
+    public void convict(final InetAddress addr, double phi)
+    {
+        executorService.submit(() -> peerUnavailable(addr));
+    }
+
+    class ClusterConnectivityChecker implements Runnable
+    {
+        @Override
+        public void run()
+        {
+            // because this class will be executed from the scheduled tasks thread, move the actaul execution
+            // into the primary exec pool for the owning class
+            executorService.submit(HyParViewService.this::executeCheckFullActiveView);
+        }
+    }
+
+    class JoinChecker implements Runnable
+    {
+        @Override
+        public void run()
+        {
+            // because this class will be executed from the scheduled tasks thread, move the actaul execution
+            // into the primary exec pool for the owning class
+            executorService.submit(HyParViewService.this::checkJoinStatus);
+        }
+    }
+
+    /**
+     * Holds disconnect data received from/sent to a given peer.
+     */
+    static class Disconnects
+    {
+        /**
+         * Last disconnect message id received from a peer.
+         */
+        final GossipMessageId fromPeer;
+
+        /**
+         * Last disconnect message id sent to a peer and the last seen message ID from that peer when the DISCONNECT was sent.
+         */
+        final Pair<GossipMessageId, GossipMessageId> toPeer;
+
+        Disconnects(GossipMessageId fromPeer, Pair<GossipMessageId, GossipMessageId> toPeer)
+        {
+            if (toPeer != null)
+            {
+                Preconditions.checkNotNull(toPeer.left);
+                Preconditions.checkNotNull(toPeer.right);
+            }
+            this.fromPeer = fromPeer;
+            this.toPeer = toPeer;
+        }
+
+        /**
+         * create a new instance with an updated fromPeer value.
+         */
+        Disconnects withNewFromPeerMsgId(GossipMessageId fromMsgId)
+        {
+            return new Disconnects(fromMsgId, toPeer);
+        }
+
+        /**
+         * create a new instance with an updated toPeer value.
+         */
+        Disconnects withNewToPeerMsgId(Pair<GossipMessageId, GossipMessageId> toMsgId)
+        {
+            return new Disconnects(fromPeer, toMsgId);
+        }
+
+        /**
+         * Test if the parameter message ID is higher than the currently recorded fromPeer value.
+         */
+        boolean hasSeenMostRecentFromPeer(GossipMessageId msgId)
+        {
+            return fromPeer == null || msgId.compareTo(fromPeer) > 0;
+        }
+
+        /**
+         * Test if the parameter message ID is higher than the currently recorded toPeer value. If the {@code disconnectMessageId}
+         * is null (most likely because the peer restarted and has no recorded DISCONNECT information), then check that
+         * the {@code messageId}'s epoch is higher (to prove that it bounced). Else, the peer has not received our most
+         * recent DISCONNECT.
+         */
+        boolean hasSeenMostRecentToPeer(GossipMessageId disconnectMessageId, GossipMessageId messageId)
+        {
+            if (toPeer == null)
+                return true;
+
+            if (disconnectMessageId == null)
+                return messageId.epochOnlyCompareTo(toPeer.right) > 0;
+
+            return disconnectMessageId.compareTo(toPeer.left) >= 0;
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("fromPeer %s, toPeer %s", fromPeer, toPeer);
+        }
+    }
+}

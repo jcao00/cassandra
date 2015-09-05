@@ -66,6 +66,24 @@ import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token.TokenFactory;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.gms.*;
+import org.apache.cassandra.exceptions.AlreadyExistsException;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.exceptions.UnavailableException;
+import org.apache.cassandra.gms.ApplicationState;
+import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.FailureDetector;
+import org.apache.cassandra.gms.GossipDigestAck2VerbHandler;
+import org.apache.cassandra.gms.GossipDigestAckVerbHandler;
+import org.apache.cassandra.gms.GossipDigestSynVerbHandler;
+import org.apache.cassandra.gms.GossipShutdownVerbHandler;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
+import org.apache.cassandra.gms.IFailureDetector;
+import org.apache.cassandra.gms.TokenSerializer;
+import org.apache.cassandra.gms.VersionedValue;
+import org.apache.cassandra.gossip.GossipContext;
+import org.apache.cassandra.gossip.hyparview.HyParViewVerbHandler;
 import org.apache.cassandra.hints.HintVerbHandler;
 import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.io.sstable.SSTableLoader;
@@ -199,6 +217,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     private boolean replacing;
 
     private final StreamStateStore streamStateStore = new StreamStateStore();
+    public final GossipContext gossipContext;
 
     /** This method updates the local token on disk  */
     public void setTokens(Collection<Token> tokens)
@@ -238,6 +257,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
 
         legacyProgressSupport = new LegacyJMXProgressSupport(this, jmxObjectName);
+        gossipContext = new GossipContext();
 
         /* register the verb handlers */
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.MUTATION, new MutationVerbHandler());
@@ -272,6 +292,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.BATCH_STORE, new BatchStoreVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.BATCH_REMOVE, new BatchRemoveVerbHandler());
+
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_JOIN, new HyParViewVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_JOIN_RESPONSE, new HyParViewVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_FORWARD_JOIN, new HyParViewVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_NEIGHBOR_REQUEST, new HyParViewVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_NEIGHBOR_RESPONSE, new HyParViewVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_DISCONNECT, new HyParViewVerbHandler());
     }
 
     public void registerDaemon(CassandraDaemon daemon)
@@ -297,6 +324,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             logger.warn("Stopping gossip by operator request");
             Gossiper.instance.stop();
             gossipActive = false;
+            gossipContext.shutdown();
         }
     }
 
@@ -310,6 +338,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             Gossiper.instance.forceNewerGeneration();
             Gossiper.instance.start((int) (System.currentTimeMillis() / 1000));
             gossipActive = true;
+            gossipContext.start(Gossiper.instance.getCurrentGenerationNumber(FBUtilities.getBroadcastAddress()));
         }
     }
 
@@ -795,6 +824,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             Gossiper.instance.register(this);
             Gossiper.instance.start(SystemKeyspace.incrementAndGetGeneration(), appStates); // needed for node-ring gathering.
             gossipActive = true;
+            gossipContext.start(Gossiper.instance.getCurrentGenerationNumber(FBUtilities.getBroadcastAddress()));
             // gossip snitch infos (local DC and rack)
             gossipSnitchInfo();
             // gossip Schema.emptyVersion forcing immediate check for schema updates (see MigrationManager#maybeScheduleSchemaPull)
