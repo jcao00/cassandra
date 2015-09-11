@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
@@ -31,12 +32,18 @@ import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
 import org.apache.cassandra.gossip.hyparview.NeighborRequestMessage.Priority;
 import org.apache.cassandra.gossip.hyparview.NeighborResponseMessage.Result;
+import org.apache.cassandra.locator.SeedProvider;
 
 /**
  * An implementation of the HyParView paper, Leitao, et al, 2008
- * TODO: link to paper!!!!
+ * http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf. Briefly, HyParView is a {@code PeerSamplingService}
+ * that maintains a view of subset of the peers in cluster that are to be used by dependent modules
+ * (for example, upper-layer goosip broadcast components). HyParView uses a loose coordination protocol
+ * to ensure all nodes are included in at least one peer's view (ensuring complete coverage). Also, each node
+ * maintains a symmetric relationship with each peer in it's active view: if node A had node B in it's active view,
+ * B should have A in it's own active view.
  *
- * However, we some liberties with our implementation. HyParView requires two views of peers
+ * However, we take some deviations with our implementation. HyParView requires two views of peers
  * in the cluster: an active view and a passive view. We maintain the active in this class,
  * but we can piggy-back off the existing knowledge of the full cluster as a placement
  * for all the mechanics of maintaining the passive view (see 4.4 of the paper, especially
@@ -50,14 +57,18 @@ import org.apache.cassandra.gossip.hyparview.NeighborResponseMessage.Result;
  * the need to keep all DCs in the active view.
  *
  * Note: this class is *NOT* thread-safe, and intentionally so, in order to keep it simple and efficient.
+ * With that restriction, though, is the requirement that mutations to state *must* happen on the
+ * primary (gossip) thread.
  */
-public class HyParView implements PeerSamplingService, IFailureDetectionEventListener
+public class HyParViewService implements PeerSamplingService, IFailureDetectionEventListener
 {
-    private static final Logger logger = LoggerFactory.getLogger(HyParView.class);
+    private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
     private static final long DEFAULT_RANDOM_SEED = "BuyMyDatabass".hashCode();
 
     private final Set<PeerSamplingServiceListener> listeners;
-    private final EndpointStateSubscriber endpointStateSubscriber;
+
+    @VisibleForTesting
+    final EndpointStateSubscriber endpointStateSubscriber;
 
     /**
      * Active view of peers in the local datacenter. The max size of this collection
@@ -68,7 +79,7 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
     /**
      * Mapping of a datacenter name to a single peer in that datacenter.
      */
-    private Map<String, InetAddress> remoteView;
+    private final Map<String, InetAddress> remoteView;
 
     /**
      * The braodcast address of the local node. We memoize it here to avoid a hard dependency on FBUtilities.
@@ -80,7 +91,15 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
      */
     private final String datacenter;
 
-    private final HyParViewConfiguration config;
+    /**
+     * Provider of cluster seeds. Memoized here to avoid a dependency on {@link org.apache.cassandra.config.DatabaseDescriptor}.
+     */
+    private final SeedProvider seedProvider;
+
+    /**
+     * Maximumu number of steps (or times) a FORWARD_JOIN request should be forwarded before being accepted and processed.
+     */
+    private final int activeRandomWalkLength;
 
     /**
      * A fixed local random number generator, mainly to provide consistency in testing.
@@ -88,12 +107,14 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
     private final Random random;
 
     private MessageSender messageSender;
+    private ExecutorService executorService;
 
-    public HyParView(InetAddress localAddress, String datacenter, HyParViewConfiguration config)
+    public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider, int activeRandomWalkLength)
     {
         this.localAddress = localAddress;
         this.datacenter = datacenter;
-        this.config = config;
+        this.seedProvider = seedProvider;
+        this.activeRandomWalkLength = activeRandomWalkLength;
         random = new Random(DEFAULT_RANDOM_SEED);
         listeners = new HashSet<>();
         endpointStateSubscriber = new EndpointStateSubscriber();
@@ -102,15 +123,23 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
         remoteView = new HashMap<>();
     }
 
-    public void init(MessageSender messageSender)
+    public void init(MessageSender messageSender, ExecutorService executorService)
     {
         this.messageSender = messageSender;
+        this.executorService = executorService;
 
         // TODO:JEB fish out the initial Endpoint states
-
+        // will be happy the day this dependency is severed!
         Gossiper.instance.register(endpointStateSubscriber);
 
         join();
+    }
+
+    @VisibleForTesting
+    void testInit(MessageSender messageSender, ExecutorService executorService)
+    {
+        this.messageSender = messageSender;
+        this.executorService = executorService;
     }
 
     /**
@@ -118,7 +147,7 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
      */
     void join()
     {
-        List<InetAddress> seeds = new ArrayList<>(config.seedProvider().getSeeds());
+        List<InetAddress> seeds = new ArrayList<>(seedProvider.getSeeds());
         seeds.remove(localAddress);
         if (seeds.isEmpty())
         {
@@ -130,7 +159,7 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
         // TODO: add a callback mechanism to ensure we've received some response from
         // the rest of the cluster - else, we need to try to join again.
-        messageSender.send(seeds.get(0), new JoinMessage(localAddress, datacenter));
+        messageSender.send(localAddress, seeds.get(0), new JoinMessage(localAddress, datacenter));
     }
 
     public void receiveMessage(HyParViewMessage message)
@@ -165,9 +194,7 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
         addToView(message.requestor, message.datacenter);
 
-        messageSender.send(message.requestor, new JoinResponseMessage(message.requestor, message.datacenter));
-
-        peerUp(message.requestor, message.datacenter);
+        messageSender.send(localAddress, message.requestor, new JoinResponseMessage(message.requestor, message.datacenter));
 
         // determine the forwarding join targets before we start mucking with the views
         Collection<InetAddress> activeView = getPeers();
@@ -175,9 +202,9 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
         if (!activeView.isEmpty())
         {
-            ForwardJoinMessage msg = new ForwardJoinMessage(message.requestor, message.datacenter, localAddress, config.activeRandomWalkLength());
+            ForwardJoinMessage msg = new ForwardJoinMessage(message.requestor, message.datacenter, localAddress, activeRandomWalkLength);
             for (InetAddress activePeer : activeView)
-                messageSender.send(activePeer, msg);
+                messageSender.send(localAddress, activePeer, msg);
         }
         else
         {
@@ -225,10 +252,15 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
     void addToView(InetAddress peer, String datacenter)
     {
+        if (peer.equals(localAddress))
+            return;
+
         if (this.datacenter.equalsIgnoreCase(datacenter))
             addToLocalActiveView(peer);
         else
             addToRemoteActiveView(peer, datacenter);
+        for (PeerSamplingServiceListener listener : listeners)
+            listener.neighborUp(peer, datacenter);
     }
 
     /**
@@ -237,6 +269,9 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
     @VisibleForTesting
     void addToLocalActiveView(InetAddress peer)
     {
+        if (peer.equals(localAddress))
+            return;
+
         if (!localDatacenterView.contains(peer))
         {
             localDatacenterView.addLast(peer);
@@ -247,7 +282,7 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
     void removeNode(InetAddress peer, String datacenter)
     {
-        messageSender.send(peer, new DisconnectMessage(peer, datacenter));
+        messageSender.send(localAddress, peer, new DisconnectMessage(peer, datacenter));
 
         // TODO: do we need to contact listeners????? don't think so, but ....
     }
@@ -258,12 +293,6 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
         if (previous == null || previous.equals(peer))
             return;
         removeNode(previous, datacenter);
-    }
-
-    void peerUp(InetAddress addr, String datacenter)
-    {
-        for (PeerSamplingServiceListener listener : listeners)
-            listener.neighborUp(addr, datacenter);
     }
 
     @VisibleForTesting
@@ -304,12 +333,12 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
         if (added)
         {
-            messageSender.send(message.requestor, new JoinResponseMessage(localAddress, datacenter));
+            messageSender.send(localAddress, message.requestor, new JoinResponseMessage(localAddress, datacenter));
         }
         else
         {
             InetAddress peer = findArbitraryTarget(Optional.of(message.requestor), message.datacenter);
-            messageSender.send(peer, new ForwardJoinMessage(message.requestor, message.datacenter, localAddress, nextTTL));
+            messageSender.send(localAddress, peer, new ForwardJoinMessage(message.requestor, message.datacenter, localAddress, nextTTL));
         }
     }
 
@@ -328,13 +357,14 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
             if ((message.datacenter.equals(datacenter) && endpointStateSubscriber.fanout(datacenter, datacenter) >= localDatacenterView.size())
                  || remoteView.containsKey(message.datacenter))
             {
-                messageSender.send(message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.DENY));
+                messageSender.send(localAddress, message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.DENY));
                 return;
             }
         }
 
         addToView(message.requestor, message.datacenter);
-        messageSender.send(message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.ACCEPT));
+        // TODO: add timeout such that, on failure, we can try another node
+        messageSender.send(localAddress, message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.ACCEPT));
     }
 
     /**
@@ -390,7 +420,7 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
             return;
         Collections.shuffle(candidates, random);
         // TODO: handle case where local DC is empty, as we need to send high priority (preferrably to own DC)
-        messageSender.send(candidates.get(0), new NeighborRequestMessage(localAddress, datacenter, Priority.LOW));
+        messageSender.send(localAddress, candidates.get(0), new NeighborRequestMessage(localAddress, datacenter, Priority.LOW));
     }
 
     public Collection<InetAddress> getPeers()
@@ -422,8 +452,6 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
     /**
      * Utility for informing all listeners that a perr in the cluster is either unavailable or has been explicitly
      * marked down.
-     *
-     * @param addr The address of the unavailable peer.
      */
     void peerUnavailable(InetAddress addr, String datacenter)
     {
@@ -432,6 +460,10 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
         sendNeighborRequest(Optional.of(addr), datacenter);
     }
 
+    /**
+     * Maintains an independent mapping of {datacenter->peer} of all the current members.
+     * Members are allowed to participcate in gossip operations.
+     */
     class EndpointStateSubscriber implements IEndpointStateChangeSubscriber
     {
         /**
@@ -439,18 +471,6 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
          * to use the natural log for the fanout value.
          */
         private static final int NATURAL_LOG_THRESHOLD = 16;
-
-        /**
-         * Collection of statuses that we consider a peer down or unavailable for.
-         */
-        private final List<String> DOWN_STATUSES = new ArrayList<String>()
-        {{
-            add(VersionedValue.SHUTDOWN);
-            add(VersionedValue.REMOVING_TOKEN);
-            add(VersionedValue.REMOVED_TOKEN);
-            add(VersionedValue.STATUS_LEAVING);
-            add(VersionedValue.STATUS_LEFT);
-        }};
 
         /**
          * Internal mapping of all nodes to their respective datacenters.
@@ -478,8 +498,8 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
                 return 1;
 
             Collection<InetAddress> localPeers = peers.get(localDatacenter);
-            // if there are no peers, really doesn't matter so much what the fanout size is ...
-            if (localPeers == null)
+            // if there are no peers, really doesn't matter what the fanout size is ...
+            if (localPeers.isEmpty())
                 return NATURAL_LOG_THRESHOLD;
 
             int localPeerCount = localPeers.size();
@@ -501,7 +521,7 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
         public void onJoin(InetAddress endpoint, EndpointState epState)
         {
-
+            // nop
         }
 
         public void beforeChange(InetAddress endpoint, EndpointState currentState, ApplicationState newStateKey, VersionedValue newValue)
@@ -511,39 +531,58 @@ public class HyParView implements PeerSamplingService, IFailureDetectionEventLis
 
         public void onChange(InetAddress addr, ApplicationState state, VersionedValue value)
         {
-//            if (state != ApplicationState.STATUS)
-//                return;
-//            if (DOWN_STATUSES.contains(value))
-//                peerUnavailable(addr);
+            // double-check if we already know about the peer and it's datacenter
+            if (state == ApplicationState.DC)
+                newPeer(addr, value.value);
+        }
+
+        boolean newPeer(InetAddress peer, String datacenter)
+        {
+            if (peers.containsValue(peer))
+                return false;
+
+            peers.put(datacenter, peer);
+            return true;
         }
 
         public void onAlive(InetAddress endpoint, EndpointState state)
         {
-            // nop
+            VersionedValue datacenter = state.getApplicationState(ApplicationState.DC);
+            if (datacenter == null)
+                return;
+            newPeer(endpoint, datacenter.value);
         }
 
-        public void onDead(InetAddress endpoint, EndpointState state)
+        public void onDead(final InetAddress endpoint, EndpointState state)
         {
-            peerUnavailable(endpoint);
+            VersionedValue datacenter = state.getApplicationState(ApplicationState.DC);
+            if (datacenter == null)
+                return;
+            if (peers.remove(datacenter.value, endpoint))
+                executorService.submit(() -> peerUnavailable(endpoint, datacenter.value));
         }
 
-        public void onRemove(InetAddress endpoint)
+        public void onRemove(final InetAddress endpoint)
         {
-            peerUnavailable(endpoint);
+            Optional<String> datacenter = getDatacenter(endpoint);
+            if (!datacenter.isPresent())
+                return;
+            if (peers.remove(datacenter.get(), endpoint))
+                executorService.submit(() -> peerUnavailable(endpoint, datacenter.get()));
         }
 
         public void onRestart(InetAddress endpoint, EndpointState state)
         {
-
+            onAlive(endpoint, state);
         }
     }
 
     /*
-        methods for IFailureDetectionEventListener
+        method for IFailureDetectionEventListener
      */
-    public void convict(InetAddress addr, double phi)
+    public void convict(final InetAddress addr, double phi)
     {
         // TODO: not entirely clear if we should listen to the whims of the FD, but go with it for now
-        peerUnavailable(addr);
+        executorService.submit(() -> peerUnavailable(addr));
     }
 }

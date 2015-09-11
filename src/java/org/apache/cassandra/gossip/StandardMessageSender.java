@@ -7,8 +7,9 @@ import org.apache.cassandra.net.MessagingService;
 
 public class StandardMessageSender implements MessageSender
 {
-    public void send(InetAddress address, HyParViewMessage message)
+    public void send(InetAddress source, InetAddress desctination, HyParViewMessage message)
     {
-        MessagingService.instance().sendRRWithFailure(, address, );
+        // TODO:JEB fix this
+//        MessagingService.instance().sendRRWithFailure(, address, );
     }
 }
