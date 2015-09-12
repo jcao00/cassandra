@@ -3,6 +3,7 @@ package org.apache.cassandra.gossip;
 import java.net.InetAddress;
 import java.util.Collection;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * A Peer Sampling Service
@@ -21,8 +22,10 @@ public interface PeerSamplingService
      * @param messageSender Service that sends messages to peer nodes.
      * @param executorService An ExecutorService to which internal messages can be sent (instead of handling events inline from
      *                        whatever thread broadcast them).
+     * @param scheduler A scheduling service to which the implemenation may submit periodic tasks (rather than building it's own
+     *                  or directly depending on {@code ScheduledExecutors}).
      */
-    void init(MessageSender messageSender, ExecutorService executorService);
+    void init(MessageSender messageSender, ExecutorService executorService, ScheduledExecutorService scheduler);
 
     /**
      * Retrieve all the peers in the active view.

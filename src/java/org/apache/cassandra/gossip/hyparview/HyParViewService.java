@@ -13,6 +13,8 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
@@ -54,7 +56,14 @@ import org.apache.cassandra.locator.SeedProvider;
  * and a map which will hold one active peer for each remote datacenter. This way, we can keep
  * at least one node from every datacenter in the "aggregate active view". Note: the HyParView paper
  * does not deal with network partitions (it was solving other problems), and so this is our way of handling
- * the need to keep all DCs in the active view.
+ * the need to keep all DCs in the active view, as much as we can.
+ *
+ * Due to the requirement for symmetric connections between peers (that is, if B is in A's view, A should be in B's view),
+ * and the fact that datacenters can have different numbers of nodes, not all nodes will have connections to other datacenters.
+ * For example, if DC1 has 100 nodes and DC2 has 10 nodes, DC2 cannot support symmetric connections to all of the nodes in DC1
+ * (assuming each node has one connection for remote datacenters). However, because DC2 will have 10 connections to DC1,
+ * and because DC1 will connected overlay within itself, we are safe in knowing the two datacenters are connected and that
+ * events in DC2 will be propagated throughout DC1.
  *
  * Note: this class is *NOT* thread-safe, and intentionally so, in order to keep it simple and efficient.
  * With that restriction, though, is the requirement that mutations to state *must* happen on the
@@ -106,7 +115,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     private final Random random;
 
-    private MessageSender messageSender;
+    @VisibleForTesting
+    MessageSender messageSender;
+
     private ExecutorService executorService;
 
     public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider, int activeRandomWalkLength)
@@ -123,16 +134,17 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         remoteView = new HashMap<>();
     }
 
-    public void init(MessageSender messageSender, ExecutorService executorService)
+    public void init(MessageSender messageSender, ExecutorService executorService, ScheduledExecutorService scheduler)
     {
         this.messageSender = messageSender;
         this.executorService = executorService;
 
         // TODO:JEB fish out the initial Endpoint states
-        // will be happy the day this dependency is severed!
+        // I will be thilled the day this dependency is severed!
         Gossiper.instance.register(endpointStateSubscriber);
 
         join();
+        scheduler.schedule(new ClusterConnectivityChecker(), 1, TimeUnit.MINUTES);
     }
 
     @VisibleForTesting
@@ -147,7 +159,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     void join()
     {
-        List<InetAddress> seeds = new ArrayList<>(seedProvider.getSeeds());
+        List<InetAddress> providedSeeds = seedProvider.getSeeds();
+        if (providedSeeds == null)
+        {
+            logger.warn("no seeds defined - this should be fixed (will not start gossiping without seeds");
+            return;
+        }
+
+        List<InetAddress> seeds = new ArrayList<>(providedSeeds);
         seeds.remove(localAddress);
         if (seeds.isEmpty())
         {
@@ -179,24 +198,19 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
     /**
      * Handle an incoming request message to JOIN the HyParView subsystem. When we receive a join,
-     * we add that node to our passive view (not disturbing any upstream dependants, though), maybe
-     * disconnecting from a node currently in the view (if we're at the max size limit).
-     * Then we send out a FORWARD_JOIN message to all peers in the active view.
-     * 
-     * Note: except for tests, there should be no direct outside callers.
+     * we add that node to our active view, possibly disconnecting from a node currently in the active view
+     * (if we're at the max size limit). Then we send out a FORWARD_JOIN message to all peers in the active view.
+     *
+     * Note that if the requesting node is already in the active view, go ahead and reprocess the request
+     * as it might be a re-broadcast from the sender (because it never got a response to it's JOIN request).
      */
     @VisibleForTesting
     void handleJoin(JoinMessage message)
     {
-        // this might be a re-broadcast from the sender (because it never got a
-        // response to it's JOIN request), so always process (and don't ignore)
-        // notify listeners
-
         addToView(message.requestor, message.datacenter);
 
         messageSender.send(localAddress, message.requestor, new JoinResponseMessage(message.requestor, message.datacenter));
 
-        // determine the forwarding join targets before we start mucking with the views
         Collection<InetAddress> activeView = getPeers();
         activeView.remove(message.requestor);
 
@@ -212,87 +226,61 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         }
     }
 
-    /**
-     * Find a random target node in the requested datacenter.
-     */
-    InetAddress findArbitraryTarget(Optional<InetAddress> sender, String datacenter)
-    {
-        List<InetAddress> candidates;
-        if (this.datacenter.equals(datacenter))
-        {
-            candidates = new ArrayList<>(localDatacenterView);
-        }
-        else
-        {
-            // first check if we have a peer in the active view for the remote datacenter
-            InetAddress remotePeer = remoteView.get(datacenter);
-
-            if (remotePeer == null || (sender.isPresent() && remotePeer.equals(sender.get())))
-            {
-                // if there's no active remote peer, try the entire list of remote peers,
-                // and failing that, use local datacenter.
-                Collection<InetAddress> allRemotes = endpointStateSubscriber.peers.get(datacenter);
-                candidates = new ArrayList<>(allRemotes != null ? allRemotes : localDatacenterView);
-            }
-            else
-                candidates = new ArrayList<InetAddress>() {{ add(remotePeer); }};
-        }
-
-        candidates.remove(localAddress);
-        if (sender.isPresent())
-            candidates.remove(sender);
-
-        if (candidates.isEmpty())
-            return null;
-        if (candidates.size() == 1)
-            return candidates.get(0);
-        Collections.shuffle(candidates, random);
-        return candidates.get(0);
-    }
-
     void addToView(InetAddress peer, String datacenter)
     {
         if (peer.equals(localAddress))
             return;
 
+        // in case there's a (distributed) data race of when we get the membership update that the peer was added
+        // versus when we get the request to add the peer.
+        endpointStateSubscriber.add(peer, datacenter);
+
+        boolean added;
         if (this.datacenter.equalsIgnoreCase(datacenter))
-            addToLocalActiveView(peer);
+            added = addToLocalActiveView(peer);
         else
-            addToRemoteActiveView(peer, datacenter);
-        for (PeerSamplingServiceListener listener : listeners)
-            listener.neighborUp(peer, datacenter);
+            added = addToRemoteActiveView(peer, datacenter);
+
+        if (added)
+            for (PeerSamplingServiceListener listener : listeners)
+                listener.neighborUp(peer, datacenter);
     }
 
     /**
      * Add peer to the local active view.
      */
-    @VisibleForTesting
-    void addToLocalActiveView(InetAddress peer)
+    private boolean addToLocalActiveView(InetAddress peer)
     {
-        if (peer.equals(localAddress))
-            return;
+        if (localDatacenterView.contains(peer))
+            return false;
 
-        if (!localDatacenterView.contains(peer))
-        {
-            localDatacenterView.addLast(peer);
-            if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
-                removeNode(localDatacenterView.removeFirst(), datacenter);
-        }
+        localDatacenterView.addLast(peer);
+        if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
+            removeNode(localDatacenterView.removeFirst(), datacenter);
+        return true;
     }
 
     void removeNode(InetAddress peer, String datacenter)
     {
         messageSender.send(localAddress, peer, new DisconnectMessage(peer, datacenter));
 
-        // TODO: do we need to contact listeners????? don't think so, but ....
+        for (PeerSamplingServiceListener listener : listeners)
+            listener.neighborDown(peer, datacenter);
     }
 
-    void addToRemoteActiveView(InetAddress peer, String datacenter)
+    /**
+     * @return return true if a new peer was set as the peer for the datacenter; else, false (if the same peer is the current value).
+     */
+    private boolean addToRemoteActiveView(InetAddress peer, String datacenter)
     {
-        InetAddress previous = remoteView.put(datacenter, peer);
-        if (previous == null || previous.equals(peer))
-            return;
-        removeNode(previous, datacenter);
+        InetAddress existing = remoteView.get(datacenter);
+        if (existing != null && existing.equals(peer))
+            return false;
+
+        remoteView.put(datacenter, peer);
+        if (existing != null)
+            removeNode(existing, datacenter);
+        return true;
     }
 
     @VisibleForTesting
@@ -306,8 +294,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      * forward the message to a node from the active view (avoiding sending back to the peer that forwarded
      * to us). If the message's time-to-live is 0, or we have <= 1 nodes in local DC's view (or remote datacenter view is empty),
      * add to local active view and respond back to requesting node.
-     *
-     * Note: except for tests, there should be no direct outside callers.
      */
     @VisibleForTesting
     void handleForwardJoin(ForwardJoinMessage message)
@@ -316,17 +302,17 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         boolean added = false;
         if (message.datacenter.equals(datacenter))
         {
-            if (nextTTL == 0 || localDatacenterView.size() <= 1)
+            if (nextTTL <= 0 || localDatacenterView.size() <= 1)
             {
-                addToLocalActiveView(message.requestor);
+                addToView(message.requestor, datacenter);
                 added = true;
             }
         }
         else
         {
-            if (nextTTL == 0 || !remoteView.containsKey(message.datacenter))
+            if (nextTTL <= 0 || !remoteView.containsKey(message.datacenter))
             {
-                addToRemoteActiveView(message.requestor, message.datacenter);
+                addToView(message.requestor, message.datacenter);
                 added = true;
             }
         }
@@ -337,21 +323,67 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         }
         else
         {
-            InetAddress peer = findArbitraryTarget(Optional.of(message.requestor), message.datacenter);
-            messageSender.send(localAddress, peer, new ForwardJoinMessage(message.requestor, message.datacenter, localAddress, nextTTL));
+            Optional<InetAddress> peer = findArbitraryTarget(message.requestor, message.datacenter);
+            if (peer.isPresent())
+                messageSender.send(localAddress, peer.get(), new ForwardJoinMessage(message.requestor, message.datacenter, localAddress, nextTTL));
         }
+    }
+
+
+    /**
+     * Find a random target node, in the requested datacenter. If the datacenter is remote,
+     * first try the peer that is in the active view for that datacenter. If there is no active peer,
+     * try to select another node from that datacenter (assuming we want to keep the forwarding in that datacenter).
+     * If there's no other known nodes in that datacenter, fall back to forwarding to a node in the current datacenter.
+     */
+    Optional<InetAddress> findArbitraryTarget(InetAddress filter, String datacenter)
+    {
+        List<InetAddress> candidates;
+        if (this.datacenter.equals(datacenter))
+        {
+            candidates = new ArrayList<>(localDatacenterView);
+        }
+        else
+        {
+            // first check if we have a peer in the active view for the remote datacenter
+            InetAddress remotePeer = remoteView.get(datacenter);
+            if (remotePeer != null && !remotePeer.equals(filter))
+            {
+                candidates = new ArrayList<InetAddress>()  {{  add(remotePeer);  }};
+            }
+            else
+            {
+                // try the entire list of remote peers for the datacenter. if the only known peer in that datacenter
+                // is the one we're filtering out, then fall back to use only the local datacenter peers
+                Collection<InetAddress> allRemotes = endpointStateSubscriber.peers.get(datacenter);
+                if (allRemotes.size() == 1 && allRemotes.contains(filter))
+                    candidates = new ArrayList<>(localDatacenterView);
+                else
+                    candidates = new ArrayList<>(allRemotes);
+            }
+        }
+
+        candidates.remove(localAddress);
+        candidates.remove(filter);
+
+        if (candidates.isEmpty())
+            return Optional.empty();
+        if (candidates.size() == 1)
+            return Optional.of(candidates.get(0));
+        Collections.shuffle(candidates, random);
+        return Optional.of(candidates.get(0));
     }
 
     /**
      * Handle a neighbor connection request. If the message has a high priority, we must accept it.
      * If a low priority, check if we have space in the active view (for the peer's datacenter), and accept
      * the connect is there an open slot.
-     *
-     * Note: except for tests, there should be no direct outside callers.
      */
     @VisibleForTesting
     void handleNeighborRequest(NeighborRequestMessage message)
     {
+        // TODO:JEB impl tests
+
         if (message.priority == Priority.LOW)
         {
             if ((message.datacenter.equals(datacenter) && endpointStateSubscriber.fanout(datacenter, datacenter) >= localDatacenterView.size())
@@ -368,11 +400,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
-     * Note: except for tests, there should be no direct outside callers.
+     * If the peer ACCEPTed the neighbor request, consider the bond good and add it to the
+     * active view. Else, try sending a neighbor request to another peer.
      */
     @VisibleForTesting
     void handleNeighborResponse(NeighborResponseMessage message)
     {
+        // TODO:JEB impl tests
+
         if (message.result == Result.ACCEPT)
             addToView(message.requestor, message.datacenter);
         else
@@ -382,18 +417,20 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     /**
      * Remove the requestor from our active view, and, if it was actaully in our active view, try
      * to replace it with a node from the passive view.
-     *
-     * Note: except for tests, there should be no direct outside callers.
      */
     @VisibleForTesting
     void handleDisconnect(DisconnectMessage message)
     {
+        // TODO:JEB impl tests
+
         if (localDatacenterView.remove(message.requestor) || remoteView.remove(message.datacenter, message.requestor))
             sendNeighborRequest(Optional.of(message.requestor), message.datacenter);
     }
 
     void sendNeighborRequest(Optional<InetAddress> filtered, String datacenter)
     {
+        // TODO:JEB impl tests
+
         // remove node from active view
         List<InetAddress> candidates;
         if (this.datacenter.equals(datacenter))
@@ -461,6 +498,45 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
+     * A check that should run periodically to ensure this node is properly connected to the peer sampling service.
+     * For the local datacenter, this node should be connected the fanout number of nodes. For remote datacenters,
+     * it should connected to, at the maximum, only one node. However, we could not be connected to a node in a remote
+     * datacenter if that datacenter has a lesser number of nodes.
+     */
+    void checkConnectivity()
+    {
+        // TODO:JEB add tests
+
+        Multimap<String, InetAddress> peers = endpointStateSubscriber.peers;
+        for (String datacenter : peers.keySet())
+        {
+            if (datacenter.equals(this.datacenter))
+            {
+                int fanout = endpointStateSubscriber.fanout(this.datacenter, datacenter);
+                if (localDatacenterView.size() < fanout)
+                {
+                    // TODO:JEB should we really send out a bunch of messages? or just one at a time,
+                    // and gently ease the cluster up (as we know this method will be called periodically)
+                    for (int i = fanout - localDatacenterView.size(); i > 0; i--)
+                    {
+                        // send neighbor request(s) to peers not already in view
+                        // TODO:JEB impl me
+                    }
+                }
+            }
+            else if (!remoteView.containsKey(datacenter))
+            {
+                // only attempt to add peers from the remote datacenter if it has an equal or greater number of nodes.
+                if (peers.get(this.datacenter).size() <= peers.get(datacenter).size())
+                {
+                    // send message to arbitrary peer in remote dc
+                    // TODO:JEB impl me
+                }
+            }
+        }
+    }
+
+    /**
      * Maintains an independent mapping of {datacenter->peer} of all the current members.
      * Members are allowed to participcate in gossip operations.
      */
@@ -497,10 +573,15 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             if (!localDatacenter.equals(targetDatacenter))
                 return 1;
 
+            // TODO I think there's a problem here with the race of when we get notified, via gossip, of
+            // nodes getting added to the cluser (and we update the EndpointStateListener.peers field)
+            // versus when we get a request to join the PeerSamplingService.
+            // mostly a problem of adding nodes, not removing (if we're over the fanout, not big deal)
+
             Collection<InetAddress> localPeers = peers.get(localDatacenter);
-            // if there are no peers, really doesn't matter what the fanout size is ...
+            // if there are no other peers in this datacenter, default to 1
             if (localPeers.isEmpty())
-                return NATURAL_LOG_THRESHOLD;
+                return 1;
 
             int localPeerCount = localPeers.size();
             if (localPeerCount >= NATURAL_LOG_THRESHOLD)
@@ -517,6 +598,15 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                     return Optional.of(entry.getKey());
             }
             return Optional.empty();
+        }
+
+        /**
+         * Side-door for tests to insert values into the peers map.
+         */
+        @VisibleForTesting
+        void add(InetAddress peer, String datacenter)
+        {
+            peers.put(datacenter, peer);
         }
 
         public void onJoin(InetAddress endpoint, EndpointState epState)
@@ -584,5 +674,15 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     {
         // TODO: not entirely clear if we should listen to the whims of the FD, but go with it for now
         executorService.submit(() -> peerUnavailable(addr));
+    }
+
+    class ClusterConnectivityChecker implements Runnable
+    {
+        public void run()
+        {
+            // because this class will be executed from the scheduled tasks thread, move the actaul execution
+            // into the primary exec pool for this class
+            executorService.submit(() -> checkConnectivity());
+        }
     }
 }
