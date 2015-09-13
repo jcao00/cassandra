@@ -73,6 +73,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 {
     private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
     private static final long DEFAULT_RANDOM_SEED = "BuyMyDatabass".hashCode();
+    private static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 2;
 
     private final Set<PeerSamplingServiceListener> listeners;
 
@@ -156,10 +157,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     @VisibleForTesting
-    void testInit(MessageSender messageSender, ExecutorService executorService)
+    void testInit(MessageSender messageSender, ExecutorService executorService, ScheduledExecutorService scheduler)
     {
         this.messageSender = messageSender;
         this.executorService = executorService;
+        this.scheduler = scheduler;
     }
 
     /**
@@ -396,36 +398,51 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     @VisibleForTesting
     void handleNeighborRequest(NeighborRequestMessage message)
     {
-        // TODO:JEB impl tests
+        // if the node is already in our active view, go ahead and send an ACCEPT message
+        if (getPeers().contains(message.requestor))
+        {
+            messageSender.send(localAddress, message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.ACCEPT, message.neighborRequestsCount));
+            return;
+        }
 
         if (message.priority == Priority.LOW)
         {
-            if ((message.datacenter.equals(datacenter) && endpointStateSubscriber.fanout(datacenter, datacenter) >= localDatacenterView.size())
+            if ((message.datacenter.equals(datacenter) && endpointStateSubscriber.fanout(datacenter, datacenter) <= localDatacenterView.size())
                  || remoteView.containsKey(message.datacenter))
             {
-                messageSender.send(localAddress, message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.DENY));
+                messageSender.send(localAddress, message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.DENY, message.neighborRequestsCount));
                 return;
             }
         }
 
         addToView(message.requestor, message.datacenter);
-        // TODO: add timeout such that, on failure, we can try another node
-        messageSender.send(localAddress, message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.ACCEPT));
+        messageSender.send(localAddress, message.requestor, new NeighborResponseMessage(localAddress, datacenter, Result.ACCEPT, message.neighborRequestsCount));
     }
 
     /**
      * If the peer ACCEPTed the neighbor request, consider the bond good and add it to the
-     * active view. Else, try sending a neighbor request to another peer.
+     * active view. Else, try sending a neighbor request to another peer, unless we're over the limit for request attempts.
      */
     @VisibleForTesting
     void handleNeighborResponse(NeighborResponseMessage message)
     {
-        // TODO:JEB impl tests
+        // TODO:JEB add tests
 
         if (message.result == Result.ACCEPT)
+        {
+            // if we get a duplicate response, or the peer has already found it's way into the active view, don't repocess
+            if (getPeers().contains(message.requestor))
+                return;
             addToView(message.requestor, message.datacenter);
+        }
         else
-            sendNeighborRequest(Optional.of(message.requestor), message.datacenter);
+        {
+            int nextRequestCount = message.neighborRequestsCount + 1;
+            if (nextRequestCount < MAX_NEIGHBOR_REQUEST_ATTEMPTS)
+                sendNeighborRequest(Optional.of(message.requestor), message.datacenter);
+            else
+                logger.debug("neighbor request attempts exceeded. will wait for periodic task to connect to more peers.");
+        }
     }
 
     /**
@@ -471,7 +488,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             return;
         Collections.shuffle(candidates, random);
         // TODO: handle case where local DC is empty, as we need to send high priority (preferrably to own DC)
-        messageSender.send(localAddress, candidates.get(0), new NeighborRequestMessage(localAddress, datacenter, Priority.LOW));
+        messageSender.send(localAddress, candidates.get(0), new NeighborRequestMessage(localAddress, datacenter, Priority.LOW, 0));
     }
 
     public Collection<InetAddress> getPeers()
@@ -501,11 +518,13 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
-     * Utility for informing all listeners that a perr in the cluster is either unavailable or has been explicitly
+     * Utility for informing all listeners that a peer in the cluster is either unavailable or has been explicitly
      * marked down.
      */
     void peerUnavailable(InetAddress addr, String datacenter)
     {
+        // TODO:JEB add tests and think about if we really need to sned neighbor requests --- or if this should call removeNode()
+        // basically, rethink this flow...
         for (PeerSamplingServiceListener listener : listeners)
             listener.neighborDown(addr, datacenter);
         sendNeighborRequest(Optional.of(addr), datacenter);

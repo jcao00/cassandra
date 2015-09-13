@@ -2,18 +2,30 @@ package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import junit.framework.Assert;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.locator.SeedProvider;
-import org.apache.cassandra.utils.Pair;
+
+import static org.apache.cassandra.gossip.hyparview.NeighborRequestMessage.Priority.LOW;
 
 public class HyParViewServiceTest
 {
@@ -22,11 +34,27 @@ public class HyParViewServiceTest
     static final String REMOTE_DC_2 = "dc2`";
 
     static InetAddress localNodeAddr;
+    ExecutorService executorService;
+    ScheduledExecutorService scheduler;
 
     @BeforeClass
     public static void before() throws UnknownHostException
     {
         localNodeAddr = InetAddress.getByName("127.0.0.1");
+    }
+
+    @Before
+    public void setup()
+    {
+        executorService = new NopExecutorService();
+        scheduler = new NopExecutorService();
+    }
+
+    @After
+    public void tearDown()
+    {
+        executorService.shutdownNow();
+        scheduler.shutdownNow();
     }
 
     HyParViewService buildService()
@@ -39,7 +67,7 @@ public class HyParViewServiceTest
         SeedProvider seedProvider = new TestSeedProvider(seeds);
         HyParViewService hpvService = new HyParViewService(localNodeAddr, LOCAL_DC, seedProvider, 2);
 
-        hpvService.testInit(new TestMessageSender(), null);
+        hpvService.testInit(new TestMessageSender(), executorService, scheduler);
 
         return hpvService;
     }
@@ -339,6 +367,143 @@ public class HyParViewServiceTest
         Assert.assertEquals(peer2, target.get());
     }
 
+    @Test
+    public void handleNeighborRequest_AlreadyInView() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.101.3");
+        hpvService.addToView(peer, LOCAL_DC);
+        Assert.assertTrue(hpvService.getPeers().contains(peer));
+
+        hpvService.handleNeighborRequest(new NeighborRequestMessage(peer, LOCAL_DC, LOW, 0));
+        Assert.assertTrue(hpvService.getPeers().contains(peer));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+
+        SentMessage msg = sender.messages.get(0);
+        Assert.assertEquals(HPVMessageType.NEIGHBOR_RESPONSE, msg.message.getMessageType());
+        Assert.assertEquals(peer, msg.destination);
+
+        NeighborResponseMessage responseMessage = (NeighborResponseMessage)msg.message;
+        Assert.assertEquals(NeighborResponseMessage.Result.ACCEPT, responseMessage.result);
+    }
+
+    @Test
+    public void handleNeighborRequest_PriorityHigh() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.101.3");
+
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+        hpvService.handleNeighborRequest(new NeighborRequestMessage(peer, LOCAL_DC, NeighborRequestMessage.Priority.HIGH, 0));
+        Assert.assertTrue(hpvService.getPeers().contains(peer));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+
+        SentMessage msg = sender.messages.get(0);
+        Assert.assertEquals(HPVMessageType.NEIGHBOR_RESPONSE, msg.message.getMessageType());
+        Assert.assertEquals(peer, msg.destination);
+
+        NeighborResponseMessage responseMessage = (NeighborResponseMessage)msg.message;
+        Assert.assertEquals(NeighborResponseMessage.Result.ACCEPT, responseMessage.result);
+    }
+
+    @Test
+    public void handleNeighborRequest_PriorityLow_RemoteDC_Accept() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.101.3");
+
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+        hpvService.handleNeighborRequest(new NeighborRequestMessage(peer, REMOTE_DC_1, NeighborRequestMessage.Priority.LOW, 0));
+        Assert.assertTrue(hpvService.getPeers().contains(peer));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+
+        SentMessage msg = sender.messages.get(0);
+        Assert.assertEquals(HPVMessageType.NEIGHBOR_RESPONSE, msg.message.getMessageType());
+        Assert.assertEquals(peer, msg.destination);
+
+        NeighborResponseMessage responseMessage = (NeighborResponseMessage)msg.message;
+        Assert.assertEquals(NeighborResponseMessage.Result.ACCEPT, responseMessage.result);
+    }
+
+    @Test
+    public void handleNeighborRequest_PriorityLow_RemoteDC_Deny() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress existingRemotePeer = InetAddress.getByName("127.0.41.3");
+        hpvService.addToView(existingRemotePeer, REMOTE_DC_1);
+
+        InetAddress peer = InetAddress.getByName("127.0.101.3");
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+        hpvService.handleNeighborRequest(new NeighborRequestMessage(peer, REMOTE_DC_1, NeighborRequestMessage.Priority.LOW, 0));
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+
+        SentMessage msg = sender.messages.get(0);
+        Assert.assertEquals(HPVMessageType.NEIGHBOR_RESPONSE, msg.message.getMessageType());
+        Assert.assertEquals(peer, msg.destination);
+
+        NeighborResponseMessage responseMessage = (NeighborResponseMessage)msg.message;
+        Assert.assertEquals(NeighborResponseMessage.Result.DENY, responseMessage.result);
+    }
+
+    @Test
+    public void handleNeighborRequest_PriorityLow_LocalDC_Accept() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.101.3");
+
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+        hpvService.handleNeighborRequest(new NeighborRequestMessage(peer, LOCAL_DC, NeighborRequestMessage.Priority.LOW, 0));
+        Assert.assertTrue(hpvService.getPeers().contains(peer));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+
+        SentMessage msg = sender.messages.get(0);
+        Assert.assertEquals(HPVMessageType.NEIGHBOR_RESPONSE, msg.message.getMessageType());
+        Assert.assertEquals(peer, msg.destination);
+
+        NeighborResponseMessage responseMessage = (NeighborResponseMessage)msg.message;
+        Assert.assertEquals(NeighborResponseMessage.Result.ACCEPT, responseMessage.result);
+    }
+
+    @Test
+    public void handleNeighborRequest_PriorityLow_LocalDC_Deny() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress existingPeer = InetAddress.getByName("127.0.41.3");
+        hpvService.addToView(existingPeer, LOCAL_DC);
+
+        InetAddress peer = InetAddress.getByName("127.0.101.3");
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+        hpvService.handleNeighborRequest(new NeighborRequestMessage(peer, LOCAL_DC, NeighborRequestMessage.Priority.LOW, 0));
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+
+        SentMessage msg = sender.messages.get(0);
+        Assert.assertEquals(HPVMessageType.NEIGHBOR_RESPONSE, msg.message.getMessageType());
+        Assert.assertEquals(peer, msg.destination);
+
+        NeighborResponseMessage responseMessage = (NeighborResponseMessage)msg.message;
+        Assert.assertEquals(NeighborResponseMessage.Result.DENY, responseMessage.result);
+    }
+
+
+
+    /*
+        Utility classes
+     */
+
     static class TestSeedProvider implements SeedProvider
     {
         final List<InetAddress> seeds;
@@ -375,6 +540,94 @@ public class HyParViewServiceTest
             this.source = source;
             this.destination = destination;
             this.message = message;
+        }
+    }
+
+    static class NopExecutorService implements ScheduledExecutorService
+    {
+        public void execute(Runnable command)
+        {
+
+        }
+
+        public void shutdown()
+        {
+
+        }
+
+        public List<Runnable> shutdownNow()
+        {
+            return null;
+        }
+
+        public boolean isShutdown()
+        {
+            return false;
+        }
+
+        public boolean isTerminated()
+        {
+            return false;
+        }
+
+        public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return false;
+        }
+
+        public <T> Future<T> submit(Callable<T> task)
+        {
+            return null;
+        }
+
+        public <T> Future<T> submit(Runnable task, T result)
+        {
+            return null;
+        }
+
+        public Future<?> submit(Runnable task)
+        {
+            return null;
+        }
+
+        public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks) throws InterruptedException
+        {
+            return null;
+        }
+
+        public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return null;
+        }
+
+        public <T> T invokeAny(Collection<? extends Callable<T>> tasks) throws InterruptedException, ExecutionException
+        {
+            return null;
+        }
+
+        public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException
+        {
+            return null;
+        }
+
+        public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit)
+        {
+            return null;
+        }
+
+        public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit)
+        {
+            return null;
+        }
+
+        public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay, long period, TimeUnit unit)
+        {
+            return null;
+        }
+
+        public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay, TimeUnit unit)
+        {
+            return null;
         }
     }
 }
