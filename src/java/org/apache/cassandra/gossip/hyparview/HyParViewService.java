@@ -119,6 +119,13 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     MessageSender messageSender;
 
     private ExecutorService executorService;
+    private ScheduledExecutorService scheduler;
+
+    /**
+     * Simple flag to indicate if we've received at least one response to a join request. Reset each time
+     * {@code HyParViewService#join} is called.
+     */
+    private volatile boolean hasJoined;
 
     public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider, int activeRandomWalkLength)
     {
@@ -138,13 +145,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     {
         this.messageSender = messageSender;
         this.executorService = executorService;
+        this.scheduler = scheduler;
 
         // TODO:JEB fish out the initial Endpoint states
         // I will be thilled the day this dependency is severed!
         Gossiper.instance.register(endpointStateSubscriber);
 
         join();
-        scheduler.schedule(new ClusterConnectivityChecker(), 1, TimeUnit.MINUTES);
+        scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), 1, 1, TimeUnit.MINUTES);
     }
 
     @VisibleForTesting
@@ -175,10 +183,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         }
 
         Collections.shuffle(seeds, random);
-
-        // TODO: add a callback mechanism to ensure we've received some response from
-        // the rest of the cluster - else, we need to try to join again.
         messageSender.send(localAddress, seeds.get(0), new JoinMessage(localAddress, datacenter));
+        scheduler.schedule(new JoinChecker(), 10, TimeUnit.SECONDS);
+        hasJoined = false;
     }
 
     public void receiveMessage(HyParViewMessage message)
@@ -247,7 +254,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
-     * Add peer to the local active view.
+     * Add peer to the local active view, if it is not already in the view.
+     *
+     * @return true if the node was added to the active view; else, false.
      */
     private boolean addToLocalActiveView(InetAddress peer)
     {
@@ -256,11 +265,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         localDatacenterView.addLast(peer);
         if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
-            removeNode(localDatacenterView.removeFirst(), datacenter);
+            expungeNode(localDatacenterView.removeFirst(), datacenter);
         return true;
     }
 
-    void removeNode(InetAddress peer, String datacenter)
+    void expungeNode(InetAddress peer, String datacenter)
     {
         messageSender.send(localAddress, peer, new DisconnectMessage(peer, datacenter));
 
@@ -279,14 +288,19 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         remoteView.put(datacenter, peer);
         if (existing != null)
-            removeNode(existing, datacenter);
+            expungeNode(existing, datacenter);
         return true;
     }
 
+    /**
+     * Handle a response to a join request. Mostly just need to create the symmetric connection (or entry)
+     * in our active view, and disable any join checking mechanisms.
+     */
     @VisibleForTesting
     void handleJoinResponse(JoinResponseMessage message)
     {
-        // TODO: make sure we really need this, or just a regular c* RR
+        hasJoined = true;
+        addToView(message.requestor, message.datacenter);
     }
 
     /**
@@ -537,6 +551,15 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
+     * Check to see if we've received at least one response to our join request. If not, attempt to join again.
+     */
+    void checkJoinStatus()
+    {
+        if (!hasJoined)
+            join();
+    }
+
+    /**
      * Maintains an independent mapping of {datacenter->peer} of all the current members.
      * Members are allowed to participcate in gossip operations.
      */
@@ -683,6 +706,16 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             // because this class will be executed from the scheduled tasks thread, move the actaul execution
             // into the primary exec pool for this class
             executorService.submit(() -> checkConnectivity());
+        }
+    }
+
+    class JoinChecker implements Runnable
+    {
+        public void run()
+        {
+            // because this class will be executed from the scheduled tasks thread, move the actaul execution
+            // into the primary exec pool for this class
+            executorService.submit(() -> checkJoinStatus());
         }
     }
 }
