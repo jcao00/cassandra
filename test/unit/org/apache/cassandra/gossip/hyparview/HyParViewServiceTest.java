@@ -527,7 +527,7 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress existingPeer = InetAddress.getByName("127.0.41.3");
-        hpvService.addToView(existingPeer, LOCAL_DC);
+        hpvService.endpointStateSubscriber.add(existingPeer, LOCAL_DC);
 
         InetAddress peer = InetAddress.getByName("127.0.0.3");
         int requestCount = 0;
@@ -564,7 +564,7 @@ public class HyParViewServiceTest
     public void getPassivePeer_LocalDc_EmptyPeers() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
-        Assert.assertFalse(hpvService.getPassivePeer(LOCAL_DC).isPresent());
+        Assert.assertFalse(hpvService.getPassivePeer(Optional.<InetAddress>empty(), LOCAL_DC).isPresent());
     }
 
     @Test
@@ -575,7 +575,7 @@ public class HyParViewServiceTest
         hpvService.addToView(peer, LOCAL_DC);
         peer = InetAddress.getByName("127.0.0.3");
         hpvService.addToView(peer, LOCAL_DC);
-        Assert.assertFalse(hpvService.getPassivePeer(LOCAL_DC).isPresent());
+        Assert.assertFalse(hpvService.getPassivePeer(Optional.<InetAddress>empty(), LOCAL_DC).isPresent());
     }
 
     @Test
@@ -590,7 +590,7 @@ public class HyParViewServiceTest
         peer = InetAddress.getByName("127.0.0.4");
         hpvService.endpointStateSubscriber.add(peer, LOCAL_DC);
 
-        Optional<InetAddress> passivePeer = hpvService.getPassivePeer(LOCAL_DC);
+        Optional<InetAddress> passivePeer = hpvService.getPassivePeer(Optional.<InetAddress>empty(), LOCAL_DC);
         Assert.assertTrue(passivePeer.isPresent());
         Assert.assertEquals(peer, passivePeer.get());
     }
@@ -599,7 +599,7 @@ public class HyParViewServiceTest
     public void getPassivePeer_RemoteDc_EmptyPeers()
     {
         HyParViewService hpvService = buildService();
-        Assert.assertFalse(hpvService.getPassivePeer(REMOTE_DC_1).isPresent());
+        Assert.assertFalse(hpvService.getPassivePeer(Optional.<InetAddress>empty(), REMOTE_DC_1).isPresent());
     }
 
     @Test
@@ -608,7 +608,7 @@ public class HyParViewServiceTest
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
         hpvService.addToView(peer, REMOTE_DC_1);
-        Assert.assertFalse(hpvService.getPassivePeer(REMOTE_DC_1).isPresent());
+        Assert.assertFalse(hpvService.getPassivePeer(Optional.<InetAddress>empty(), REMOTE_DC_1).isPresent());
     }
 
     @Test
@@ -621,7 +621,7 @@ public class HyParViewServiceTest
         for (int i = 0; i < 8; i++)
             hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.1." + i), REMOTE_DC_1);
 
-        Assert.assertTrue(hpvService.getPassivePeer(REMOTE_DC_1).isPresent());
+        Assert.assertTrue(hpvService.getPassivePeer(Optional.<InetAddress>empty(), REMOTE_DC_1).isPresent());
     }
 
     @Test
@@ -678,6 +678,120 @@ public class HyParViewServiceTest
         SentMessage sentMessage = sender.messages.get(0);
         Assert.assertEquals(HPVMessageType.NEIGHBOR_REQUEST, sentMessage.message.getMessageType());
         Assert.assertEquals(peer, sentMessage.destination);
+    }
+
+    @Test
+    public void handleDisconnect_NotInActiveView() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+
+        InetAddress peer = InetAddress.getByName("127.0.0.2");
+        hpvService.handleDisconnect(new DisconnectMessage(peer, LOCAL_DC));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(0, sender.messages.size());
+    }
+
+    @Test
+    public void handleDisconnect_InLocalActiveView() throws UnknownHostException
+    {
+        handleDisconnect_InActiveView(LOCAL_DC);
+    }
+
+    @Test
+    public void handleDisconnect_InRemoteActiveView() throws UnknownHostException
+    {
+        handleDisconnect_InActiveView(REMOTE_DC_1);
+    }
+
+    private void handleDisconnect_InActiveView(String datacenter) throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.0.2");
+        hpvService.addToView(peer, datacenter);
+        InetAddress otherPeer = InetAddress.getByName("127.0.0.3");
+        hpvService.endpointStateSubscriber.add(otherPeer, datacenter);
+
+        Assert.assertTrue(hpvService.getPeers().contains(peer));
+        hpvService.handleDisconnect(new DisconnectMessage(peer, datacenter));
+        Assert.assertFalse(hpvService.getPeers().contains(peer));
+
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+
+        SentMessage sentMessage = sender.messages.get(0);
+        Assert.assertEquals(HPVMessageType.NEIGHBOR_REQUEST, sentMessage.message.getMessageType());
+    }
+
+    @Test
+    public void checkConnectivity_EmptyPeers()
+    {
+        HyParViewService hpvService = buildService();
+        hpvService.checkConnectivity();
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(0, sender.messages.size());
+    }
+
+    @Test
+    public void checkConnectivity_AllDcsGood() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.1.2");
+        hpvService.addToView(peer, REMOTE_DC_1);
+        peer = InetAddress.getByName("127.0.2.2");
+        hpvService.addToView(peer, REMOTE_DC_2);
+
+        for (int i = 0; i < 8; i++)
+        {
+            hpvService.addToView(InetAddress.getByName("127.0.3." + i), LOCAL_DC);
+            hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.1." + i), REMOTE_DC_1);
+            hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.2." + i), REMOTE_DC_2);
+        }
+
+        hpvService.checkConnectivity();
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(0, sender.messages.size());
+    }
+
+    @Test
+    public void checkConnectivity_NeedsRemoteDc() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.1.2");
+        hpvService.addToView(peer, REMOTE_DC_1);
+
+        for (int i = 0; i < 8; i++)
+        {
+            hpvService.addToView(InetAddress.getByName("127.0.3." + i), LOCAL_DC);
+            hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.1." + i), REMOTE_DC_1);
+            hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.2." + i), REMOTE_DC_2);
+        }
+
+        hpvService.checkConnectivity();
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(1, sender.messages.size());
+    }
+
+    @Test
+    public void checkConnectivity_NeedsLocalDc() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.1.2");
+        hpvService.addToView(peer, REMOTE_DC_1);
+        peer = InetAddress.getByName("127.0.2.2");
+        hpvService.addToView(peer, REMOTE_DC_2);
+
+        for (int i = 0; i < 4; i++)
+        {
+            hpvService.addToView(InetAddress.getByName("127.0.3." + i), LOCAL_DC);
+            hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.42." + i), LOCAL_DC);
+            hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.1." + i), REMOTE_DC_1);
+            hpvService.endpointStateSubscriber.add(InetAddress.getByName("127.0.2." + i), REMOTE_DC_2);
+        }
+
+        hpvService.checkConnectivity();
+        TestMessageSender sender = (TestMessageSender)hpvService.messageSender;
+        Assert.assertEquals(4, sender.messages.size());
     }
 
     /*

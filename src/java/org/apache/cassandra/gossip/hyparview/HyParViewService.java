@@ -438,7 +438,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         {
             int nextRequestCount = message.neighborRequestsCount + 1;
             if (nextRequestCount < MAX_NEIGHBOR_REQUEST_ATTEMPTS)
-                sendNeighborRequest(Optional.of(message.requestor), message.datacenter);
+                sendNeighborRequest(Optional.of(message.requestor), message.datacenter, nextRequestCount);
             else
                 logger.debug("neighbor request attempts exceeded. will wait for periodic task to connect to more peers.");
         }
@@ -451,8 +451,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     @VisibleForTesting
     void handleDisconnect(DisconnectMessage message)
     {
-        // TODO:JEB impl tests
-
         if (localDatacenterView.remove(message.requestor) || remoteView.remove(message.datacenter, message.requestor))
             sendNeighborRequest(Optional.of(message.requestor), message.datacenter);
     }
@@ -466,18 +464,32 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     void sendNeighborRequest(Optional<InetAddress> filtered, String datacenter)
     {
-        Optional<InetAddress> peer = getPassivePeer(datacenter);
-        if (!peer.isPresent() || (filtered.isPresent() && filtered.get().equals(peer.get())))
+        sendNeighborRequest(filtered, datacenter, 0);
+    }
+
+    /**
+     * Attempt to send a neighbor request to the given datacenter.
+     *
+     * @param filtered An additional peer to filter out; for example, if we received a negative response from a peer, and
+     *                 cannot send a message back to it but need to select another.
+     * @param datacenter The datacenter from which to select a peer.
+     * @param messageRetryCount The retry count to set into the message.
+     */
+    void sendNeighborRequest(Optional<InetAddress> filtered, String datacenter, int messageRetryCount)
+    {
+        Optional<InetAddress> peer = getPassivePeer(filtered, datacenter);
+        if (!peer.isPresent())
             return;
 
         messageSender.send(localAddress, peer.get(), new NeighborRequestMessage(localAddress, datacenter,
-                                                                                determineNeighborPriority(datacenter), 0));
+                                                                                determineNeighborPriority(datacenter), messageRetryCount));
     }
 
     /**
      * Filter the known peers in the datacenter by entries in the active view, and if any peers remain, select an arbitrary peer.
+     * Exclude the filter peer, as well.
      */
-    Optional<InetAddress> getPassivePeer(String datacenter)
+    Optional<InetAddress> getPassivePeer(Optional<InetAddress> filtered, String datacenter)
     {
         List<InetAddress> candidates = new ArrayList<>(endpointStateSubscriber.peers.get(datacenter));
         if (this.datacenter.equals(datacenter))
@@ -492,6 +504,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                 candidates.remove(remoteView.get(datacenter));
         }
 
+        if (filtered.isPresent())
+            candidates.remove(filtered.get());
         if (candidates.isEmpty())
             return Optional.empty();
         Collections.shuffle(candidates, random);
@@ -564,12 +578,16 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                 int fanout = endpointStateSubscriber.fanout(this.datacenter, datacenter);
                 if (localDatacenterView.size() < fanout)
                 {
-                    // TODO:JEB should we really send out a bunch of messages? or just one at a time,
-                    // and gently ease the cluster up (as we know this method will be called periodically)
-                    for (int i = fanout - localDatacenterView.size(); i > 0; i--)
+                    List<InetAddress> localPeers = new ArrayList<>(endpointStateSubscriber.peers.get(this.datacenter));
+                    localPeers.removeAll(localDatacenterView);
+                    localPeers.remove(localAddress);
+                    Collections.shuffle(localPeers, random);
+                    for (InetAddress peer : localPeers.subList(0, fanout - localDatacenterView.size()))
                     {
-                        // send neighbor request(s) to peers not already in view
-                        // TODO:JEB impl me
+                        // don't let these messages spin in retry attempts - just try once, because we can try again on the next round
+                        int count = MAX_NEIGHBOR_REQUEST_ATTEMPTS - 1;
+                        NeighborRequestMessage msg = new NeighborRequestMessage(localAddress, datacenter, determineNeighborPriority(datacenter), count);
+                        messageSender.send(localAddress, peer, msg);
                     }
                 }
             }
@@ -577,10 +595,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             {
                 // only attempt to add peers from the remote datacenter if it has an equal or greater number of nodes.
                 if (peers.get(this.datacenter).size() <= peers.get(datacenter).size())
-                {
-                    // send message to arbitrary peer in remote dc
-                    // TODO:JEB impl me
-                }
+                    sendNeighborRequest(Optional.<InetAddress>empty(), datacenter);
             }
         }
     }
