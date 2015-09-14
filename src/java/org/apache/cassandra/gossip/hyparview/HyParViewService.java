@@ -73,7 +73,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 {
     private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
     private static final long DEFAULT_RANDOM_SEED = "BuyMyDatabass".hashCode();
-    private static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 2;
+    static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 2;
 
     private final Set<PeerSamplingServiceListener> listeners;
 
@@ -426,13 +426,12 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     @VisibleForTesting
     void handleNeighborResponse(NeighborResponseMessage message)
     {
-        // TODO:JEB add tests
+        // if we get a duplicate response, or the peer has already found it's way into the active view, don't repocess
+        if (getPeers().contains(message.requestor))
+            return;
 
         if (message.result == Result.ACCEPT)
         {
-            // if we get a duplicate response, or the peer has already found it's way into the active view, don't repocess
-            if (getPeers().contains(message.requestor))
-                return;
             addToView(message.requestor, message.datacenter);
         }
         else
@@ -458,37 +457,54 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             sendNeighborRequest(Optional.of(message.requestor), message.datacenter);
     }
 
+    /**
+     * Attempt to send a neighbor request to the given datacenter.
+     *
+     * @param filtered An additional peer to filter out; for example, if we received a negative response from a peer, and
+     *                 cannot send a message back to it but need to select another.
+     * @param datacenter The datacenter from which to select a peer.
+     */
     void sendNeighborRequest(Optional<InetAddress> filtered, String datacenter)
     {
-        // TODO:JEB impl tests
+        Optional<InetAddress> peer = getPassivePeer(datacenter);
+        if (!peer.isPresent() || (filtered.isPresent() && filtered.get().equals(peer.get())))
+            return;
 
-        // remove node from active view
-        List<InetAddress> candidates;
+        messageSender.send(localAddress, peer.get(), new NeighborRequestMessage(localAddress, datacenter,
+                                                                                determineNeighborPriority(datacenter), 0));
+    }
+
+    /**
+     * Filter the known peers in the datacenter by entries in the active view, and if any peers remain, select an arbitrary peer.
+     */
+    Optional<InetAddress> getPassivePeer(String datacenter)
+    {
+        List<InetAddress> candidates = new ArrayList<>(endpointStateSubscriber.peers.get(datacenter));
         if (this.datacenter.equals(datacenter))
         {
-            candidates = new ArrayList<>(endpointStateSubscriber.peers.get(datacenter));
             // filter out nodes already in the active view
             candidates.removeAll(localDatacenterView);
             candidates.remove(localAddress);
         }
         else
         {
-            Collection<InetAddress> remotePeers = endpointStateSubscriber.peers.get(datacenter);
-            if (remotePeers == null || remotePeers.isEmpty())
-            {
-                logger.debug("no more peers from remote datacenter " + datacenter);
-                return;
-            }
-            candidates = new ArrayList<>(remotePeers);
+            if (remoteView.containsKey(datacenter))
+                candidates.remove(remoteView.get(datacenter));
         }
 
-        if (filtered.isPresent())
-            candidates.remove(filtered);
         if (candidates.isEmpty())
-            return;
+            return Optional.empty();
         Collections.shuffle(candidates, random);
-        // TODO: handle case where local DC is empty, as we need to send high priority (preferrably to own DC)
-        messageSender.send(localAddress, candidates.get(0), new NeighborRequestMessage(localAddress, datacenter, Priority.LOW, 0));
+        return Optional.of(candidates.get(0));
+    }
+
+    /**
+     * Normally, the priority is set to LOW unless there are no peers in the active view, then it is set to HIGH.
+     */
+    Priority determineNeighborPriority(String datacenter)
+    {
+        return getPeers().isEmpty() || (datacenter.equals(this.datacenter) && localDatacenterView.isEmpty())
+               ? Priority.HIGH : Priority.LOW;
     }
 
     public Collection<InetAddress> getPeers()
