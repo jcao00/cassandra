@@ -1,12 +1,13 @@
 package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
+import java.util.Map;
 
 public class JoinResponseMessage extends HyParViewMessage
 {
-    public JoinResponseMessage(InetAddress requestor, String datacenter)
+    public JoinResponseMessage(HPVMessageId messgeId, InetAddress sender, String datacenter, Map<InetAddress, HPVMessageId> lastDisconnect)
     {
-        super(requestor, datacenter);
+        super(messgeId, sender, datacenter, lastDisconnect);
     }
 
     public HPVMessageType getMessageType()

@@ -1,12 +1,13 @@
 package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
+import java.util.Collections;
 
 public class DisconnectMessage extends HyParViewMessage
 {
-    public DisconnectMessage(InetAddress peer, String datacenter)
+    public DisconnectMessage(HPVMessageId messgeId, InetAddress peer, String datacenter)
     {
-        super(peer, datacenter);
+        super(messgeId, peer, datacenter, Collections.emptyMap());
     }
 
     public HPVMessageType getMessageType()

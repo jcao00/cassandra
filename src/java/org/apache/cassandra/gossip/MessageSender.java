@@ -14,10 +14,8 @@ public interface MessageSender
     /**
      * Send a message to a peer node.
      *
-     * @param sourceAddr Address of sender - needed primarily for the testing engine
-     *                   (to not need to depend on {@link FBUtilities#getBroadcastAddress()}
      * @param destinationAddr Where to send the message
      * @param message The payload
      */
-    void send(InetAddress sourceAddr, InetAddress destinationAddr, HyParViewMessage message);
+    void send(InetAddress destinationAddr, HyParViewMessage message);
 }
