@@ -39,7 +39,6 @@ public class HyParViewSimulator
     }
 
     @Test
-    @Ignore
     public void simpleJoin_TwoNodes() throws UnknownHostException
     {
         InetAddress seed = InetAddress.getByName("127.0.0.1");
@@ -120,8 +119,9 @@ public class HyParViewSimulator
             InetAddress node = InetAddress.getByName(String.format("127.0.%d.%d", thirdOctet, fourthOctet));
             HyParViewService hpvService = dispatcher.getPeerService(node);
 
-            // ensure basic sanity -- make sure 0 peers in remote view
+            // ensure basic sanity -- make sure no peers in remote view
             Assert.assertTrue(hpvService.getRemoteView().isEmpty());
+            Assert.assertFalse(hpvService.getLocalDatacenterView().isEmpty());
 
             // assert symmetric connections
             for (InetAddress peer : hpvService.getLocalDatacenterView())
