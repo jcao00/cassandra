@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -45,7 +44,7 @@ public class HyParViewSimulator
     {
         InetAddress seed = InetAddress.getByName("127.0.0.1");
         List<InetAddress> seeds = new ArrayList<InetAddress>() {{ add(seed); }};
-        dispatcher = new PennStationDispatcher(seeds);
+        dispatcher = new PennStationDispatcher(seeds, false);
         dispatcher.addPeer(seed, LOCAL_DC);
 
         InetAddress peer = InetAddress.getByName("127.0.0.2");
@@ -73,43 +72,55 @@ public class HyParViewSimulator
     @Test
     public void run_largeCluster_SingleDc() throws UnknownHostException
     {
-        for (int i : new int[]{6, 8, 15, 17, 21, 27, 39, 50, 64, 87, 100, 200, 250}) //500, 1000})
-        //for (int i : new int[]{2, 4, 8, 11, 15, 17, 21, 27, 39, 50, 64, 87, 100, 200, 500, 1000})
+        for (int i : new int[]{2, 4, 6, 8, 15, 17, 21, 27, 39, 50, 64, 87, 100, 200, 250, 500, 750, 1000, 2000})
         {
             for (int j = 0; j < 64; j++)
             {
-                logger.info("interation " + j + " on cluster size " + i);
-                largeCluster_SingleDc(i);
-                dispatcher.shutdown();
+                try
+                {
+                    long start = System.nanoTime();
+                    largeCluster_SingleDc(i, false);
+                    dispatcher.shutdown();
+                    long end = System.nanoTime();
+                    logger.info("\titeration {} on cluster size {}; time taken: {}ms, msgs sent: {}",
+                                j, i, TimeUnit.MILLISECONDS.convert(end - start, TimeUnit.NANOSECONDS), dispatcher.totalMessagesSent());
+                }
+                catch(Throwable e)
+                {
+                    logger.error("test run failed" , e);
+                    Assert.fail(e.getMessage());
+                }
             }
         }
     }
 
-    void largeCluster_SingleDc(int clusterSize) throws UnknownHostException
+    void largeCluster_SingleDc(int clusterSize, boolean verbose) throws UnknownHostException
     {
         InetAddress seedDc1 = InetAddress.getByName("127.0.0.0");
         InetAddress seedDc2 = InetAddress.getByName("127.0.0.1");
         List<InetAddress> seeds = new ArrayList<InetAddress>() {{ add(seedDc1); add(seedDc2); }};
-        dispatcher = new PennStationDispatcher(seeds);
+        dispatcher = new PennStationDispatcher(seeds, verbose);
 
         // add all the nodes to the dispatcher
         for (int i = 0; i < clusterSize; i++)
         {
-            InetAddress addr = InetAddress.getByName("127.0.0." + i);
+            int thirdOctet = i / 256;
+            int fourthOctet = i % 256;
+            InetAddress addr = InetAddress.getByName(String.format("127.0.%d.%d", thirdOctet, fourthOctet));
             dispatcher.addPeer(addr, LOCAL_DC);
             dispatcher.getPeerService(addr).join();
-//            Uninterruptibles.sleepUninterruptibly(5, TimeUnit.MILLISECONDS);
         }
 
         dispatcher.awaitQuiesence();
-        Uninterruptibles.sleepUninterruptibly(200, TimeUnit.MILLISECONDS);
 
         for (int i = 0; i < clusterSize; i++)
         {
-            InetAddress node = InetAddress.getByName("127.0.0." + i);
+            int thirdOctet = i / 256;
+            int fourthOctet = i % 256;
+            InetAddress node = InetAddress.getByName(String.format("127.0.%d.%d", thirdOctet, fourthOctet));
             HyParViewService hpvService = dispatcher.getPeerService(node);
 
-            // ensure basic sanity -- make sure 0 pees in remote view
+            // ensure basic sanity -- make sure 0 peers in remote view
             Assert.assertTrue(hpvService.getRemoteView().isEmpty());
 
             // assert symmetric connections
@@ -129,7 +140,7 @@ public class HyParViewSimulator
         InetAddress seedDc1 = InetAddress.getByName("127.0.0.0");
         InetAddress seedDc2 = InetAddress.getByName("127.0.1.0");
         List<InetAddress> seeds = new ArrayList<InetAddress>() {{ add(seedDc1); add(seedDc2); }};
-        dispatcher = new PennStationDispatcher(seeds);
+        dispatcher = new PennStationDispatcher(seeds, false);
 
         int dc1Size = 1;
         int dc2Size = 1;
@@ -147,8 +158,8 @@ public class HyParViewSimulator
             dispatcher.getPeerService(InetAddress.getByName("127.0.1." + i)).join();
 
         dispatcher.awaitQuiesence();
-        Uninterruptibles.sleepUninterruptibly(1000, TimeUnit.MILLISECONDS);
-        dispatcher.dumpCurrentState();
+//        Uninterruptibles.sleepUninterruptibly(1000, TimeUnit.MILLISECONDS);
+//        dispatcher.dumpCurrentState();
 
         // ensure basic sanity -- make sure 0..1 peers in remote view
 

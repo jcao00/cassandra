@@ -20,9 +20,9 @@ public abstract class HyParViewMessage
     /**
      * The message id of the last disconnect the sender has received from the recipient.
      */
-    public final Map<InetAddress, HPVMessageId> lastDisconnect;
+    public final HPVMessageId lastDisconnect;
 
-    protected HyParViewMessage(HPVMessageId messgeId, InetAddress sender, String datacenter, Map<InetAddress, HPVMessageId> lastDisconnect)
+    protected HyParViewMessage(HPVMessageId messgeId, InetAddress sender, String datacenter, HPVMessageId lastDisconnect)
     {
         this.messgeId = messgeId;
         this.sender = sender;
@@ -50,8 +50,14 @@ public abstract class HyParViewMessage
         return datacenter;
     }
 
-    public HPVMessageId getLastDisconnect(InetAddress addr)
+    public HPVMessageId getOriginatorMessageId()
     {
-        return lastDisconnect.get(addr);
+        return messgeId;
     }
+
+    public HPVMessageId getLastDisconnect()
+    {
+        return lastDisconnect;
+    }
+
 }

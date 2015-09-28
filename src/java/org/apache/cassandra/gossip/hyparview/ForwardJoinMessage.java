@@ -1,7 +1,6 @@
 package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
-import java.util.Map;
 
 public class ForwardJoinMessage extends HyParViewMessage
 {
@@ -17,13 +16,16 @@ public class ForwardJoinMessage extends HyParViewMessage
 
     public final int timeToLive;
 
+    private final HPVMessageId originatorMessageId;
+
     public ForwardJoinMessage(HPVMessageId messgeId, InetAddress sender, String senderDatacenter, InetAddress originator,
-                              String originatorDatacenter, int timeToLive, Map<InetAddress, HPVMessageId> lastDisconnect)
+                              String originatorDatacenter, int timeToLive, HPVMessageId originatorId)
     {
-        super(messgeId, sender, senderDatacenter, lastDisconnect);
+        super(messgeId, sender, senderDatacenter, null);
         this.originator = originator;
         this.originatorDatacenter = originatorDatacenter;
         this.timeToLive = timeToLive;
+        this.originatorMessageId = originatorId;
     }
 
     public HPVMessageType getMessageType()
@@ -47,5 +49,10 @@ public class ForwardJoinMessage extends HyParViewMessage
     public String getOriginatorDatacenter()
     {
         return originatorDatacenter;
+    }
+
+    public HPVMessageId getOriginatorMessageId()
+    {
+        return originatorMessageId;
     }
 }

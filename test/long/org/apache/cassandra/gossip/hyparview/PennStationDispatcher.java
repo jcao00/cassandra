@@ -1,16 +1,15 @@
 package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.util.concurrent.Uninterruptibles;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,13 +23,16 @@ public class PennStationDispatcher
     private final Map<InetAddress, NodeContext> peers;
     private final SeedProvider seedProvider;
 
-    private final AtomicBoolean paused = new AtomicBoolean(false);
     private final Random random;
+    private final AtomicInteger currentlyProcessingCount = new AtomicInteger();
+    private final AtomicInteger totalMessagesSent = new AtomicInteger();
+    private final boolean verbose;
 
-    public PennStationDispatcher(List<InetAddress> seeds)
+    public PennStationDispatcher(List<InetAddress> seeds, boolean verbose)
     {
+        this.verbose = verbose;
         this.random = new Random(SEED);
-        peers = new HashMap<>();
+        peers = new ConcurrentHashMap<>();
         seedProvider = new SimulationSeedProvider(seeds);
     }
 
@@ -51,31 +53,25 @@ public class PennStationDispatcher
     {
         if (!peers.containsKey(destination))
         {
-            logger.debug(String.format("%s sending message to non-existent node %s - might be ok", source, destination));
+            if (seedProvider.getSeeds().contains(destination))
+                return;
+            logger.info(String.format("%s sending [%s] to non-existent node %s - might be ok", source, message, destination));
             return;
         }
 
+        totalMessagesSent.incrementAndGet();
         peers.get(destination).send(message, 0);
     }
 
     public void awaitQuiesence()
     {
-        Uninterruptibles.sleepUninterruptibly(10, TimeUnit.MILLISECONDS);
-//        paused.set(true);
+        while (currentlyProcessingCount.get() > 0)
+            Uninterruptibles.sleepUninterruptibly(3, TimeUnit.MILLISECONDS);
+    }
 
-        for (NodeContext context : peers.values())
-        {
-            try
-            {
-                context.awaitQuiesence();
-            }
-            catch (Exception e)
-            {
-                throw new RuntimeException(e);
-            }
-        }
-
-//        paused.set(false);
+    public int totalMessagesSent()
+    {
+        return totalMessagesSent.get();
     }
 
     public void shutdown()
@@ -91,7 +87,7 @@ public class PennStationDispatcher
         StringBuffer sb = new StringBuffer(2048);
 
         for (Map.Entry<InetAddress, NodeContext> entry : peers.entrySet())
-            sb.append(entry.getValue().hpvService).append("\n");
+            sb.append(entry.getValue().hpvService).append('\n');
 
         logger.info(sb.toString());
     }
@@ -111,24 +107,18 @@ public class PennStationDispatcher
 
         void send(HyParViewMessage message, long delay)
         {
-            logger.info(String.format("scheduling [%s] to %s", message.toString(), hpvService.getLocalAddress()));
+//            if (verbose)
+//                logger.info(String.format("scheduling [%s] to %s", message.toString(), hpvService.getLocalAddress()));
+            currentlyProcessingCount.incrementAndGet();
             scheduler.schedule(() -> deliver(message), delay, TimeUnit.MILLISECONDS);
         }
 
         void deliver(HyParViewMessage message)
         {
-            while (paused.get())
-                Uninterruptibles.sleepUninterruptibly(1, TimeUnit.MILLISECONDS);
-            logger.info(String.format("delivering [%s] to %s", message.toString(), hpvService.getLocalAddress()));
+            if (verbose)
+                logger.info(String.format("delivering [%s] to %s", message.toString(), hpvService.getLocalAddress()));
             hpvService.receiveMessage(message);
-        }
-
-        public void awaitQuiesence()
-        {
-            // note sure if there's a way to force the execution of tasks, 'cuz blocking sure sucks
-            // getActiveCount may not be the API to use here...
-            while (scheduler.getActiveCount() != 0)
-                Uninterruptibles.sleepUninterruptibly(2, TimeUnit.MILLISECONDS);
+            currentlyProcessingCount.decrementAndGet();
         }
     }
 

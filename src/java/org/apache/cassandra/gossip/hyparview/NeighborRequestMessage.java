@@ -1,7 +1,6 @@
 package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
-import java.util.Map;
 
 public class NeighborRequestMessage extends HyParViewMessage
 {
@@ -16,7 +15,7 @@ public class NeighborRequestMessage extends HyParViewMessage
     public final int neighborRequestsCount;
 
     public NeighborRequestMessage(HPVMessageId messgeId, InetAddress sender, String datacenter, Priority priority,
-                                  int neighborRequestsCount, Map<InetAddress, HPVMessageId> lastDisconnect)
+                                  int neighborRequestsCount, HPVMessageId lastDisconnect)
     {
         super(messgeId, sender, datacenter, lastDisconnect);
         this.priority = priority;

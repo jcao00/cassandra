@@ -16,9 +16,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import javax.annotation.Nullable;
-
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import org.slf4j.Logger;
@@ -41,45 +40,56 @@ import org.apache.cassandra.utils.Pair;
 /**
  * An implementation of the HyParView paper, Leitao, et al, 2008
  * http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf. Briefly, HyParView is a {@code PeerSamplingService}
- * that maintains a view of subset of the peers in cluster that are to be used by dependent modules
- * (for example, upper-layer goosip broadcast components). HyParView uses a loose coordination protocol
+ * that maintains a subset view of the peers in cluster that are to be used by dependent modules
+ * (for example, upper-layer gossip broadcast components). HyParView uses a loose coordination protocol
  * to ensure all nodes are included in at least one peer's view (ensuring complete coverage). Also, each node
- * maintains a symmetric relationship with each peer in it's active view: if node A had node B in it's active view,
+ * maintains a symmetric relationship with each peer in it's active view: if node A has node B in it's active view,
  * B should have A in it's own active view.
  *
  * However, we take some deviations with our implementation. HyParView requires two views of peers
- * in the cluster: an active view and a passive view. We maintain the active in this class,
- * but we can piggy-back off the existing knowledge of the full cluster as a placement
+ * in the cluster: an active view and a passive view. We maintain the active view in this implementation,
+ * but we can piggy-back off the existing knowledge of the full cluster as a replacement
  * for all the mechanics of maintaining the passive view (see 4.4 of the paper, especially
  * the part on the SHUFFLE messages). We still fulfill the needs of the passive view (having a backlog
  * of peers to use as a backup), but save ourselves some code/network traffic/extra functionality.
  *
  * State machine:
- * A nice way to think about the active view is to consider it like a state machine, with three states:
+ * A nice way to think about the active view is to consider it like a state machine, wherein each node controls how peers
+ * are allowed into node's (local) active view. We can consider the state machine with three states:
  * - start: everything begins here, and directly transitions to ...
- * - not in active view: a node can transition to this state either by starting up or sending or receiving a DISCONNECT message
- * - in active view: a node can transition into this state by receiving a JOIN, JOIN_REQUEST, and so on (read the code for exact details).
+ * - not in active view: a peer can transition to this state either by starting up or sending or receiving a DISCONNECT message
+ * - in active view: a node can transition into this state by receiving a JOIN, JOIN_REQUEST, and so on (read the code and paper for exact details).
  *
- * However, the complications arise as this state machine reflects a distributed system, with asynchrnous messaging. Thus, we need
- * to keep rules as to how the transitions are allowed to happen. Each node needs to maintain data about disconnects sent and received,
- * and sends also need to track the last seen messageId of the peer to which it is sending this disconnect. We keep this data
- * around so we can establish some "happens before" facts so that we know logically when one event preceeds another.
+ * However, the complications arise as this state machine reflects a distributed system, with asynchrnous messaging and processes
+ * that are allowed to fail/restart/bounce. Thus, we need to keep rules as to how the transitions are allowed to happen.
+ * Each node needs to maintain data about disconnects sent and received, and, further, disconnect sends also need to track
+ * the last seen messageId of the peer to which it is sending this disconnect. We keep this data around so we can establish
+ * some "happens before" facts so that we know logically when one event preceeds another and if a given peer has seen a disconnect.
  *
- * The basic rule is a node should not transition a peer to the active view state if the peer's connect message cannot prove it has seen all
- * DISCONNECT messages sent to it by the node. This is expressed by sending along in the connect message the highest DISCONNECT message ID
+ * The basic rule is a node should not transition a peer to the active view state if the peer's "connect" message
+ * (JOIN, JOIN_RESPONSE, and so on) cannot prove it has seen all DISCONNECT messages sent to it by the node.
+ * This is expressed by sending along in the connect message the highest DISCONNECT message ID
  * the peer has seen from the node it is attempting to connect to. The recipient will check against it's own maintained
  * collection of sent DISCONNECT message IDs (capturing the highest DISCONNECT message ID sent to each peer),
- * and if the connect message's "last seen disconnect message ID" is greater than or equal to the local value,
+ * and if the connect message's "last seen disconnect message ID" is not less than the local value,
  * then the peer has seen all the DISCONNECTs and we can safely to transition it to the local active view.
+ *
+ * As we are not persisting the DISCONNECT message IDs (sent or received), so when a node bounces it loses the history
+ * of the DISCONNECTs it has either sent or received. What this means is that on restart, we can't send any previously known
+ * DISCONNECT message IDs, and thus a peer receiving the connect message might decline the connect request as it would be lacking the
+ * proper DISCONNECT message ID. To alleviate that, each {@code HPVMessageId} contains an "epoch" field, which is incremented
+ * on each restart of a node (by reading from, updating, and writing a value from stable storage). Thus, a node receiving
+ * a connect request with a higher epoch than the last message ID from the peer (recorded with the disconnect sent to the peer)
+ * can safely assume the requestor bounced and thus consider it for inclusion in the active view, even though the request itself
+ * lacks the previous disconect data. We assume, due to the higher epoch in the request message, the disconnect
+ * "happened before" the new connect attempt.
  *
  * To transition out of the active view state, and into the "not in active view" state, is much simpler:
  * 1) a node evicts a peer from the active view, and thus sends a DISCONNECT message
  * 2) a node receives a DISCONNECT message from a peer, and the message's ID is higher than the locally recorded DISCONNECT message ID
  * for the peer.
- *
- * As we are not persisting the DISCONNECT message IDs, when a node bounces it loses the history of the DISCONNECTs it has received
- * (it's OK if forgets all the DISCONNECTs it has sent). What this means is that on restart, we can't send any previously known
- * DISCONNECT message IDs, and thus any accepting peer would need
+ * 3) we are informed of a peer being decommissioned, removed, shutdown, and so via state changes, or becomes unavailable
+ * (notifed via a failure detector).
  *
  * Datacenter concerns:
  * As for the active view, we split it into two parts: a view of active peers for the local datacenter,
@@ -96,7 +106,7 @@ import org.apache.cassandra.utils.Pair;
  * events in DC2 will be propagated throughout DC1.
  *
  * Note: this class is *NOT* thread-safe, and intentionally so, in order to keep it simple and efficient.
- * With that restriction, though, is the requirement that mutations to state *must* happen on the
+ * With that restriction, though, is the requirement that all mutations to state *must* happen on the
  * primary (gossip) thread.
  */
 public class HyParViewService implements PeerSamplingService, IFailureDetectionEventListener
@@ -127,7 +137,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private final InetAddress localAddress;
 
     /**
-     * Cassandra datacenter this node is executing in.
+     * logical datacenter this node is executing in.
      */
     private final String datacenter;
 
@@ -154,9 +164,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private final Map<InetAddress, HPVMessageId> highestSeenMessageIds;
 
     /**
-     * Capture the id of the last message DISCONNECT either received from or sent to a peer - the first Id in the map value's pair
-     * is the ID of DISCONNECT messages sent to the peer; the second Id is the Id of messages received from the peer.
-     * See class-level documentation for more information.
+     * Capture the id of the last message DISCONNECT either received from or sent to a peer.
      */
     private final Map<InetAddress, Disconnects> lastDisconnect;
 
@@ -186,6 +194,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         listeners = new HashSet<>();
         endpointStateSubscriber = new EndpointStateSubscriber();
 
+        // explicitly using a LinkedList here - makes removals simpler
         localDatacenterView = new LinkedList<>();
         remoteView = new HashMap<>();
     }
@@ -197,6 +206,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         this.scheduler = scheduler;
 
         // TODO:JEB fish out the initial Endpoint states
+
         // I will be thilled the day this dependency is severed!
         Gossiper.instance.register(endpointStateSubscriber);
 
@@ -228,34 +238,20 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         seeds.remove(localAddress);
         if (seeds.isEmpty())
         {
-            logger.info("no seeds left in the seed list (after removing this node), so will wait for other nodes to join to start gossiping");
+            logger.info("no seeds left in the seed list (after removing this node), will wait for other nodes to join to start gossiping");
             return;
         }
 
+        hasJoined = false;
         Collections.shuffle(seeds, random);
         InetAddress seed = seeds.get(0);
-        messageSender.send(seed, new JoinMessage(idGenerator.generate(), localAddress, datacenter, lastDisconnectMsgId(null)));
+        messageSender.send(seed, new JoinMessage(idGenerator.generate(), localAddress, datacenter));
         scheduler.schedule(new JoinChecker(), 10, TimeUnit.SECONDS);
-        hasJoined = false;
     }
 
-    private Map<InetAddress, HPVMessageId> lastDisconnectMsgId(@Nullable InetAddress peer)
-    {
-        if (peer != null)
-        {
-            Disconnects disconnects = lastDisconnect.get(peer);
-            return disconnects == null ? Collections.emptyMap() : Collections.singletonMap(peer, disconnects.fromPeer);
-        }
-
-        Map<InetAddress, HPVMessageId> msgIds = new HashMap<>(lastDisconnect.size());
-        for (Map.Entry<InetAddress, Disconnects> entry : lastDisconnect.entrySet())
-        {
-            if (entry.getValue().toPeer != null)
-                msgIds.put(entry.getKey(), entry.getValue().toPeer.left);
-        }
-        return msgIds;
-    }
-
+    /**
+     * Handle incoming messages from peers.
+     */
     public void receiveMessage(HyParViewMessage message)
     {
         updateLastMessageSeen(message.sender, message.messgeId);
@@ -301,20 +297,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
     /**
      * Handle an incoming request message to JOIN the HyParView subsystem. When we receive a join,
-     * we add that node to our active view, possibly disconnecting from a node currently in the active view
-     * (if we're at the max size limit). Then we send out a FORWARD_JOIN message to all peers in the active view.
-     *
-     * Note that if the requesting node is already in the active view, go ahead and reprocess the request
-     * as it might be a re-broadcast from the sender (because it never got a response to it's JOIN request).
+     * we always add that node to our active view, possibly disconnecting from a node currently in the active view
+     * (if the active view size limit is exceeded). Then we send out a FORWARD_JOIN message to all peers in the active view.
      */
     @VisibleForTesting
     void handleJoin(JoinMessage message)
     {
         if (!addToView(message))
-        {
-            // TODO perhaps return a JoinResopnse with a 'decline' status?
             return;
-        }
 
         messageSender.send(message.sender, new JoinResponseMessage(idGenerator.generate(), localAddress, message.datacenter,
                                                                    lastDisconnectMsgId(message.sender)));
@@ -324,18 +314,17 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         if (!peers.isEmpty())
         {
-            HPVMessageId id = idGenerator.generate();
+            ForwardJoinMessage msg = new ForwardJoinMessage(idGenerator.generate(), localAddress, datacenter, message.sender, message.datacenter,
+                                                            activeRandomWalkLength, message.getOriginatorMessageId());
             for (InetAddress peer : peers)
-            {
-                ForwardJoinMessage msg = new ForwardJoinMessage(id, localAddress, datacenter, message.sender, message.datacenter, activeRandomWalkLength,
-                                                                message.lastDisconnect);
                 messageSender.send(peer, msg);
-            }
         }
-        else
-        {
-            logger.debug("no other nodes available to send a forward join message to");
-        }
+    }
+
+    private HPVMessageId lastDisconnectMsgId(InetAddress peer)
+    {
+        Disconnects disconnects = lastDisconnect.get(peer);
+        return disconnects == null ? null : disconnects.fromPeer;
     }
 
     /**
@@ -352,6 +341,22 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      * Check if the peer has seen the last DISCONNECT message id we have sent it. Also checks to make sure we have not
      * received a DISONNECT from the peer with a higher messgage id than the is in the current message (helps protect
      * against duplicate messages).
+     *
+     * There's some rules as per each message type as to how it is processed:
+     *
+     * - JOIN, NEIGHBOR_REQEUST, NEIGHBOR_RESPONSE - the easier case. The sender must send along the highest DISCONNECT
+     * message id it has seen from the recipient. That way the recipient can prove the sender has seen the last DISCONNECT
+     * sent to it. If the sender is bounced (and either received or did not recieve the DISCONNECT from the recipient),
+     * it will no longer retain any DISCONNECT data, so therefore the recipient must check the epoch field of the incoming
+     * "connect" message against the last message ID seen when the DISCONNECT was sent. The epoch field is incremented only
+     * when a peer restarts, so thus we assume a node bounced and we can ignore the absence of DISCONNECT data.
+     *
+     * JOIN_RESPONSE, FORWARD_JOIN - the trickier case, the above conditions apply, plus these.
+     * As each of these could have been sent at the end of a chain of forward joins, we need to retain the originating peer's
+     * (the node that sent the JOIN) message id in the message chain. As JOIN only happens at node start, we can assume it has
+     * no DISCONNECT data that needs to be passed around (which would have to be sent/copied in the JOIN, FORWARD_JOIN, and
+     * JOIN_RESPONSE messages). Since we do not store DISCONNECT information, it will be lost after shutdown, and thus will
+     * be null on startup and nothing to pass around.
      */
     @VisibleForTesting
     boolean hasSeenDisconnect(HyParViewMessage message, Map<InetAddress, Disconnects> lastDisconnect)
@@ -359,23 +364,12 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         Disconnects disconnects = lastDisconnect.get(message.getOriginator());
         if (disconnects == null)
             return true;
-        if (!disconnects.hasSeenMostRecentFromPeer(message.messgeId))
+        if (!disconnects.hasSeenMostRecentFromPeer(message.getOriginatorMessageId()))
             return false;
 
-        if (!disconnects.hasSeenMostRecentToPeer(message.getLastDisconnect(localAddress), message.messgeId))
+        if (!disconnects.hasSeenMostRecentToPeer(message.getLastDisconnect(), message.getOriginatorMessageId()))
             return false;
 
-//        if (disconnects != null && (!disconnects.hasSeenMostRecentFromPeer(message.messgeId) &&
-//                                    !disconnects.hasSeenMostRecentToPeer(message.getLastDisconnect(localAddress),
-//                                                                         lastDisconnectMsgId(message.getOriginator()).get(message.getOriginator()))))
-//        {
-//            // TODO:JEB if the peer has not seen the last DISCON message, should we send along a "remediating" discon
-//            // message just to try to ensure the peer actually gets the lastDiscon ID - so the peer stands a fighting chance
-//            // to connect on future attempts?
-//            logger.info(String.format("%s denying add to active view as we have a more recent DISCONNECT ID (%s): %s",
-//                                      localAddress, disconnects, message));
-//            return false;
-//        }
         return true;
     }
 
@@ -419,7 +413,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             return false;
 
         localDatacenterView.addLast(peer);
-        logger.info(String.format("%s adding %s to active view", localAddress, peer));
+//        logger.info(String.format("%s adding %s to active view", localAddress, peer));
         if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
             expungeNode(localDatacenterView.removeFirst(), datacenter);
         return true;
@@ -428,13 +422,15 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private void expungeNode(InetAddress peer, String datacenter)
     {
         HPVMessageId id = idGenerator.generate();
-        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
+//        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
 
+        HPVMessageId previousMessageId = highestSeenMessageIds.get(peer);
+        Preconditions.checkNotNull(previousMessageId, String.format("%s has no previous message id from peer %s", localAddress, peer));
         Disconnects disconnects = lastDisconnect.get(peer);
         if (disconnects == null)
-            disconnects = new Disconnects(null, Pair.create(id, highestSeenMessageIds.get(peer)));
+            disconnects = new Disconnects(null, Pair.create(id, previousMessageId));
         else
-            disconnects = disconnects.withNewToPeerMsgId(Pair.create(id, highestSeenMessageIds.get(peer)));
+            disconnects = disconnects.withNewToPeerMsgId(Pair.create(id, previousMessageId));
 
         lastDisconnect.put(peer, disconnects);
         messageSender.send(peer, new DisconnectMessage(id, localAddress, datacenter));
@@ -484,7 +480,10 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      * Handle an incoming forward join message. If the message's time-to-live is greater than 0,
      * forward the message to a node from the active view (avoiding sending back to the peer that forwarded
      * to us). If the message's time-to-live is 0, or we have <= 1 nodes in local DC's view (or remote datacenter view is empty),
-     * add to local active view and respond back to requesting node.
+     * add the peer to the active view and respond back to requesting node.
+     *
+     * Note: we allow the TTL go below zero (-1 at the least) on the chance that if the (TTL == 0) node doesn't accept,
+     * we'll forward it along one more time to see if it gets lucky.
      */
     @VisibleForTesting
     void handleForwardJoin(ForwardJoinMessage message)
@@ -510,10 +509,13 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         if (added)
         {
+            // capture the originator's messageId in case we need to send a DISCONNECT to the peer before
+            // it ever sends us a message directly.
+            updateLastMessageSeen(message.getOriginator(), message.getOriginatorMessageId());
             messageSender.send(message.originator, new JoinResponseMessage(idGenerator.generate(), localAddress, datacenter,
                                                                            lastDisconnectMsgId(message.originator)));
         }
-        else
+        else if (nextTTL >= 0)
         {
             // make sure we don't send a FORWARD_JOIN back to the node who is trying to join, and avoid sending it to the node
             // who sent it to us (unlesss there's no other peer in the active view to contact).
@@ -524,7 +526,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             InetAddress addr = peer.orElseGet(() -> message.sender);
             messageSender.send(addr, new ForwardJoinMessage(idGenerator.generate(), localAddress, datacenter,
                                                             message.originator, message.originatorDatacenter, nextTTL,
-                                                            message.lastDisconnect));
+                                                            message.getOriginatorMessageId()));
         }
     }
 
@@ -555,7 +557,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                 // try the entire list of remote peers for the datacenter. if the only known peer in that datacenter
                 // is the one we're filtering out, then fall back to use only the local datacenter peers
                 Collection<InetAddress> allRemotes = endpointStateSubscriber.peers.get(datacenter);
-                if (allRemotes.size() == 1 && allRemotes.contains(filter))
+                allRemotes.removeAll(filter);
+                if (allRemotes.isEmpty())
                     candidates = new ArrayList<>(localDatacenterView);
                 else
                     candidates = new ArrayList<>(allRemotes);
@@ -574,16 +577,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
-     * Handle a neighbor connection request. If the message has a high priority, we must accept it.
-     * If a low priority, check if we have space in the active view (for the peer's datacenter), and accept
+     * Handle a neighbor connection request. If the message has a high priority, it must be accepted.
+     * If a low priority, check if there is space in the active view (for the peer's datacenter), and accept
      * the connect is there an open slot.
      */
     @VisibleForTesting
     void handleNeighborRequest(NeighborRequestMessage message)
     {
         // if the node is already in our active view, go ahead and send an ACCEPT message
-        // TODO:JEB add in extra checks around the DISCONNECT / lastDisconnect messaging
-
         if (getPeers().contains(message.sender))
         {
             messageSender.send(message.sender, new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
@@ -602,42 +603,50 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             }
         }
 
-        Result result = Result.ACCEPT;
-        if (!addToView(message))
-            result = Result.DENY;
+        Result result = addToView(message) ? Result.ACCEPT : Result.DENY;
         messageSender.send(message.sender, new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
                                                                        result, message.neighborRequestsCount, lastDisconnectMsgId(message.sender)));
     }
 
     /**
-     * If the peer ACCEPTed the neighbor request, consider the bond good and add it to the
-     * active view. Else, try sending a neighbor request to another peer, unless we're over the limit for request attempts.
+     * If the peer ACCEPTed the neighbor request, add the peer to the active view. Else, try sending another neighbor request
+     * to a different peer, unless we're over the limit for request attempts.
      */
     @VisibleForTesting
     void handleNeighborResponse(NeighborResponseMessage message)
     {
-        logger.info(String.format("%s handleNeighborResponse 1 : %s", localAddress, message));
-        // if we get a duplicate response, or the peer has already found it's way into the active view, don't repocess
+        // if we get a duplicate response, or the peer has already found it's way into the active view, don't reprocess
         if (getPeers().contains(message.sender))
             return;
-        logger.info(String.format("%s handleNeighborResponse 2 : %s", localAddress, message));
 
         if (message.result == Result.ACCEPT && addToView(message))
             return;
 
-        logger.info(String.format("%s handleNeighborResponse 3 : %s", localAddress, message));
         int nextRequestCount = message.neighborRequestsCount + 1;
-        if (nextRequestCount < MAX_NEIGHBOR_REQUEST_ATTEMPTS)
+        if (nextRequestCount < MAX_NEIGHBOR_REQUEST_ATTEMPTS && shouldSendNeighborRequest(datacenter))
             sendNeighborRequest(Optional.of(message.sender), message.datacenter, nextRequestCount);
         else
             logger.debug("neighbor request attempts exceeded. will wait for periodic task to connect to more peers.");
     }
 
     /**
-     * Remove the requestor from our active view, and, if it was actaully in our active view, try
-     * to replace it with a node from the passive view.
+     * Only send a NEIGHBOR_REQUEST if:
+     * - {@code datacenter} is the local datacenter, and the active view is not full.
+     * - {@code datacenter} is a remote datacenter, and the number of nodes in the local datacenter
+     * is less than or equal to the number in the remote datacenter.
      */
     @VisibleForTesting
+    boolean shouldSendNeighborRequest(String datacenter)
+    {
+        return datacenter.equals(this.datacenter)
+            ? endpointStateSubscriber.fanout(datacenter, datacenter) > localDatacenterView.size()
+            : endpointStateSubscriber.comapreDatacenterSizes(this.datacenter, datacenter) <= 0;
+    }
+
+    /**
+     * Remove the requestor from our active view, and, if it was actaully in our active view, try
+     * to replace it with a node from the passive view from the same datacenter as the disconnecting peer.
+     */
     void handleDisconnect(DisconnectMessage message)
     {
         Disconnects disconnects = lastDisconnect.get(message.getOriginator());
@@ -648,11 +657,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         else
             return; // we received some duplicate or older message - ignore
 
-        logger.info(String.format("%s removing %s", localAddress, message));
-        if (localDatacenterView.remove(message.sender) || remoteView.remove(message.datacenter, message.sender))
-        {
+//        logger.info(String.format("%s removing %s", localAddress, message));
+
+        boolean removed = localDatacenterView.remove(message.sender) || remoteView.remove(message.datacenter, message.sender);
+        if (removed && shouldSendNeighborRequest(message.datacenter))
             sendNeighborRequest(Optional.of(message.sender), message.datacenter);
-        }
 
         //TODO:JEB check to see if we need to notify listeners
     }
@@ -684,7 +693,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             return;
 
         messageSender.send(peer.get(), new NeighborRequestMessage(idGenerator.generate(), localAddress, datacenter,
-                                                                  determineNeighborPriority(datacenter), messageRetryCount, lastDisconnectMsgId(peer.get())));
+                                                                  determineNeighborPriority(datacenter), messageRetryCount,
+                                                                  lastDisconnectMsgId(peer.get())));
     }
 
     /**
@@ -755,11 +765,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     void peerUnavailable(InetAddress addr, String datacenter)
     {
-        // TODO:JEB add tests and think about if we really need to sned neighbor requests --- or if this should call removeNode()
-        // basically, rethink this flow...
         for (PeerSamplingServiceListener listener : listeners)
             listener.neighborDown(addr, datacenter);
-        sendNeighborRequest(Optional.of(addr), datacenter);
+
+        if (shouldSendNeighborRequest(datacenter))
+            sendNeighborRequest(Optional.of(addr), datacenter);
     }
 
     /**
@@ -768,7 +778,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      * it should connected to, at the maximum, only one node. However, we could not be connected to a node in a remote
      * datacenter if that datacenter has a lesser number of nodes.
      */
-    void checkConnectivity()
+    void checkFullActiveView()
     {
         // TODO:JEB add tests
 
@@ -797,7 +807,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             else if (!remoteView.containsKey(datacenter))
             {
                 // only attempt to add peers from the remote datacenter if it has an equal or greater number of nodes.
-                if (peers.get(this.datacenter).size() <= peers.get(datacenter).size())
+                if (endpointStateSubscriber.comapreDatacenterSizes(this.datacenter, datacenter) <= 0)
                     sendNeighborRequest(Optional.<InetAddress>empty(), datacenter);
             }
         }
@@ -848,7 +858,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
          * The minimum size for the number of nodes in a local datacenter to be larger than
          * to use the natural log for the fanout value.
          */
-        private static final int NATURAL_LOG_THRESHOLD = 4;
+        private static final int NATURAL_LOG_THRESHOLD = 10;
 
         /**
          * Internal mapping of all nodes to their respective datacenters.
@@ -900,6 +910,15 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                     return Optional.of(entry.getKey());
             }
             return Optional.empty();
+        }
+
+        /**
+         * Compare the number of nodes in one datacenter to the number of nodes in another. Behaves like a typical
+         * {@link Comparable#compareTo(Object)} method.
+         */
+        int comapreDatacenterSizes(String dc1, String dc2)
+        {
+            return peers.get(dc1).size() - peers.get(dc2).size();
         }
 
         /**
@@ -974,7 +993,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     public void convict(final InetAddress addr, double phi)
     {
-        // TODO: not entirely clear if we should listen to the whims of the FD, but go with it for now
+        // not entirely clear if we should listen to the whims of the FD, but go with it for now
         executorService.submit(() -> peerUnavailable(addr));
     }
 
@@ -983,8 +1002,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         public void run()
         {
             // because this class will be executed from the scheduled tasks thread, move the actaul execution
-            // into the primary exec pool for this class
-            executorService.submit(() -> checkConnectivity());
+            // into the primary exec pool for the owning class
+            executorService.submit(() -> checkFullActiveView());
         }
     }
 
@@ -993,11 +1012,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         public void run()
         {
             // because this class will be executed from the scheduled tasks thread, move the actaul execution
-            // into the primary exec pool for this class
+            // into the primary exec pool for the owning class
             executorService.submit(() -> checkJoinStatus());
         }
     }
 
+    /**
+     * Holds disconnect data received from/sent to a given peer.
+     */
     static class Disconnects
     {
         /**
@@ -1012,6 +1034,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         Disconnects(HPVMessageId fromPeer, Pair<HPVMessageId, HPVMessageId> toPeer)
         {
+            if (toPeer != null)
+            {
+                Preconditions.checkNotNull(toPeer.left);
+                Preconditions.checkNotNull(toPeer.right);
+            }
             this.fromPeer = fromPeer;
             this.toPeer = toPeer;
         }
@@ -1052,7 +1079,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                 return true;
 
             if (disconnectMessageId == null)
-                return messageId == null || messageId.epochOnlyCompareTo(toPeer.right) > 0;
+                return messageId.epochOnlyCompareTo(toPeer.right) > 0;
 
             return disconnectMessageId.compareTo(toPeer.left) >= 0;
         }
