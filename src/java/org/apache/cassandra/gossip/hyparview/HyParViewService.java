@@ -88,7 +88,7 @@ import org.apache.cassandra.utils.Pair;
  * 1) a node evicts a peer from the active view, and thus sends a DISCONNECT message
  * 2) a node receives a DISCONNECT message from a peer, and the message's ID is higher than the locally recorded DISCONNECT message ID
  * for the peer.
- * 3) we are informed of a peer being decommissioned, removed, shutdown, and so via state changes, or becomes unavailable
+ * 3) we are informed of a peer being decommissioned, removed, shutdown, and thus via the peer's state changes, or becomes unavailable
  * (notifed via a failure detector).
  *
  * Datacenter concerns:
@@ -112,7 +112,6 @@ import org.apache.cassandra.utils.Pair;
 public class HyParViewService implements PeerSamplingService, IFailureDetectionEventListener
 {
     private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
-    private static final long DEFAULT_RANDOM_SEED = "BuyMyDatabass".hashCode();
     static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 2;
 
     private final Set<PeerSamplingServiceListener> listeners;
@@ -190,7 +189,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         idGenerator = new HPVMessageId.IdGenerator(epoch);
         highestSeenMessageIds = new HashMap<>();
         lastDisconnect = new HashMap<>();
-        random = new Random(DEFAULT_RANDOM_SEED);
+        random = new Random();
         listeners = new HashSet<>();
         endpointStateSubscriber = new EndpointStateSubscriber();
 
@@ -306,7 +305,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         if (!addToView(message))
             return;
 
-        messageSender.send(message.sender, new JoinResponseMessage(idGenerator.generate(), localAddress, message.datacenter,
+        messageSender.send(message.sender, new JoinResponseMessage(idGenerator.generate(), localAddress, datacenter,
                                                                    lastDisconnectMsgId(message.sender)));
 
         Collection<InetAddress> peers = getPeers();
@@ -413,7 +412,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             return false;
 
         localDatacenterView.addLast(peer);
-//        logger.info(String.format("%s adding %s to active view", localAddress, peer));
+        logger.info(String.format("%s adding %s to local active view", localAddress, peer));
         if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
             expungeNode(localDatacenterView.removeFirst(), datacenter);
         return true;
@@ -422,7 +421,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private void expungeNode(InetAddress peer, String datacenter)
     {
         HPVMessageId id = idGenerator.generate();
-//        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
+        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
 
         HPVMessageId previousMessageId = highestSeenMessageIds.get(peer);
         Preconditions.checkNotNull(previousMessageId, String.format("%s has no previous message id from peer %s", localAddress, peer));
@@ -433,7 +432,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             disconnects = disconnects.withNewToPeerMsgId(Pair.create(id, previousMessageId));
 
         lastDisconnect.put(peer, disconnects);
-        messageSender.send(peer, new DisconnectMessage(id, localAddress, datacenter));
+        messageSender.send(peer, new DisconnectMessage(id, localAddress, this.datacenter));
 
         for (PeerSamplingServiceListener listener : listeners)
             listener.neighborDown(peer, datacenter);
@@ -448,6 +447,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         if (existing != null && existing.equals(peer))
             return false;
 
+        logger.info(String.format("%s adding %s to remote active view", localAddress, peer));
         remoteView.put(datacenter, peer);
         if (existing != null)
             expungeNode(existing, datacenter);
@@ -657,7 +657,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         else
             return; // we received some duplicate or older message - ignore
 
-//        logger.info(String.format("%s removing %s", localAddress, message));
+        logger.info(String.format("%s removing %s", localAddress, message));
 
         boolean removed = localDatacenterView.remove(message.sender) || remoteView.remove(message.datacenter, message.sender);
         if (removed && shouldSendNeighborRequest(message.datacenter))
@@ -692,7 +692,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         if (!peer.isPresent())
             return;
 
-        messageSender.send(peer.get(), new NeighborRequestMessage(idGenerator.generate(), localAddress, datacenter,
+        messageSender.send(peer.get(), new NeighborRequestMessage(idGenerator.generate(), localAddress, this.datacenter,
                                                                   determineNeighborPriority(datacenter), messageRetryCount,
                                                                   lastDisconnectMsgId(peer.get())));
     }
@@ -798,7 +798,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                     {
                         // don't let these messages spin in retry attempts - just try once, because we can try again on the next round
                         int count = MAX_NEIGHBOR_REQUEST_ATTEMPTS - 1;
-                        NeighborRequestMessage msg = new NeighborRequestMessage(idGenerator.generate(), localAddress, datacenter, determineNeighborPriority(datacenter), count,
+                        NeighborRequestMessage msg = new NeighborRequestMessage(idGenerator.generate(), localAddress, this.datacenter, determineNeighborPriority(datacenter), count,
                                                                                 lastDisconnectMsgId(peer));
                         messageSender.send(peer, msg);
                     }

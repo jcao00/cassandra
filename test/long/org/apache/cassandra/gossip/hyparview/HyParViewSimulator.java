@@ -3,15 +3,13 @@ package org.apache.cassandra.gossip.hyparview;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,8 +19,7 @@ public class HyParViewSimulator
     private static final Logger logger = LoggerFactory.getLogger(HyParViewSimulator.class);
 
     private static final String LOCAL_DC = "local_dc";
-    private static final String REMOTE_DC_1 = "remote_dc_1";
-    private static final String REMOTE_DC_2 = "remote_dc_2";
+    private static final String DC_PREFIX = "dc_";
 
     PennStationDispatcher dispatcher;
 
@@ -69,7 +66,7 @@ public class HyParViewSimulator
     }
 
     @Test
-    public void run_largeCluster_SingleDc() throws UnknownHostException
+    public void singleDcClusters() throws UnknownHostException
     {
         for (int i : new int[]{2, 4, 6, 8, 15, 17, 21, 27, 39, 50, 64, 87, 100, 200, 250, 500, 750, 1000, 2000})
         {
@@ -78,7 +75,7 @@ public class HyParViewSimulator
                 try
                 {
                     long start = System.nanoTime();
-                    largeCluster_SingleDc(i, false);
+                    executeCluster(new int[]{ i }, false);
                     dispatcher.shutdown();
                     long end = System.nanoTime();
                     logger.info("\titeration {} on cluster size {}; time taken: {}ms, msgs sent: {}",
@@ -87,106 +84,124 @@ public class HyParViewSimulator
                 catch(Throwable e)
                 {
                     logger.error("test run failed" , e);
-                    Assert.fail(e.getMessage());
+                    throw e;
                 }
             }
         }
     }
 
-    void largeCluster_SingleDc(int clusterSize, boolean verbose) throws UnknownHostException
+    void executeCluster(int[] clusterSizePerDatacenter, boolean verbose) throws UnknownHostException
     {
-        InetAddress seedDc1 = InetAddress.getByName("127.0.0.0");
-        InetAddress seedDc2 = InetAddress.getByName("127.0.0.1");
-        List<InetAddress> seeds = new ArrayList<InetAddress>() {{ add(seedDc1); add(seedDc2); }};
+        List<InetAddress> seeds = new ArrayList<>();
+        if (clusterSizePerDatacenter.length == 1)
+        {
+            seeds.add(InetAddress.getByName("127.0.0.0"));
+            seeds.add(InetAddress.getByName("127.0.0.1"));
+        }
+        else
+        {
+            for (int i = 0; i < clusterSizePerDatacenter.length; i++)
+                seeds.add(InetAddress.getByName(String.format("127.%d.0.0", i)));
+        }
         dispatcher = new PennStationDispatcher(seeds, verbose);
 
         // add all the nodes to the dispatcher
-        for (int i = 0; i < clusterSize; i++)
+        for (int i = 0; i < clusterSizePerDatacenter.length; i++)
         {
-            int thirdOctet = i / 256;
-            int fourthOctet = i % 256;
-            InetAddress addr = InetAddress.getByName(String.format("127.0.%d.%d", thirdOctet, fourthOctet));
-            dispatcher.addPeer(addr, LOCAL_DC);
-            dispatcher.getPeerService(addr).join();
+            for (int j = 0; j < clusterSizePerDatacenter[i]; j++)
+            {
+                int thirdOctet = j / 256;
+                int fourthOctet = j % 256;
+                InetAddress addr = InetAddress.getByName(String.format("127.%d.%d.%d", i, thirdOctet, fourthOctet));
+                dispatcher.addPeer(addr, DC_PREFIX + i);
+                dispatcher.getPeerService(addr).join();
+            }
         }
 
         dispatcher.awaitQuiesence();
+        dispatcher.dumpCurrentState();
 
-        for (int i = 0; i < clusterSize; i++)
+        for (int i = 0; i < clusterSizePerDatacenter.length; i++)
         {
-            int thirdOctet = i / 256;
-            int fourthOctet = i % 256;
-            InetAddress node = InetAddress.getByName(String.format("127.0.%d.%d", thirdOctet, fourthOctet));
-            HyParViewService hpvService = dispatcher.getPeerService(node);
-
-            // ensure basic sanity -- make sure no peers in remote view
-            Assert.assertTrue(hpvService.getRemoteView().isEmpty());
-            Assert.assertFalse(hpvService.getLocalDatacenterView().isEmpty());
-
-            // assert symmetric connections
-            for (InetAddress peer : hpvService.getLocalDatacenterView())
+            for (int j = 0; j < clusterSizePerDatacenter[i]; j++)
             {
-                HyParViewService peerService = dispatcher.getPeerService(peer);
-                Assert.assertTrue(String.format("%s not contained in %s", node, peerService),
-                                  peerService.getLocalDatacenterView().contains(node));
+                int thirdOctet = j / 256;
+                int fourthOctet = j % 256;
+                InetAddress node = InetAddress.getByName(String.format("127.%d.%d.%d", i, thirdOctet, fourthOctet));
+                HyParViewService hpvService = dispatcher.getPeerService(node);
+
+                assertLocalDatacenter(hpvService, dispatcher);
+                assertRemoteDatacenters(hpvService, dispatcher, clusterSizePerDatacenter, i);
+            }
+        }
+    }
+
+    private void assertLocalDatacenter(HyParViewService hpvService, PennStationDispatcher dispatcher)
+    {
+        Assert.assertFalse(hpvService.getLocalDatacenterView().isEmpty());
+
+        // assert symmetric connections
+        for (InetAddress peer : hpvService.getLocalDatacenterView())
+        {
+            HyParViewService peerService = dispatcher.getPeerService(peer);
+            Assert.assertTrue(String.format("%s not contained in [%s]", hpvService.getLocalAddress(), peerService),
+                              peerService.getLocalDatacenterView().contains(hpvService.getLocalAddress()));
+        }
+    }
+
+    private void assertRemoteDatacenters(HyParViewService hpvService, PennStationDispatcher dispatcher, int[] clusterSizePerDatacenter, int currentDatacenter)
+    {
+        if (clusterSizePerDatacenter.length == 1)
+        {
+            Assert.assertTrue(hpvService.getRemoteView().isEmpty());
+            return;
+        }
+
+        for (int i = 0; i < clusterSizePerDatacenter.length; i++)
+        {
+            if (i == currentDatacenter)
+                continue;
+
+            // if the current node's datacenter has less than or equal to the number of nodes in the other datacenter,
+            // then every node in this DC must have a connection to a peer in the other DC. If the other DC is larger,
+            // not every node in that DC will have a connection to this DC
+            if (clusterSizePerDatacenter[currentDatacenter] <= clusterSizePerDatacenter[i])
+            {
+                InetAddress remotePeer = hpvService.getRemoteView().get(DC_PREFIX + i);
+                Assert.assertNotNull(String.format("%s does not contain a remote peer from dc '%s'", hpvService.getLocalAddress(), DC_PREFIX + i), remotePeer);
+                HyParViewService peerService = dispatcher.getPeerService(remotePeer);
+
+                InetAddress symmetricConnection = peerService.getRemoteView().get(DC_PREFIX + currentDatacenter);
+
+                Assert.assertEquals(String.format("%s not contained in remote view of [%s]", hpvService.getLocalAddress(), peerService),
+                                    hpvService.getLocalAddress(), symmetricConnection);
             }
         }
     }
 
     @Test
-    @Ignore
-    public void largeCluster_MultiDc() throws UnknownHostException
+    public void multipleDcClusters() throws UnknownHostException
     {
-        InetAddress seedDc1 = InetAddress.getByName("127.0.0.0");
-        InetAddress seedDc2 = InetAddress.getByName("127.0.1.0");
-        List<InetAddress> seeds = new ArrayList<InetAddress>() {{ add(seedDc1); add(seedDc2); }};
-        dispatcher = new PennStationDispatcher(seeds, false);
-
-        int dc1Size = 1;
-        int dc2Size = 1;
-
-        // add all the nodes to the dispatcher
-        for (int i = 0; i < dc1Size; i++)
-            dispatcher.addPeer(InetAddress.getByName("127.0.0." + i), REMOTE_DC_1);
-        for (int i = 0; i < dc2Size; i++)
-            dispatcher.addPeer(InetAddress.getByName("127.0.1." + i), REMOTE_DC_2);
-
-        // now, start the real action!
-        for (int i = 1; i < dc1Size; i++)
-            dispatcher.getPeerService(InetAddress.getByName("127.0.0." + i)).join();
-        for (int i = 1; i < dc2Size; i++)
-            dispatcher.getPeerService(InetAddress.getByName("127.0.1." + i)).join();
-
-        dispatcher.awaitQuiesence();
-//        Uninterruptibles.sleepUninterruptibly(1000, TimeUnit.MILLISECONDS);
-//        dispatcher.dumpCurrentState();
-
-        // ensure basic sanity -- make sure 0..1 peers in remote view
-
-        // as dc1 is smaller, every node should have a dc2 node in it's view
-        Set<InetAddress> otherDcPeers = new HashSet<>();
-        int countWithOtherDcInView = 0;
-        for (int i = 0; i < dc1Size; i++)
+        for (int i : new int[]{16, 32, 40})
         {
-            InetAddress peer = dispatcher.getPeerService(InetAddress.getByName("127.0.0." + i)).getRemoteView().get(REMOTE_DC_2);
-            if (peer != null)
+            for (int j = 0; j < 64; j++)
             {
-                otherDcPeers.add(peer);
-                countWithOtherDcInView++;
+                int[] clusterSizes = new int[] {4, 4};
+                try
+                {
+                    long start = System.nanoTime();
+                    executeCluster(clusterSizes, true);
+                    dispatcher.shutdown();
+                    long end = System.nanoTime();
+                    logger.info("\titeration {} on cluster size {}; time taken: {}ms, msgs sent: {}",
+                                j, Arrays.toString(clusterSizes), TimeUnit.MILLISECONDS.convert(end - start, TimeUnit.NANOSECONDS), dispatcher.totalMessagesSent());
+                }
+                catch(Throwable e)
+                {
+                    logger.error("test run failed" , e);
+                    throw e;
+                }
             }
         }
-        // ensure no duplicates
-        Assert.assertEquals(dc1Size, countWithOtherDcInView);
-        Assert.assertEquals(dc1Size, otherDcPeers.size());
-
-        // as dc2 is larger, each peer from dc1 should only appear once
-//        countWithOtherDcInView = 0;
-//        for (int i = 0; i < dc2Size; i++)
-//            if (dispatcher.getPeerService(InetAddress.getByName("127.0.1." + i)).getRemoteView().containsKey(REMOTE_DC_1))
-//                countWithOtherDcInView++;
-//        Assert.assertEquals(dc1Size, countWithOtherDcInView);
-
-
-
     }
 }

@@ -85,7 +85,7 @@ public class PennStationDispatcher
     public void dumpCurrentState()
     {
         StringBuffer sb = new StringBuffer(2048);
-
+        sb.append('\n');
         for (Map.Entry<InetAddress, NodeContext> entry : peers.entrySet())
             sb.append(entry.getValue().hpvService).append('\n');
 
