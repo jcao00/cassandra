@@ -88,6 +88,59 @@ public class HyParViewServiceTest
     }
 
     @Test
+    public void updatePeersInfo_Self() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = hpvService.getLocalAddress();
+        Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+
+        HPVMessageId msgId = idGenerator.generate();
+        HyParViewMessage msg = new JoinResponseMessage(msgId, peer, LOCAL_DC, null);
+
+        hpvService.updatePeersInfo(msg);
+
+        Assert.assertNull(hpvService.getHighestSeenMessageId(peer));
+        Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+    }
+
+    @Test
+    public void updatePeersInfo_Simple() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.0.2");
+        Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+
+        HPVMessageId msgId = idGenerator.generate();
+        HyParViewMessage msg = new JoinResponseMessage(msgId, peer, LOCAL_DC, null);
+
+        hpvService.updatePeersInfo(msg);
+
+        Assert.assertEquals(msgId, hpvService.getHighestSeenMessageId(peer));
+        Assert.assertTrue(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+    }
+
+    @Test
+    public void updatePeersInfo_ForwardJoin() throws UnknownHostException
+    {
+        HyParViewService hpvService = buildService();
+        InetAddress peer = InetAddress.getByName("127.0.0.2");
+        InetAddress originator = InetAddress.getByName("127.0.0.3");
+        Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+        Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(REMOTE_DC_1, originator));
+
+        HPVMessageId msgId = idGenerator.generate();
+        HPVMessageId originatorMsgId = generateMessageId();
+        HyParViewMessage msg = new ForwardJoinMessage(msgId, peer, LOCAL_DC, originator, REMOTE_DC_1, 2, originatorMsgId);
+
+        hpvService.updatePeersInfo(msg);
+
+        Assert.assertEquals(msgId, hpvService.getHighestSeenMessageId(peer));
+        Assert.assertTrue(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+        Assert.assertEquals(originatorMsgId, hpvService.getHighestSeenMessageId(originator));
+        Assert.assertTrue(hpvService.endpointStateSubscriber.getPeers().containsEntry(REMOTE_DC_1, originator));
+    }
+
+    @Test
     public void hasSeenDisconnect_NoPreviousDisconnects() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
@@ -282,11 +335,12 @@ public class HyParViewServiceTest
     @Test
     public void handleJoin_WithForwarding() throws UnknownHostException
     {
-        InetAddress peer = InetAddress.getByName("127.0.0.2");
         InetAddress existingPeer = InetAddress.getByName("127.0.0.3");
         HyParViewService hpvService = buildService();
         hpvService.addPeerToView(existingPeer, LOCAL_DC, generateMessageId());
-        hpvService.handleJoin(new JoinMessage(idGenerator.generate(), peer, LOCAL_DC));
+
+        InetAddress peer = InetAddress.getByName("127.0.0.2");
+        hpvService.receiveMessage(new JoinMessage(idGenerator.generate(), peer, LOCAL_DC));
 
         Assert.assertEquals(2, hpvService.getPeers().size());
         Assert.assertTrue(hpvService.getPeers().contains(peer));
@@ -325,7 +379,7 @@ public class HyParViewServiceTest
 
         Assert.assertTrue(hpvService.getPeers().contains(forwarder));
         Assert.assertFalse(hpvService.getPeers().contains(peer));
-        hpvService.handleForwardJoin(new ForwardJoinMessage(idGenerator.generate(), forwarder, datacenter, peer, LOCAL_DC, 1, null));
+        hpvService.receiveMessage(new ForwardJoinMessage(idGenerator.generate(), forwarder, datacenter, peer, LOCAL_DC, 1, null));
 
         Assert.assertEquals(2, hpvService.getPeers().size());
         Assert.assertTrue(hpvService.getPeers().contains(peer));
@@ -372,7 +426,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_LocalDC_EmptyPeers() throws UnknownHostException
+    public void getActivePeer_LocalDC_EmptyPeers() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         Optional<InetAddress> target = hpvService.getActivePeer(Collections.singletonList(InetAddress.getByName("127.0.0.2")), LOCAL_DC);
@@ -380,7 +434,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_LocalDC_Filtered() throws UnknownHostException
+    public void getActivePeer_LocalDC_Filtered() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         InetAddress peer1 = InetAddress.getByName("127.0.0.2");
@@ -390,7 +444,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_LocalDC_Simple() throws UnknownHostException
+    public void getActivePeer_LocalDC_Simple() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         InetAddress peer1 = InetAddress.getByName("127.0.0.2");
@@ -403,7 +457,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_LocalDC_Many() throws UnknownHostException
+    public void getActivePeer_LocalDC_Many() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         InetAddress peer1 = InetAddress.getByName("127.0.0.2");
@@ -418,7 +472,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_RemoteDC_EmptyPeers() throws UnknownHostException
+    public void getActivePeer_RemoteDC_EmptyPeers() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         Optional<InetAddress> target = hpvService.getActivePeer(Collections.singletonList(InetAddress.getByName("127.0.101.2")), REMOTE_DC_1);
@@ -426,7 +480,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_RemoteDC_Filtered() throws UnknownHostException
+    public void getActivePeer_RemoteDC_Filtered() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         InetAddress peer1 = InetAddress.getByName("127.0.101.2");
@@ -436,7 +490,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_RemoteDC_SelectFromLocalDC() throws UnknownHostException
+    public void getActivePeer_RemoteDC_SelectFromLocalDC() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         InetAddress peer1 = InetAddress.getByName("127.0.101.2");
@@ -449,7 +503,7 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void findArbitraryTarget_RemoteDC_SelectFromRemoteDC() throws UnknownHostException
+    public void getActivePeer_RemoteDC_SelectFromRemoteDC() throws UnknownHostException
     {
         HyParViewService hpvService = buildService();
         InetAddress peer2 = InetAddress.getByName("127.0.101.3");

@@ -253,7 +253,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     public void receiveMessage(HyParViewMessage message)
     {
-        updateLastMessageSeen(message.sender, message.messgeId);
+        updatePeersInfo(message);
 
         try
         {
@@ -287,11 +287,29 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         }
     }
 
-    private void updateLastMessageSeen(InetAddress sender, HPVMessageId messgeId)
+    @VisibleForTesting
+    void updatePeersInfo(HyParViewMessage message)
     {
-        HPVMessageId previousEntry = highestSeenMessageIds.get(sender);
-        if (previousEntry == null || messgeId.compareTo(previousEntry) > 0)
-            highestSeenMessageIds.put(sender, messgeId);
+        updatePeersInfo(message.sender, message.datacenter, message.messgeId);
+        if (!message.sender.equals(message.getOriginator()))
+            updatePeersInfo(message.getOriginator(), message.getOriginatorDatacenter(), message.getOriginatorMessageId());
+    }
+
+    /**
+     * Capture info about the peer(s) from the message. In case there's a (distributed) data race of when we get
+     * the membership update that the peer was added versus when we receive a message from the peer, update our internal view
+     * of the cluster if we're out of date.
+     */
+    private void updatePeersInfo(InetAddress peer, String datacenter, HPVMessageId messgeId)
+    {
+        if (peer.equals(localAddress))
+            return;
+        HPVMessageId previousEntry = highestSeenMessageIds.get(peer);
+        if (previousEntry != null && messgeId.compareTo(previousEntry) <= 0)
+            return;
+
+        highestSeenMessageIds.put(peer, messgeId);
+        endpointStateSubscriber.add(peer, datacenter);
     }
 
     /**
@@ -377,10 +395,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         if (peer.equals(localAddress))
             return false;
 
-        // in case there's a (distributed) data race of when we get the membership update that the peer was added
-        // versus when we get the request to add the peer.
-        endpointStateSubscriber.add(peer, datacenter);
-
         boolean added;
         if (this.datacenter.equalsIgnoreCase(datacenter))
             added = addToLocalActiveView(peer);
@@ -397,6 +411,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     boolean addPeerToView(InetAddress peer, String datacenter, HPVMessageId messageId)
     {
         highestSeenMessageIds.put(peer, messageId);
+        endpointStateSubscriber.add(peer, datacenter);
         return addPeerToView(peer, datacenter);
     }
 
@@ -509,9 +524,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         if (added)
         {
-            // capture the originator's messageId in case we need to send a DISCONNECT to the peer before
-            // it ever sends us a message directly.
-            updateLastMessageSeen(message.getOriginator(), message.getOriginatorMessageId());
             messageSender.send(message.originator, new JoinResponseMessage(idGenerator.generate(), localAddress, datacenter,
                                                                            lastDisconnectMsgId(message.originator)));
         }
@@ -548,7 +560,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         {
             // first check if we have a peer in the active view for the remote datacenter
             InetAddress remotePeer = remoteView.get(datacenter);
-            if (remotePeer != null && !remotePeer.equals(filter))
+            if (remotePeer != null && !filter.contains(remotePeer))
             {
                 candidates = new ArrayList<InetAddress>()  {{  add(remotePeer);  }};
             }
@@ -840,6 +852,12 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         return localAddress;
     }
 
+    @VisibleForTesting
+    public HPVMessageId getHighestSeenMessageId(InetAddress peer)
+    {
+        return highestSeenMessageIds.get(peer);
+    }
+
     public String toString()
     {
         StringBuffer sb = new StringBuffer(256);
@@ -927,7 +945,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         @VisibleForTesting
         void add(InetAddress peer, String datacenter)
         {
-            peers.put(datacenter, peer);
+            if (!peers.containsEntry(datacenter, peer))
+                peers.put(datacenter, peer);
+        }
+
+        @VisibleForTesting
+        Multimap<String, InetAddress> getPeers()
+        {
+            return peers;
         }
 
         public void onJoin(InetAddress endpoint, EndpointState epState)

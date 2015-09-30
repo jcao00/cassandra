@@ -1,6 +1,9 @@
 package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -28,18 +31,23 @@ public class PennStationDispatcher
     private final AtomicInteger totalMessagesSent = new AtomicInteger();
     private final boolean verbose;
 
-    public PennStationDispatcher(List<InetAddress> seeds, boolean verbose)
+    public PennStationDispatcher(boolean verbose)
     {
         this.verbose = verbose;
         this.random = new Random(SEED);
         peers = new ConcurrentHashMap<>();
-        seedProvider = new SimulationSeedProvider(seeds);
+        seedProvider = new SimulationSeedProvider();
     }
 
     public void addPeer(InetAddress addr, String datacenter)
     {
         SimulationMessageSender messageSender = new SimulationMessageSender(addr, this);
         peers.put(addr, new NodeContext(addr, datacenter, seedProvider, messageSender));
+    }
+
+    public void addSeed(InetAddress seeds)
+    {
+        seedProvider.getSeeds().add(seeds);
     }
 
     public HyParViewService getPeerService(InetAddress addr)
@@ -126,9 +134,9 @@ public class PennStationDispatcher
     {
         private final List<InetAddress> seeds;
 
-        SimulationSeedProvider(List<InetAddress> seeds)
+        SimulationSeedProvider()
         {
-            this.seeds = seeds;
+            this.seeds = new ArrayList<>();
         }
 
         public List<InetAddress> getSeeds()
