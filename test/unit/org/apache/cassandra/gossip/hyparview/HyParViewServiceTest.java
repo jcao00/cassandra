@@ -92,7 +92,7 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = hpvService.getLocalAddress();
-        Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+        Assert.assertTrue(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
 
         HPVMessageId msgId = idGenerator.generate();
         HyParViewMessage msg = new JoinResponseMessage(msgId, peer, LOCAL_DC, null);
@@ -100,7 +100,7 @@ public class HyParViewServiceTest
         hpvService.updatePeersInfo(msg);
 
         Assert.assertNull(hpvService.getHighestSeenMessageId(peer));
-        Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
+        Assert.assertTrue(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
     }
 
     @Test
@@ -944,9 +944,10 @@ public class HyParViewServiceTest
     }
 
     @Test
-    public void EndpointStateSubscriber_comapreDatacenterSizes_EmptyDcs()
+    public void EndpointStateSubscriber_comapreDatacenterSizes_EmptyDcs() throws UnknownHostException
     {
         HyParViewService.EndpointStateSubscriber subscriber = buildService().endpointStateSubscriber;
+        setupSubscriber(subscriber, 0, 1);
         Assert.assertEquals(0, subscriber.comapreDatacenterSizes(LOCAL_DC, REMOTE_DC_1));
     }
 
@@ -962,7 +963,7 @@ public class HyParViewServiceTest
     public void EndpointStateSubscriber_comapreDatacenterSizes_EmptyLocal() throws UnknownHostException
     {
         HyParViewService.EndpointStateSubscriber subscriber = buildService().endpointStateSubscriber;
-        setupSubscriber(subscriber, 0, 1);
+        setupSubscriber(subscriber, 0, 2);
         Assert.assertTrue(subscriber.comapreDatacenterSizes(LOCAL_DC, REMOTE_DC_1) < 0);
     }
 

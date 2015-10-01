@@ -2,16 +2,17 @@ package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.collect.AbstractIterator;
 import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +72,18 @@ public class PennStationDispatcher
         peers.get(destination).send(message, 0);
     }
 
+    public void checkActiveView(InetAddress destination)
+    {
+        if (!peers.containsKey(destination))
+        {
+            if (seedProvider.getSeeds().contains(destination))
+                return;
+            logger.info(String.format("sending runnable to non-existent node %s - might be ok", destination));
+            return;
+        }
+        peers.get(destination).sendCheckActiveView(0);
+    }
+
     public void awaitQuiesence()
     {
         while (currentlyProcessingCount.get() > 0)
@@ -100,6 +113,25 @@ public class PennStationDispatcher
         logger.info(sb.toString());
     }
 
+    public Iterable<HyParViewService> getNodes()
+    {
+        final Iterator<NodeContext> knownPeers = peers.values().iterator();
+        return () -> new AbstractIterator<HyParViewService>()
+        {
+            protected HyParViewService computeNext()
+            {
+                while (knownPeers.hasNext())
+                    return knownPeers.next().hpvService;
+                return endOfData();
+            }
+        };
+    }
+
+    public Set<InetAddress> getPeers()
+    {
+        return peers.keySet();
+    }
+
     class NodeContext
     {
         final HyParViewService hpvService;
@@ -126,6 +158,19 @@ public class PennStationDispatcher
             if (verbose)
                 logger.info(String.format("delivering [%s] to %s", message.toString(), hpvService.getLocalAddress()));
             hpvService.receiveMessage(message);
+            currentlyProcessingCount.decrementAndGet();
+        }
+
+        void sendCheckActiveView(long delay)
+        {
+            currentlyProcessingCount.incrementAndGet();
+            scheduler.schedule(() -> deliverCheckActiveView(), delay, TimeUnit.MILLISECONDS);
+
+        }
+
+        void deliverCheckActiveView()
+        {
+            hpvService.checkFullActiveView();
             currentlyProcessingCount.decrementAndGet();
         }
     }

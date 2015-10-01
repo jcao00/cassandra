@@ -191,7 +191,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         lastDisconnect = new HashMap<>();
         random = new Random();
         listeners = new HashSet<>();
-        endpointStateSubscriber = new EndpointStateSubscriber();
+        endpointStateSubscriber = new EndpointStateSubscriber(localAddress, datacenter);
 
         // explicitly using a LinkedList here - makes removals simpler
         localDatacenterView = new LinkedList<>();
@@ -427,7 +427,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             return false;
 
         localDatacenterView.addLast(peer);
-        logger.info(String.format("%s adding %s to local active view", localAddress, peer));
+//        logger.info(String.format("%s adding %s to local active view", localAddress, peer));
         if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
             expungeNode(localDatacenterView.removeFirst(), datacenter);
         return true;
@@ -436,7 +436,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private void expungeNode(InetAddress peer, String datacenter)
     {
         HPVMessageId id = idGenerator.generate();
-        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
+//        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
 
         HPVMessageId previousMessageId = highestSeenMessageIds.get(peer);
         Preconditions.checkNotNull(previousMessageId, String.format("%s has no previous message id from peer %s", localAddress, peer));
@@ -462,7 +462,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         if (existing != null && existing.equals(peer))
             return false;
 
-        logger.info(String.format("%s adding %s to remote active view", localAddress, peer));
+//        logger.info(String.format("%s adding %s to remote active view", localAddress, peer));
         remoteView.put(datacenter, peer);
         if (existing != null)
             expungeNode(existing, datacenter);
@@ -597,7 +597,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     void handleNeighborRequest(NeighborRequestMessage message)
     {
         // if the node is already in our active view, go ahead and send an ACCEPT message
-        if (getPeers().contains(message.sender))
+        if (isPeerInActiveView(message.sender))
         {
             messageSender.send(message.sender, new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
                                                                            Result.ACCEPT, message.neighborRequestsCount, lastDisconnectMsgId(message.sender)));
@@ -628,7 +628,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     void handleNeighborResponse(NeighborResponseMessage message)
     {
         // if we get a duplicate response, or the peer has already found it's way into the active view, don't reprocess
-        if (getPeers().contains(message.sender))
+        if (isPeerInActiveView(message.sender))
             return;
 
         if (message.result == Result.ACCEPT && addToView(message))
@@ -643,6 +643,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
     /**
      * Only send a NEIGHBOR_REQUEST if:
+     * - the local datacenter active view is empty (the urgent case)
      * - {@code datacenter} is the local datacenter, and the active view is not full.
      * - {@code datacenter} is a remote datacenter, and the number of nodes in the local datacenter
      * is less than or equal to the number in the remote datacenter.
@@ -650,6 +651,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     @VisibleForTesting
     boolean shouldSendNeighborRequest(String datacenter)
     {
+        if (localDatacenterView.isEmpty())
+            return true;
         return datacenter.equals(this.datacenter)
             ? endpointStateSubscriber.fanout(datacenter, datacenter) > localDatacenterView.size()
             : endpointStateSubscriber.comapreDatacenterSizes(this.datacenter, datacenter) <= 0;
@@ -669,11 +672,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         else
             return; // we received some duplicate or older message - ignore
 
-        logger.info(String.format("%s removing %s", localAddress, message));
+//        logger.info(String.format("%s removing %s", localAddress, message));
 
         boolean removed = localDatacenterView.remove(message.sender) || remoteView.remove(message.datacenter, message.sender);
         if (removed && shouldSendNeighborRequest(message.datacenter))
-            sendNeighborRequest(Optional.of(message.sender), message.datacenter);
+            sendNeighborRequest(Optional.of(message.sender), message.datacenter, 1);
 
         //TODO:JEB check to see if we need to notify listeners
     }
@@ -691,7 +694,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
-     * Attempt to send a neighbor request to the given datacenter.
+     * Attempt to send a neighbor request to the given datacenter. If the local datacenter's active view happens to be empty,
+     * consider it an urgent case and send the NEIGHBOR_REQUEST to a peer in the local datacenter instead of the requested
+     * datacenter.
      *
      * @param filtered An additional peer to filter out; for example, if we received a negative response from a peer, and
      *                 cannot send a message back to it but need to select another.
@@ -700,6 +705,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     void sendNeighborRequest(Optional<InetAddress> filtered, String datacenter, int messageRetryCount)
     {
+        if (localDatacenterView.isEmpty())
+            datacenter = this.datacenter;
+
         Optional<InetAddress> peer = getPassivePeer(filtered, datacenter);
         if (!peer.isPresent())
             return;
@@ -737,12 +745,16 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     /**
-     * Normally, the priority is set to LOW unless there are no peers in the active view, then it is set to HIGH.
+     * Normally, the priority is set to LOW unless there are no peers in the local active view, then it is set to HIGH.
      */
     Priority determineNeighborPriority(String datacenter)
     {
-        return getPeers().isEmpty() || (datacenter.equals(this.datacenter) && localDatacenterView.isEmpty())
-               ? Priority.HIGH : Priority.LOW;
+        return datacenter.equals(this.datacenter) && localDatacenterView.isEmpty() ? Priority.HIGH : Priority.LOW;
+    }
+
+    boolean isPeerInActiveView(InetAddress peer)
+    {
+        return localDatacenterView.contains(peer) || remoteView.containsValue(peer);
     }
 
     public Collection<InetAddress> getPeers()
@@ -792,8 +804,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     void checkFullActiveView()
     {
-        // TODO:JEB add tests
-
         Multimap<String, InetAddress> peers = endpointStateSubscriber.peers;
         for (String datacenter : peers.keySet())
         {
@@ -805,6 +815,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                     List<InetAddress> localPeers = new ArrayList<>(endpointStateSubscriber.peers.get(this.datacenter));
                     localPeers.removeAll(localDatacenterView);
                     localPeers.remove(localAddress);
+                    if (localPeers.isEmpty())
+                        continue;
+
                     Collections.shuffle(localPeers, random);
                     for (InetAddress peer : localPeers.subList(0, fanout - localDatacenterView.size()))
                     {
@@ -853,6 +866,12 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     @VisibleForTesting
+    public String getDatacenter()
+    {
+        return datacenter;
+    }
+
+    @VisibleForTesting
     public HPVMessageId getHighestSeenMessageId(InetAddress peer)
     {
         return highestSeenMessageIds.get(peer);
@@ -876,7 +895,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
          * The minimum size for the number of nodes in a local datacenter to be larger than
          * to use the natural log for the fanout value.
          */
-        private static final int NATURAL_LOG_THRESHOLD = 10;
+        public static final int NATURAL_LOG_THRESHOLD = 10;
 
         /**
          * Internal mapping of all nodes to their respective datacenters.
@@ -886,9 +905,10 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
          */
         private final Multimap<String, InetAddress> peers;
 
-        EndpointStateSubscriber()
+        EndpointStateSubscriber(InetAddress address, String datacenter)
         {
             peers = HashMultimap.create();
+            peers.put(datacenter, address);
         }
 
         /**
@@ -903,20 +923,19 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             if (!localDatacenter.equals(targetDatacenter))
                 return 1;
 
-            // TODO I think there's a problem here with the race of when we get notified, via gossip, of
+            // TODO:JEB I think there's a problem here with the race of when we get notified, via gossip, of
             // nodes getting added to the cluser (and we update the EndpointStateListener.peers field)
             // versus when we get a request to join the PeerSamplingService.
-            // mostly a problem of adding nodes, not removing (if we're over the fanout, not big deal)
+            // mostly a problem of adding nodes, not removing (if we're over the fanout, not a big deal)
 
             Collection<InetAddress> localPeers = peers.get(localDatacenter);
-            // if there are no other peers in this datacenter, default to 1
-            if (localPeers.isEmpty())
-                return 1;
+            // don't consider current node as candidate for fanout size
+            localPeers.remove(localAddress);
 
             int localPeerCount = localPeers.size();
-            if (localPeerCount >= NATURAL_LOG_THRESHOLD)
-                return (int)Math.ceil(Math.log(localPeerCount));
-            return localPeerCount;
+            if (localPeerCount == 0)
+                return 1;
+            return localPeerCount >= NATURAL_LOG_THRESHOLD ? (int)Math.ceil(Math.log(localPeerCount)) : localPeerCount;
         }
 
         public Optional<String> getDatacenter(InetAddress addr)
@@ -939,9 +958,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             return peers.get(dc1).size() - peers.get(dc2).size();
         }
 
-        /**
-         * Side-door for tests to insert values into the peers map.
-         */
         @VisibleForTesting
         void add(InetAddress peer, String datacenter)
         {
