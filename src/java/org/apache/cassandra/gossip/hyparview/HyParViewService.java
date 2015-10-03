@@ -26,7 +26,6 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
-import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms.IFailureDetectionEventListener;
 import org.apache.cassandra.gms.VersionedValue;
@@ -171,8 +170,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     @VisibleForTesting
     final MessageSender messageSender;
 
-    private ExecutorService executorService;
-    private ScheduledExecutorService scheduler;
+    private final ExecutorService executorService;
+    private final ScheduledExecutorService scheduler;
 
     /**
      * Flag that indicates if we're up, ready, and open for business; else we're shutdown.
@@ -216,14 +215,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         executing = true;
     }
 
-    // note: this method will most likely be called by an external thread - is that safe?
+    // note: this method will most likely be called by an external thread
     public void start(int epoch)
     {
         if (executing)
             return;
         idGenerator = new HPVMessageId.IdGenerator(epoch);
         executing = true;
-        join();
+        executorService.execute(this::join);
         connectivityChecker = scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), 1, 1, TimeUnit.MINUTES);
     }
 
@@ -833,7 +832,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     void checkFullActiveView()
     {
-        if (!executing)
+        // let the join checker make sure we've joined rather than trying to double up here
+        if (!executing || !hasJoined)
             return;
 
         Multimap<String, InetAddress> peers = endpointStateSubscriber.peers;
@@ -1072,7 +1072,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         {
             // because this class will be executed from the scheduled tasks thread, move the actaul execution
             // into the primary exec pool for the owning class
-            executorService.submit(() -> checkFullActiveView());
+            executorService.submit(HyParViewService.this::checkFullActiveView);
         }
     }
 
@@ -1082,7 +1082,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         {
             // because this class will be executed from the scheduled tasks thread, move the actaul execution
             // into the primary exec pool for the owning class
-            executorService.submit(() -> checkJoinStatus());
+            executorService.submit(HyParViewService.this::checkJoinStatus);
         }
     }
 

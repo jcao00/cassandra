@@ -75,9 +75,9 @@ public class HyParViewServiceTest
     HyParViewService buildService(List<InetAddress> seeds)
     {
         SeedProvider seedProvider = new TestSeedProvider(seeds);
-        HyParViewService hpvService = new HyParViewService(localNodeAddr, LOCAL_DC, 42, seedProvider, 2);
-
-        hpvService.testInit(new TestMessageSender(), executorService, scheduler);
+        HyParViewService hpvService = new HyParViewService(localNodeAddr, LOCAL_DC, seedProvider, new TestMessageSender(),
+                                                           executorService, scheduler, 2);
+        hpvService.testInit(42);
 
         return hpvService;
     }
