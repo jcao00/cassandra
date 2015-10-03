@@ -56,6 +56,7 @@ import org.apache.cassandra.gms.EchoMessage;
 import org.apache.cassandra.gms.GossipDigestAck;
 import org.apache.cassandra.gms.GossipDigestAck2;
 import org.apache.cassandra.gms.GossipDigestSyn;
+import org.apache.cassandra.gossip.hyparview.MessageSerializerFactory;
 import org.apache.cassandra.hints.HintMessage;
 import org.apache.cassandra.hints.HintResponse;
 import org.apache.cassandra.io.IVersionedSerializer;
@@ -139,6 +140,12 @@ public final class MessagingService implements MessagingServiceMBean
         PAXOS_PROPOSE,
         PAXOS_COMMIT,
         @Deprecated PAGED_RANGE,
+        HYPARVIEW_JOIN,
+        HYPARVIEW_JOIN_RESPONSE,
+        HYPARVIEW_FORWARD_JOIN,
+        HYPARVIEW_NEIGHBOR_REQUEST,
+        HYPARVIEW_NEIGHBOR_RESPONSE,
+        HYPARVIEW_DISCONNECT,
         // remember to add new verbs at the end, since we serialize by ordinal
         UNUSED_1,
         UNUSED_2,
@@ -193,6 +200,13 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.SNAPSHOT, Stage.MISC);
         put(Verb.ECHO, Stage.GOSSIP);
 
+        put(Verb.HYPARVIEW_JOIN, Stage.GOSSIP);
+        put(Verb.HYPARVIEW_JOIN_RESPONSE, Stage.GOSSIP);
+        put(Verb.HYPARVIEW_FORWARD_JOIN, Stage.GOSSIP);
+        put(Verb.HYPARVIEW_NEIGHBOR_REQUEST, Stage.GOSSIP);
+        put(Verb.HYPARVIEW_NEIGHBOR_RESPONSE, Stage.GOSSIP);
+        put(Verb.HYPARVIEW_DISCONNECT, Stage.GOSSIP);
+
         put(Verb.UNUSED_1, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_2, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_3, Stage.INTERNAL_RESPONSE);
@@ -234,6 +248,12 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.HINT, HintMessage.serializer);
         put(Verb.BATCH_STORE, Batch.serializer);
         put(Verb.BATCH_REMOVE, UUIDSerializer.serializer);
+        put(Verb.HYPARVIEW_JOIN, MessageSerializerFactory.JOIN_SERIALIZER);
+        put(Verb.HYPARVIEW_JOIN_RESPONSE, MessageSerializerFactory.JOIN_RESPONSE_SERIALIZER);
+        put(Verb.HYPARVIEW_FORWARD_JOIN, MessageSerializerFactory.FORWARD_JOIN_SERIALIZER);
+        put(Verb.HYPARVIEW_NEIGHBOR_REQUEST, MessageSerializerFactory.NEIGHBOR_REQUEST_SERAILIZER);
+        put(Verb.HYPARVIEW_NEIGHBOR_RESPONSE, MessageSerializerFactory.NEIGHBOR_RESPONSE_SERIALIZER);
+        put(Verb.HYPARVIEW_DISCONNECT, MessageSerializerFactory.DISCONNECT_SERIALIZER);
     }};
 
     /**

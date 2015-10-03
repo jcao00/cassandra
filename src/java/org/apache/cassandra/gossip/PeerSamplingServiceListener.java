@@ -7,9 +7,6 @@ import java.net.InetAddress;
  */
 public interface PeerSamplingServiceListener
 {
-    //TODO: reconsider if we *really* need to pass along the datacenter in these calls
-    // I'm still on the fence.
-
     /**
      * Triggered when a node is added to the Peer Sampling Service's active view.
      *

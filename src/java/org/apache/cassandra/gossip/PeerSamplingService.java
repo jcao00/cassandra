@@ -6,12 +6,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 
 /**
- * A Peer Sampling Service
- * TODO: author name and link to paper
- *
- * provides a restricted view of a cluster to dependent components, thus allowing them
- * to be more efficient with connections and other resources (not needing to connect to
- * all peers in the cluster).
+ * A Peer Sampling Service is an implementation of
+ * <a href="http://infoscience.epfl.ch/record/83409/files/neg--1184036295all.pdf">
+ *     The Peer Sampling Service: Experimental Evaluation of Unstructured Gossip-Based Implementations</a>.
+ * In brief, a peer sampling service provides a restricted view of a cluster to dependent components, thus allowing them
+ * to be more efficient with connections and other resources (by not needing to connect to all peers in the cluster).
  */
 public interface PeerSamplingService
 {
@@ -19,13 +18,9 @@ public interface PeerSamplingService
      * Allow the component to initialize. Should be called before {@code register}'ing any listeners
      * or allowing listeners to call {@code getPeers}.
      *
-     * @param messageSender Service that sends messages to peer nodes.
-     * @param executorService An ExecutorService to which internal messages can be sent (instead of handling events inline from
-     *                        whatever thread broadcast them).
-     * @param scheduler A scheduling service to which the implemenation may submit periodic tasks (rather than building it's own
-     *                  or directly depending on {@code ScheduledExecutors}).
+     * @param epoch The generation of the current {@link GossipContext}
      */
-    void init(MessageSender messageSender, ExecutorService executorService, ScheduledExecutorService scheduler);
+    void start(int epoch);
 
     /**
      * Retrieve all the peers in the active view.
@@ -41,4 +36,6 @@ public interface PeerSamplingService
      * Unregister a listener from the peer sampling service.
      */
     void unregister(PeerSamplingServiceListener listener);
+
+    void shutdown();
 }

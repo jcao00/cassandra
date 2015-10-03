@@ -14,6 +14,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -117,7 +118,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private final Set<PeerSamplingServiceListener> listeners;
 
     @VisibleForTesting
-    final EndpointStateSubscriber endpointStateSubscriber;
+    public final EndpointStateSubscriber endpointStateSubscriber;
 
     /**
      * Active view of peers in the local datacenter. The max size of this collection
@@ -155,7 +156,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     private final Random random;
 
-    private final HPVMessageId.IdGenerator idGenerator;
+    private HPVMessageId.IdGenerator idGenerator;
 
     /**
      * Capture the highest message id received from each peer.
@@ -168,10 +169,15 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private final Map<InetAddress, Disconnects> lastDisconnect;
 
     @VisibleForTesting
-    MessageSender messageSender;
+    final MessageSender messageSender;
 
     private ExecutorService executorService;
     private ScheduledExecutorService scheduler;
+
+    /**
+     * Flag that indicates if we're up, ready, and open for business; else we're shutdown.
+     */
+    private volatile boolean executing;
 
     /**
      * Simple flag to indicate if we've received at least one response to a join request. Reset each time
@@ -179,14 +185,19 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     private volatile boolean hasJoined;
 
-    public HyParViewService(InetAddress localAddress, String datacenter, long epoch, SeedProvider seedProvider, int activeRandomWalkLength)
+    private ScheduledFuture<?> connectivityChecker;
+
+    public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider, MessageSender messageSender,
+                            ExecutorService executorService, ScheduledExecutorService scheduler, int activeRandomWalkLength)
     {
         this.localAddress = localAddress;
         this.datacenter = datacenter;
         this.seedProvider = seedProvider;
+        this.messageSender = messageSender;
         this.activeRandomWalkLength = activeRandomWalkLength;
+        this.executorService = executorService;
+        this.scheduler = scheduler;
 
-        idGenerator = new HPVMessageId.IdGenerator(epoch);
         highestSeenMessageIds = new HashMap<>();
         lastDisconnect = new HashMap<>();
         random = new Random();
@@ -198,27 +209,22 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         remoteView = new HashMap<>();
     }
 
-    public void init(MessageSender messageSender, ExecutorService executorService, ScheduledExecutorService scheduler)
+    @VisibleForTesting
+    void testInit(long epoch)
     {
-        this.messageSender = messageSender;
-        this.executorService = executorService;
-        this.scheduler = scheduler;
-
-        // TODO:JEB fish out the initial Endpoint states
-
-        // I will be thilled the day this dependency is severed!
-        Gossiper.instance.register(endpointStateSubscriber);
-
-        join();
-        scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), 1, 1, TimeUnit.MINUTES);
+        idGenerator = new HPVMessageId.IdGenerator(epoch);
+        executing = true;
     }
 
-    @VisibleForTesting
-    void testInit(MessageSender messageSender, ExecutorService executorService, ScheduledExecutorService scheduler)
+    // note: this method will most likely be called by an external thread - is that safe?
+    public void start(int epoch)
     {
-        this.messageSender = messageSender;
-        this.executorService = executorService;
-        this.scheduler = scheduler;
+        if (executing)
+            return;
+        idGenerator = new HPVMessageId.IdGenerator(epoch);
+        executing = true;
+        join();
+        connectivityChecker = scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), 1, 1, TimeUnit.MINUTES);
     }
 
     /**
@@ -254,6 +260,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     public void receiveMessage(HyParViewMessage message)
     {
         updatePeersInfo(message);
+        if (!executing)
+            return;
 
         try
         {
@@ -429,11 +437,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         localDatacenterView.addLast(peer);
 //        logger.info(String.format("%s adding %s to local active view", localAddress, peer));
         if (localDatacenterView.size() > endpointStateSubscriber.fanout(datacenter, datacenter))
-            expungeNode(localDatacenterView.removeFirst(), datacenter);
+            expungeNode(localDatacenterView.removeFirst(), datacenter, true);
         return true;
     }
 
-    private void expungeNode(InetAddress peer, String datacenter)
+    private void expungeNode(InetAddress peer, String datacenter, boolean informListeners)
     {
         HPVMessageId id = idGenerator.generate();
 //        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
@@ -449,8 +457,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         lastDisconnect.put(peer, disconnects);
         messageSender.send(peer, new DisconnectMessage(id, localAddress, this.datacenter));
 
-        for (PeerSamplingServiceListener listener : listeners)
-            listener.neighborDown(peer, datacenter);
+        if (informListeners)
+            for (PeerSamplingServiceListener listener : listeners)
+                listener.neighborDown(peer, datacenter);
     }
 
     /**
@@ -465,7 +474,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 //        logger.info(String.format("%s adding %s to remote active view", localAddress, peer));
         remoteView.put(datacenter, peer);
         if (existing != null)
-            expungeNode(existing, datacenter);
+            expungeNode(existing, datacenter, true);
         return true;
     }
 
@@ -474,7 +483,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     {
         if (localDatacenterView.remove(peer) || remoteView.remove(datacenter, peer))
         {
-            expungeNode(peer, datacenter);
+            expungeNode(peer, datacenter, true);
             return true;
         }
         return false;
@@ -678,7 +687,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         if (removed && shouldSendNeighborRequest(message.datacenter))
             sendNeighborRequest(Optional.of(message.sender), message.datacenter, 1);
 
-        //TODO:JEB check to see if we need to notify listeners
+        for (PeerSamplingServiceListener listener : listeners)
+            listener.neighborDown(message.sender, message.datacenter);
     }
 
     /**
@@ -776,6 +786,25 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         listeners.remove(listener);
     }
 
+    public void shutdown()
+    {
+        if (!executing)
+            return;
+        connectivityChecker.cancel(true);
+        executing = false;
+
+        for (InetAddress peer : localDatacenterView)
+            expungeNode(peer, datacenter, false);
+        for (Map.Entry<String, InetAddress> peer : remoteView.entrySet())
+            expungeNode(peer.getValue(), peer.getKey(), false);
+
+        localDatacenterView.clear();
+        remoteView.clear();
+        lastDisconnect.clear();
+
+        // do not inform listeners, they should shutdown gracefully, as well
+    }
+
     void peerUnavailable(InetAddress addr)
     {
         Optional<String> datacenter = endpointStateSubscriber.getDatacenter(addr);
@@ -804,6 +833,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     void checkFullActiveView()
     {
+        if (!executing)
+            return;
+
         Multimap<String, InetAddress> peers = endpointStateSubscriber.peers;
         for (String datacenter : peers.keySet())
         {
@@ -888,6 +920,10 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     /**
      * Maintains an independent mapping of {datacenter->peer} of all the current members.
      * Members are allowed to participcate in gossip operations.
+     *
+     * Note: when the {@link IEndpointStateChangeSubscriber} methods are invoked, they are not guaranteed to be on
+     * the single thread where all states mutations for the {@link HyParViewService} should occur. Thus, we move all
+     * of those calls to the main processing thread for safety.
      */
     class EndpointStateSubscriber implements IEndpointStateChangeSubscriber
     {
@@ -922,11 +958,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         {
             if (!localDatacenter.equals(targetDatacenter))
                 return 1;
-
-            // TODO:JEB I think there's a problem here with the race of when we get notified, via gossip, of
-            // nodes getting added to the cluser (and we update the EndpointStateListener.peers field)
-            // versus when we get a request to join the PeerSamplingService.
-            // mostly a problem of adding nodes, not removing (if we're over the fanout, not a big deal)
 
             Collection<InetAddress> localPeers = peers.get(localDatacenter);
             // don't consider current node as candidate for fanout size
@@ -983,18 +1014,16 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         public void onChange(InetAddress addr, ApplicationState state, VersionedValue value)
         {
-            // double-check if we already know about the peer and it's datacenter
-            if (state == ApplicationState.DC)
-                newPeer(addr, value.value);
+            if (state == ApplicationState.DC && !peers.containsEntry(value.value, addr))
+                executorService.execute(() -> newPeer(addr, value.value));
         }
 
-        boolean newPeer(InetAddress peer, String datacenter)
+        void newPeer(InetAddress peer, String datacenter)
         {
-            if (peers.containsValue(peer))
-                return false;
+            if (peers.containsEntry(datacenter, peer))
+                return;
 
             peers.put(datacenter, peer);
-            return true;
         }
 
         public void onAlive(InetAddress endpoint, EndpointState state)
@@ -1002,7 +1031,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             VersionedValue datacenter = state.getApplicationState(ApplicationState.DC);
             if (datacenter == null)
                 return;
-            newPeer(endpoint, datacenter.value);
+            executorService.execute(() -> newPeer(endpoint, datacenter.value));
         }
 
         public void onDead(final InetAddress endpoint, EndpointState state)
@@ -1034,7 +1063,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     public void convict(final InetAddress addr, double phi)
     {
-        // not entirely clear if we should listen to the whims of the FD, but go with it for now
         executorService.submit(() -> peerUnavailable(addr));
     }
 

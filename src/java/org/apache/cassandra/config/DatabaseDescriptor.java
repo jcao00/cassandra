@@ -1947,4 +1947,9 @@ public class DatabaseDescriptor
     {
         encryptionContext = ec;
     } 
+
+    public static SeedProvider getSeedProvider()
+    {
+        return seedProvider;
+    }
 }

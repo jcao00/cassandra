@@ -14,8 +14,8 @@ public interface MessageSender
     /**
      * Send a message to a peer node.
      *
-     * @param destinationAddr Where to send the message
+     * @param destination Where to send the message
      * @param message The payload
      */
-    void send(InetAddress destinationAddr, HyParViewMessage message);
+    void send(InetAddress destination, HyParViewMessage message);
 }
