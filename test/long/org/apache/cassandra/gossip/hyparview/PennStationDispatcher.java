@@ -140,9 +140,9 @@ public class PennStationDispatcher
         NodeContext(InetAddress addr, String datacenter, SeedProvider seedProvider,
                            SimulationMessageSender messageSender)
         {
-            hpvService = new HyParViewService(addr, datacenter, Math.abs(random.nextInt()), seedProvider, 3);
             scheduler = new ScheduledThreadPoolExecutor(1);
-            hpvService.testInit(messageSender, scheduler, scheduler);
+            hpvService = new HyParViewService(addr, datacenter, seedProvider, messageSender, scheduler, scheduler, 3);
+            hpvService.testInit(Math.abs(random.nextInt()));
         }
 
         void send(HyParViewMessage message, long delay)

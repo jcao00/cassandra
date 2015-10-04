@@ -56,7 +56,7 @@ import org.apache.cassandra.gms.EchoMessage;
 import org.apache.cassandra.gms.GossipDigestAck;
 import org.apache.cassandra.gms.GossipDigestAck2;
 import org.apache.cassandra.gms.GossipDigestSyn;
-import org.apache.cassandra.gossip.hyparview.MessageSerializerFactory;
+import org.apache.cassandra.gossip.hyparview.HyParViewMessageSender;
 import org.apache.cassandra.hints.HintMessage;
 import org.apache.cassandra.hints.HintResponse;
 import org.apache.cassandra.io.IVersionedSerializer;
@@ -248,12 +248,12 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.HINT, HintMessage.serializer);
         put(Verb.BATCH_STORE, Batch.serializer);
         put(Verb.BATCH_REMOVE, UUIDSerializer.serializer);
-        put(Verb.HYPARVIEW_JOIN, MessageSerializerFactory.JOIN_SERIALIZER);
-        put(Verb.HYPARVIEW_JOIN_RESPONSE, MessageSerializerFactory.JOIN_RESPONSE_SERIALIZER);
-        put(Verb.HYPARVIEW_FORWARD_JOIN, MessageSerializerFactory.FORWARD_JOIN_SERIALIZER);
-        put(Verb.HYPARVIEW_NEIGHBOR_REQUEST, MessageSerializerFactory.NEIGHBOR_REQUEST_SERAILIZER);
-        put(Verb.HYPARVIEW_NEIGHBOR_RESPONSE, MessageSerializerFactory.NEIGHBOR_RESPONSE_SERIALIZER);
-        put(Verb.HYPARVIEW_DISCONNECT, MessageSerializerFactory.DISCONNECT_SERIALIZER);
+        put(Verb.HYPARVIEW_JOIN, HyParViewMessageSender.JOIN_SERIALIZER);
+        put(Verb.HYPARVIEW_JOIN_RESPONSE, HyParViewMessageSender.JOIN_RESPONSE_SERIALIZER);
+        put(Verb.HYPARVIEW_FORWARD_JOIN, HyParViewMessageSender.FORWARD_JOIN_SERIALIZER);
+        put(Verb.HYPARVIEW_NEIGHBOR_REQUEST, HyParViewMessageSender.NEIGHBOR_REQUEST_SERAILIZER);
+        put(Verb.HYPARVIEW_NEIGHBOR_RESPONSE, HyParViewMessageSender.NEIGHBOR_RESPONSE_SERIALIZER);
+        put(Verb.HYPARVIEW_DISCONNECT, HyParViewMessageSender.DISCONNECT_SERIALIZER);
     }};
 
     /**

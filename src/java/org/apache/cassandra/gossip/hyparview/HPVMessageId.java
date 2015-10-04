@@ -4,10 +4,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class HPVMessageId implements Comparable<HPVMessageId>
 {
-    private final long epoch;
+    private final int epoch;
     private final int id;
 
-    public HPVMessageId(long epoch, int id)
+    public HPVMessageId(int epoch, int id)
     {
         this.epoch = epoch;
         this.id = id;
@@ -30,6 +30,24 @@ public class HPVMessageId implements Comparable<HPVMessageId>
         return epoch == other.epoch ? 0 : epoch < other.epoch ? -1 : 1;
     }
 
+    public int getEpoch()
+    {
+        return epoch;
+    }
+
+    public int getId()
+    {
+        return id;
+    }
+
+    public boolean equals(Object o)
+    {
+        if (o == null || !(o instanceof HPVMessageId))
+            return false;
+        HPVMessageId msgId = (HPVMessageId)o;
+        return epoch == msgId.epoch && id == msgId.id;
+    }
+
     public String toString()
     {
         return epoch + ":" + id;
@@ -38,9 +56,9 @@ public class HPVMessageId implements Comparable<HPVMessageId>
     public static class IdGenerator
     {
         private final AtomicInteger id = new AtomicInteger();
-        private final long epoch;
+        private final int epoch;
 
-        public IdGenerator(long epoch)
+        public IdGenerator(int epoch)
         {
             this.epoch = epoch;
         }

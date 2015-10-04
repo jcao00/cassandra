@@ -84,7 +84,7 @@ public class HyParViewServiceTest
 
     private HPVMessageId generateMessageId()
     {
-        return new HPVMessageId.IdGenerator(random.nextLong()).generate();
+        return new HPVMessageId.IdGenerator(random.nextInt()).generate();
     }
 
     @Test
@@ -153,7 +153,7 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(43948234L);
+        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
 
         HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, null);
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
@@ -167,11 +167,11 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(43948234L);
+        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
         disconnects.put(peer, new Disconnects(peerIdGenerator.generate(), null));
-        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, null);
+        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.<HPVMessageId>empty());
 
         Assert.assertTrue(hpvService.hasSeenDisconnect(msg, disconnects));
     }
@@ -181,12 +181,12 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(43948234L);
+        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
         disconnects.put(peer, new Disconnects(null, Pair.create(idGenerator.generate(), peerIdGenerator.generate())));
 
-        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, null);
+        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.<HPVMessageId>empty());
         Assert.assertFalse(hpvService.hasSeenDisconnect(msg, disconnects));
     }
 
@@ -195,13 +195,13 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        long epoch = 43948234L;
+        int epoch = 2981215;
         HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(epoch);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
         disconnects.put(peer, new Disconnects(null, Pair.create(idGenerator.generate(), peerIdGenerator.generate())));
 
-        HyParViewMessage msg = new JoinResponseMessage(new HPVMessageId.IdGenerator(epoch + 1).generate(), peer, LOCAL_DC, null);
+        HyParViewMessage msg = new JoinResponseMessage(new HPVMessageId.IdGenerator(epoch + 1).generate(), peer, LOCAL_DC, Optional.<HPVMessageId>empty());
         Assert.assertTrue(hpvService.hasSeenDisconnect(msg, disconnects));
     }
 
@@ -210,13 +210,13 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(43948234L);
+        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
         HPVMessageId disconnectMessageId = idGenerator.generate();
         disconnects.put(peer, new Disconnects(null, Pair.create(disconnectMessageId, peerIdGenerator.generate())));
 
-        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, disconnectMessageId);
+        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.of(disconnectMessageId));
         Assert.assertTrue(hpvService.hasSeenDisconnect(msg, disconnects));
     }
 

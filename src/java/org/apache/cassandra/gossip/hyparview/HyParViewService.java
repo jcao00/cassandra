@@ -112,7 +112,13 @@ import org.apache.cassandra.utils.Pair;
 public class HyParViewService implements PeerSamplingService, IFailureDetectionEventListener
 {
     private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
+
     static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 2;
+
+    /**
+     * A default value for the Active Random Walk Length. Not sure if we really need it configurable.
+     */
+    static final int ACTIVE_RANDOM_WALK_LENGTH = 3;
 
     private final Set<PeerSamplingServiceListener> listeners;
 
@@ -187,6 +193,12 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     private ScheduledFuture<?> connectivityChecker;
 
     public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider, MessageSender messageSender,
+                            ExecutorService executorService, ScheduledExecutorService scheduler)
+    {
+        this (localAddress, datacenter, seedProvider, messageSender, executorService, scheduler, ACTIVE_RANDOM_WALK_LENGTH);
+    }
+
+    public HyParViewService(InetAddress localAddress, String datacenter, SeedProvider seedProvider, MessageSender messageSender,
                             ExecutorService executorService, ScheduledExecutorService scheduler, int activeRandomWalkLength)
     {
         this.localAddress = localAddress;
@@ -209,7 +221,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     @VisibleForTesting
-    void testInit(long epoch)
+    void testInit(int epoch)
     {
         idGenerator = new HPVMessageId.IdGenerator(epoch);
         executing = true;
@@ -297,7 +309,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     @VisibleForTesting
     void updatePeersInfo(HyParViewMessage message)
     {
-        updatePeersInfo(message.sender, message.datacenter, message.messgeId);
+        updatePeersInfo(message.sender, message.datacenter, message.messageId);
         if (!message.sender.equals(message.getOriginator()))
             updatePeersInfo(message.getOriginator(), message.getOriginatorDatacenter(), message.getOriginatorMessageId());
     }
@@ -345,10 +357,10 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         }
     }
 
-    private HPVMessageId lastDisconnectMsgId(InetAddress peer)
+    private Optional<HPVMessageId> lastDisconnectMsgId(InetAddress peer)
     {
         Disconnects disconnects = lastDisconnect.get(peer);
-        return disconnects == null ? null : disconnects.fromPeer;
+        return disconnects == null ? Optional.<HPVMessageId>empty() : Optional.ofNullable(disconnects.fromPeer);
     }
 
     /**
@@ -391,7 +403,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         if (!disconnects.hasSeenMostRecentFromPeer(message.getOriginatorMessageId()))
             return false;
 
-        if (!disconnects.hasSeenMostRecentToPeer(message.getLastDisconnect(), message.getOriginatorMessageId()))
+        if (!disconnects.hasSeenMostRecentToPeer(message.lastDisconnect.orElse(null), message.getOriginatorMessageId()))
             return false;
 
         return true;
@@ -532,8 +544,8 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
         if (added)
         {
-            messageSender.send(message.originator, new JoinResponseMessage(idGenerator.generate(), localAddress, datacenter,
-                                                                           lastDisconnectMsgId(message.originator)));
+            messageSender.send(message.getOriginator(), new JoinResponseMessage(idGenerator.generate(), localAddress, datacenter,
+                                                                           lastDisconnectMsgId(message.getOriginator())));
         }
         else if (nextTTL >= 0)
         {
@@ -545,7 +557,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             Optional<InetAddress> peer = getActivePeer(filter, message.datacenter);
             InetAddress addr = peer.orElseGet(() -> message.sender);
             messageSender.send(addr, new ForwardJoinMessage(idGenerator.generate(), localAddress, datacenter,
-                                                            message.originator, message.originatorDatacenter, nextTTL,
+                                                            message.getOriginator(), message.getOriginatorDatacenter(), nextTTL,
                                                             message.getOriginatorMessageId()));
         }
     }
@@ -605,10 +617,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     void handleNeighborRequest(NeighborRequestMessage message)
     {
         // if the node is already in our active view, go ahead and send an ACCEPT message
+        Optional<HPVMessageId> lastDisconnect = lastDisconnectMsgId(message.sender);
         if (isPeerInActiveView(message.sender))
         {
             messageSender.send(message.sender, new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
-                                                                           Result.ACCEPT, message.neighborRequestsCount, lastDisconnectMsgId(message.sender)));
+                                                                           Result.ACCEPT, message.neighborRequestsCount, lastDisconnect));
             return;
         }
 
@@ -618,14 +631,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                  || remoteView.containsKey(message.datacenter))
             {
                 messageSender.send(message.sender, new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
-                                                                               Result.DENY, message.neighborRequestsCount, lastDisconnectMsgId(message.sender)));
+                                                                               Result.DENY, message.neighborRequestsCount, lastDisconnect));
                 return;
             }
         }
 
         Result result = addToView(message) ? Result.ACCEPT : Result.DENY;
         messageSender.send(message.sender, new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
-                                                                       result, message.neighborRequestsCount, lastDisconnectMsgId(message.sender)));
+                                                                       result, message.neighborRequestsCount, lastDisconnect));
     }
 
     /**
@@ -674,9 +687,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     {
         Disconnects disconnects = lastDisconnect.get(message.getOriginator());
         if (disconnects == null)
-            lastDisconnect.put(message.getOriginator(), new Disconnects(message.messgeId, null));
-        else if (disconnects.hasSeenMostRecentFromPeer(message.messgeId))
-            lastDisconnect.put(message.getOriginator(), disconnects.withNewFromPeerMsgId(message.messgeId));
+            lastDisconnect.put(message.getOriginator(), new Disconnects(message.messageId, null));
+        else if (disconnects.hasSeenMostRecentFromPeer(message.messageId))
+            lastDisconnect.put(message.getOriginator(), disconnects.withNewFromPeerMsgId(message.messageId));
         else
             return; // we received some duplicate or older message - ignore
 

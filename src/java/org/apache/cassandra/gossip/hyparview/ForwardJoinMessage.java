@@ -1,27 +1,31 @@
 package org.apache.cassandra.gossip.hyparview;
 
 import java.net.InetAddress;
+import java.util.Optional;
 
 public class ForwardJoinMessage extends HyParViewMessage
 {
     /**
      * Address of the peer that is trying to join.
      */
-    public final InetAddress originator;
+    private final InetAddress originator;
 
     /**
      * The datacenter of the originator.
      */
-    public final String originatorDatacenter;
-
-    public final int timeToLive;
+    private final String originatorDatacenter;
 
     private final HPVMessageId originatorMessageId;
+
+    /**
+     * The number of steps remaining to forward the message. Not a TTL as in seconds.
+     */
+    public final int timeToLive;
 
     public ForwardJoinMessage(HPVMessageId messgeId, InetAddress sender, String senderDatacenter, InetAddress originator,
                               String originatorDatacenter, int timeToLive, HPVMessageId originatorId)
     {
-        super(messgeId, sender, senderDatacenter, null);
+        super(messgeId, sender, senderDatacenter, Optional.<HPVMessageId>empty());
         this.originator = originator;
         this.originatorDatacenter = originatorDatacenter;
         this.timeToLive = timeToLive;
@@ -54,5 +58,15 @@ public class ForwardJoinMessage extends HyParViewMessage
     public HPVMessageId getOriginatorMessageId()
     {
         return originatorMessageId;
+    }
+
+    public boolean equals(Object o)
+    {
+        if (!super.equals(o) || !(o instanceof ForwardJoinMessage))
+            return false;
+        ForwardJoinMessage msg = (ForwardJoinMessage)o;
+
+        // all originator* fields should be checked in super.equals(), so just the custom fields here
+        return timeToLive == msg.timeToLive;
     }
 }

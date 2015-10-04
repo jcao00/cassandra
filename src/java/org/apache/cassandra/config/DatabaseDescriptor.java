@@ -105,6 +105,7 @@ public class DatabaseDescriptor
     private static EncryptionContext encryptionContext;
 
     public static void forceStaticInitialization() {}
+
     static
     {
         // In client mode, we use a default configuration. Note that the fields of this class will be
@@ -1951,5 +1952,11 @@ public class DatabaseDescriptor
     public static SeedProvider getSeedProvider()
     {
         return seedProvider;
+    }
+
+
+    public static boolean newGossipEnabled()
+    {
+        return Boolean.parseBoolean(System.getProperty("cassandra.new_gossip.enable", null));
     }
 }
