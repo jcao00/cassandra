@@ -53,6 +53,21 @@ import org.apache.cassandra.utils.Pair;
  * the part on the SHUFFLE messages). We still fulfill the needs of the passive view (having a backlog
  * of peers to use as a backup), but save ourselves some code/network traffic/extra functionality.
  *
+ * Messages:
+ * We use five of the messages defined in the HyParView paper, and add in one extra. A full description of the messages
+ * can be found in the paper, but a here is a brief summary
+ * - JOIN - when a node starts up, it send out a JOIN request, typically to a seed.
+ * - FORWARD_JOIN - The receipient of a JOIN forwards the join to the peers in it's active view, and so on, until the
+ * message's time-to-live (based on the Active Random Walk Length) hits zero.
+ * - JOIN_RESPONSE - a response to the peer who sent out the JOIN message that it's join request has been accepted.
+ * This is a message we added that's not defined in the paper (but really useful!).
+ * - NEIGHBOR_REQUEST - When a node needs to add entries to it's active view (either because it received a DISCONNECT
+ * or the cluster gre in size), it can send out a NEIGHBOR_REQUEST to a peer. If the node's active view is empty, the peer
+ * must accept the NEIGHBOR_REQUEST (due to the {@link Priority#HIGH} the node must send).
+ * - NEIGHBOR_RESPONSE - The response to a NEIGHBOR_REQUEST, which can either be accept to deny.
+ * - DISCONNECT - sent whenever a node wants to disconnect (from a HyParView point of view) from a peer. This could happen
+ * because the node is shutting down, is accepting a JOIN or NEIGHBOR_REQUEST, and so on.
+ *
  * State machine:
  * A nice way to think about the active view is to consider it like a state machine, wherein each node controls how peers
  * are allowed into node's (local) active view. We can consider the state machine with three states:
