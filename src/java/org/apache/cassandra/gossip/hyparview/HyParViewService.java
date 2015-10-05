@@ -750,7 +750,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             return;
 
         messageSender.send(peer.get(), new NeighborRequestMessage(idGenerator.generate(), localAddress, this.datacenter,
-                                                                  determineNeighborPriority(datacenter), messageRetryCount,
+                                                                  determineNeighborPriority(), messageRetryCount,
                                                                   lastDisconnectMsgId(peer.get())));
     }
 
@@ -784,9 +784,9 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     /**
      * Normally, the priority is set to LOW unless there are no peers in the local active view, then it is set to HIGH.
      */
-    Priority determineNeighborPriority(String datacenter)
+    Priority determineNeighborPriority()
     {
-        return datacenter.equals(this.datacenter) && localDatacenterView.isEmpty() ? Priority.HIGH : Priority.LOW;
+        return localDatacenterView.isEmpty() ? Priority.HIGH : Priority.LOW;
     }
 
     boolean isPeerInActiveView(InetAddress peer)
@@ -883,7 +883,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                     {
                         // don't let these messages spin in retry attempts - just try once, because we can try again on the next round
                         int count = MAX_NEIGHBOR_REQUEST_ATTEMPTS - 1;
-                        NeighborRequestMessage msg = new NeighborRequestMessage(idGenerator.generate(), localAddress, this.datacenter, determineNeighborPriority(datacenter), count,
+                        NeighborRequestMessage msg = new NeighborRequestMessage(idGenerator.generate(), localAddress, this.datacenter, determineNeighborPriority(), count,
                                                                                 lastDisconnectMsgId(peer));
                         messageSender.send(peer, msg);
                     }
@@ -935,6 +935,12 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     public HPVMessageId getHighestSeenMessageId(InetAddress peer)
     {
         return highestSeenMessageIds.get(peer);
+    }
+
+    @VisibleForTesting
+    public void setHasJoined(boolean hasJoined)
+    {
+        this.hasJoined = hasJoined;
     }
 
     public String toString()
