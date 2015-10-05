@@ -76,7 +76,7 @@ public class HyParViewSimulator
     {
         for (int i : new int[]{2, 4, 6, 8, 15, 17, 21, 27, 39, 50, 64, 87, 100, 200, 250, 500, 750, 1000, 2000})
         {
-            for (int j = 0; j < 64; j++)
+            for (int j = 0; j < 32; j++)
             {
                 try
                 {
@@ -129,7 +129,6 @@ public class HyParViewSimulator
             dispatcher.checkActiveView(hpvService.getLocalAddress());
 
         dispatcher.awaitQuiesence();
-//        dispatcher.dumpCurrentState();
 
         for (HyParViewService hpvService : dispatcher.getNodes())
         {
@@ -253,6 +252,5 @@ public class HyParViewSimulator
                 }
             }
         }
-        dispatcher.dumpCurrentState();
     }
 }
