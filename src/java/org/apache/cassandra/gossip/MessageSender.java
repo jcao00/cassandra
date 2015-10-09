@@ -9,7 +9,7 @@ import org.apache.cassandra.utils.FBUtilities;
  * Simple interface to abstract away message sending.
  * Exists so we don't depend directly on MessagingService (so we can test without it).
  */
-public interface MessageSender
+public interface MessageSender<T>
 {
     /**
      * Send a message to a peer node.
@@ -17,5 +17,5 @@ public interface MessageSender
      * @param destination Where to send the message
      * @param message The payload
      */
-    void send(InetAddress destination, HyParViewMessage message);
+    void send(InetAddress destination, T message);
 }

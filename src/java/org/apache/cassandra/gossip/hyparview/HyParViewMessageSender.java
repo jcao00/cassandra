@@ -17,7 +17,7 @@ import org.apache.cassandra.net.MessagingService;
  * The implemenation of {@link MessageSender} that should be used at run-time, when running cassandra normally
  * (this is, when not testing).
  */
-public class HyParViewMessageSender implements MessageSender
+public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
 {
     public static final IVersionedSerializer<JoinMessage> JOIN_SERIALIZER = new JoinSerializer();
     public static final IVersionedSerializer<JoinResponseMessage> JOIN_RESPONSE_SERIALIZER = new JoinResponseSerializer();

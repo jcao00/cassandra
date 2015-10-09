@@ -87,6 +87,7 @@ import org.apache.cassandra.gms.TokenSerializer;
 import org.apache.cassandra.gms.VersionedValue;
 import org.apache.cassandra.gossip.GossipContext;
 import org.apache.cassandra.gossip.hyparview.HyParViewVerbHandler;
+import org.apache.cassandra.gossip.thicket.ThicketVerbHandler;
 import org.apache.cassandra.hints.HintVerbHandler;
 import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.io.sstable.SSTableLoader;
@@ -335,6 +336,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_NEIGHBOR_REQUEST, new HyParViewVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_NEIGHBOR_RESPONSE, new HyParViewVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_DISCONNECT, new HyParViewVerbHandler());
+
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_DATA, new ThicketVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_SUMMARY, new ThicketVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_GRAFT, new ThicketVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_PRUNE, new ThicketVerbHandler());
     }
 
     public void registerDaemon(CassandraDaemon daemon)

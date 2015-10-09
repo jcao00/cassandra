@@ -57,6 +57,7 @@ import org.apache.cassandra.gms.GossipDigestAck;
 import org.apache.cassandra.gms.GossipDigestAck2;
 import org.apache.cassandra.gms.GossipDigestSyn;
 import org.apache.cassandra.gossip.hyparview.HyParViewMessageSender;
+import org.apache.cassandra.gossip.thicket.ThicketMessageSender;
 import org.apache.cassandra.hints.HintMessage;
 import org.apache.cassandra.hints.HintResponse;
 import org.apache.cassandra.io.IVersionedSerializer;
@@ -146,6 +147,10 @@ public final class MessagingService implements MessagingServiceMBean
         HYPARVIEW_NEIGHBOR_REQUEST,
         HYPARVIEW_NEIGHBOR_RESPONSE,
         HYPARVIEW_DISCONNECT,
+        THICKET_DATA,
+        THICKET_SUMMARY,
+        THICKET_GRAFT,
+        THICKET_PRUNE,
         // remember to add new verbs at the end, since we serialize by ordinal
         UNUSED_1,
         UNUSED_2,
@@ -207,6 +212,11 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.HYPARVIEW_NEIGHBOR_RESPONSE, Stage.GOSSIP);
         put(Verb.HYPARVIEW_DISCONNECT, Stage.GOSSIP);
 
+        put(Verb.THICKET_DATA, Stage.GOSSIP);
+        put(Verb.THICKET_SUMMARY, Stage.GOSSIP);
+        put(Verb.THICKET_GRAFT, Stage.GOSSIP);
+        put(Verb.THICKET_PRUNE, Stage.GOSSIP);
+
         put(Verb.UNUSED_1, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_2, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_3, Stage.INTERNAL_RESPONSE);
@@ -254,6 +264,10 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.HYPARVIEW_NEIGHBOR_REQUEST, HyParViewMessageSender.NEIGHBOR_REQUEST_SERAILIZER);
         put(Verb.HYPARVIEW_NEIGHBOR_RESPONSE, HyParViewMessageSender.NEIGHBOR_RESPONSE_SERIALIZER);
         put(Verb.HYPARVIEW_DISCONNECT, HyParViewMessageSender.DISCONNECT_SERIALIZER);
+        put(Verb.THICKET_DATA, ThicketMessageSender.DATA_SERIALIZER);
+        put(Verb.THICKET_SUMMARY, ThicketMessageSender.SUMMARY_SERIALIZER);
+        put(Verb.THICKET_GRAFT, ThicketMessageSender.GRAFT_SERIALIZER);
+        put(Verb.THICKET_PRUNE, ThicketMessageSender.PRUNE_SERIALIZER);
     }};
 
     /**

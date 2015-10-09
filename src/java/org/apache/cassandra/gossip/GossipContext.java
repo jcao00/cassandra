@@ -9,6 +9,8 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gossip.hyparview.HyParViewMessageSender;
 import org.apache.cassandra.gossip.hyparview.HyParViewService;
+import org.apache.cassandra.gossip.thicket.ThicketMessageSender;
+import org.apache.cassandra.gossip.thicket.ThicketService;
 import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -20,6 +22,8 @@ public class GossipContext
     private final boolean enabled;
 
     public final HyParViewService hyparviewService;
+    public final ThicketService thicketService;
+    private final GossipStateChangeListener gossipListener;
 
     public GossipContext()
     {
@@ -30,9 +34,17 @@ public class GossipContext
 
         hyparviewService = new HyParViewService(localAddress, datacenter, DatabaseDescriptor.getSeedProvider(), new HyParViewMessageSender(),
                                                StageManager.getStage(Stage.GOSSIP), ScheduledExecutors.scheduledTasks);
+        thicketService = new ThicketService(localAddress, new ThicketMessageSender(),
+                                            StageManager.getStage(Stage.GOSSIP), ScheduledExecutors.scheduledTasks);
+        hyparviewService.register(thicketService);
+        gossipListener = new GossipStateChangeListener(localAddress, thicketService);
+        thicketService.register(gossipListener);
 
         if (enabled)
+        {
             Gossiper.instance.register(hyparviewService.endpointStateSubscriber);
+            Gossiper.instance.register(gossipListener);
+        }
     }
 
     public void start(int epoch)
@@ -40,6 +52,7 @@ public class GossipContext
         if (!enabled)
             return;
         hyparviewService.start(epoch);
+        thicketService.start();
     }
 
     public void shutdown()
@@ -47,5 +60,6 @@ public class GossipContext
         if (!enabled)
             return;
         hyparviewService.shutdown();
+        thicketService.shutdown();
     }
 }
