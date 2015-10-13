@@ -25,6 +25,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import junit.framework.Assert;
+import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.hyparview.HyParViewService.Disconnects;
 import org.apache.cassandra.locator.SeedProvider;
@@ -41,7 +42,7 @@ public class HyParViewServiceTest
     static final String REMOTE_DC_2 = "dc2`";
 
     static InetAddress localNodeAddr;
-    static HPVMessageId.IdGenerator idGenerator = new HPVMessageId.IdGenerator(42);
+    static GossipMessageId.IdGenerator idGenerator = new GossipMessageId.IdGenerator(42);
     ExecutorService executorService;
     ScheduledExecutorService scheduler;
     Random random;
@@ -82,9 +83,9 @@ public class HyParViewServiceTest
         return hpvService;
     }
 
-    private HPVMessageId generateMessageId()
+    private GossipMessageId generateMessageId()
     {
-        return new HPVMessageId.IdGenerator(random.nextInt()).generate();
+        return new GossipMessageId.IdGenerator(random.nextInt()).generate();
     }
 
     @Test
@@ -94,7 +95,7 @@ public class HyParViewServiceTest
         InetAddress peer = hpvService.getLocalAddress();
         Assert.assertTrue(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
 
-        HPVMessageId msgId = idGenerator.generate();
+        GossipMessageId msgId = idGenerator.generate();
         HyParViewMessage msg = new JoinResponseMessage(msgId, peer, LOCAL_DC, null);
 
         hpvService.updatePeersInfo(msg);
@@ -110,7 +111,7 @@ public class HyParViewServiceTest
         InetAddress peer = InetAddress.getByName("127.0.0.2");
         Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
 
-        HPVMessageId msgId = idGenerator.generate();
+        GossipMessageId msgId = idGenerator.generate();
         HyParViewMessage msg = new JoinResponseMessage(msgId, peer, LOCAL_DC, null);
 
         hpvService.updatePeersInfo(msg);
@@ -128,8 +129,8 @@ public class HyParViewServiceTest
         Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(LOCAL_DC, peer));
         Assert.assertFalse(hpvService.endpointStateSubscriber.getPeers().containsEntry(REMOTE_DC_1, originator));
 
-        HPVMessageId msgId = idGenerator.generate();
-        HPVMessageId originatorMsgId = generateMessageId();
+        GossipMessageId msgId = idGenerator.generate();
+        GossipMessageId originatorMsgId = generateMessageId();
         HyParViewMessage msg = new ForwardJoinMessage(msgId, peer, LOCAL_DC, originator, REMOTE_DC_1, 2, originatorMsgId);
 
         hpvService.updatePeersInfo(msg);
@@ -153,7 +154,7 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
+        GossipMessageId.IdGenerator peerIdGenerator = new GossipMessageId.IdGenerator(2981215);
 
         HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, null);
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
@@ -167,11 +168,11 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
+        GossipMessageId.IdGenerator peerIdGenerator = new GossipMessageId.IdGenerator(2981215);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
         disconnects.put(peer, new Disconnects(peerIdGenerator.generate(), null));
-        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.<HPVMessageId>empty());
+        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.<GossipMessageId>empty());
 
         Assert.assertTrue(hpvService.hasSeenDisconnect(msg, disconnects));
     }
@@ -181,12 +182,12 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
+        GossipMessageId.IdGenerator peerIdGenerator = new GossipMessageId.IdGenerator(2981215);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
         disconnects.put(peer, new Disconnects(null, Pair.create(idGenerator.generate(), peerIdGenerator.generate())));
 
-        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.<HPVMessageId>empty());
+        HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.<GossipMessageId>empty());
         Assert.assertFalse(hpvService.hasSeenDisconnect(msg, disconnects));
     }
 
@@ -196,12 +197,12 @@ public class HyParViewServiceTest
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
         int epoch = 2981215;
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(epoch);
+        GossipMessageId.IdGenerator peerIdGenerator = new GossipMessageId.IdGenerator(epoch);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
         disconnects.put(peer, new Disconnects(null, Pair.create(idGenerator.generate(), peerIdGenerator.generate())));
 
-        HyParViewMessage msg = new JoinResponseMessage(new HPVMessageId.IdGenerator(epoch + 1).generate(), peer, LOCAL_DC, Optional.<HPVMessageId>empty());
+        HyParViewMessage msg = new JoinResponseMessage(new GossipMessageId.IdGenerator(epoch + 1).generate(), peer, LOCAL_DC, Optional.<GossipMessageId>empty());
         Assert.assertTrue(hpvService.hasSeenDisconnect(msg, disconnects));
     }
 
@@ -210,10 +211,10 @@ public class HyParViewServiceTest
     {
         HyParViewService hpvService = buildService();
         InetAddress peer = InetAddress.getByName("127.0.0.2");
-        HPVMessageId.IdGenerator peerIdGenerator = new HPVMessageId.IdGenerator(2981215);
+        GossipMessageId.IdGenerator peerIdGenerator = new GossipMessageId.IdGenerator(2981215);
 
         Map<InetAddress, Disconnects> disconnects = new HashMap<>();
-        HPVMessageId disconnectMessageId = idGenerator.generate();
+        GossipMessageId disconnectMessageId = idGenerator.generate();
         disconnects.put(peer, new Disconnects(null, Pair.create(disconnectMessageId, peerIdGenerator.generate())));
 
         HyParViewMessage msg = new JoinResponseMessage(peerIdGenerator.generate(), peer, LOCAL_DC, Optional.of(disconnectMessageId));
@@ -1015,7 +1016,7 @@ public class HyParViewServiceTest
         }
     }
 
-    static class TestMessageSender implements MessageSender
+    static class TestMessageSender implements MessageSender<HyParViewMessage>
     {
         List<SentMessage> messages = new LinkedList<>();
 

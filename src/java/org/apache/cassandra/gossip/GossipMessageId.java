@@ -1,19 +1,19 @@
-package org.apache.cassandra.gossip.hyparview;
+package org.apache.cassandra.gossip;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class HPVMessageId implements Comparable<HPVMessageId>
+public class GossipMessageId implements Comparable<GossipMessageId>
 {
     private final int epoch;
     private final int id;
 
-    public HPVMessageId(int epoch, int id)
+    public GossipMessageId(int epoch, int id)
     {
         this.epoch = epoch;
         this.id = id;
     }
 
-    public int compareTo(HPVMessageId other)
+    public int compareTo(GossipMessageId other)
     {
         if (epoch == other.epoch)
         {
@@ -25,7 +25,7 @@ public class HPVMessageId implements Comparable<HPVMessageId>
         return epoch < other.epoch ? -1 : 1;
     }
 
-    public int epochOnlyCompareTo(HPVMessageId other)
+    public int epochOnlyCompareTo(GossipMessageId other)
     {
         return epoch == other.epoch ? 0 : epoch < other.epoch ? -1 : 1;
     }
@@ -42,9 +42,9 @@ public class HPVMessageId implements Comparable<HPVMessageId>
 
     public boolean equals(Object o)
     {
-        if (o == null || !(o instanceof HPVMessageId))
+        if (o == null || !(o instanceof GossipMessageId))
             return false;
-        HPVMessageId msgId = (HPVMessageId)o;
+        GossipMessageId msgId = (GossipMessageId)o;
         return epoch == msgId.epoch && id == msgId.id;
     }
 
@@ -63,9 +63,9 @@ public class HPVMessageId implements Comparable<HPVMessageId>
             this.epoch = epoch;
         }
 
-        public HPVMessageId generate()
+        public GossipMessageId generate()
         {
-            return new HPVMessageId(epoch, id.getAndIncrement());
+            return new GossipMessageId(epoch, id.getAndIncrement());
         }
     }
 }

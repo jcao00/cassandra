@@ -1521,4 +1521,13 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return System.currentTimeMillis() + Gossiper.aVeryLongTime;
     }
 
+    public boolean acceptBroadcast(InetAddress peer, EndpointState broadcastEndpointState)
+    {
+        EndpointState epState = getEndpointStateForEndpoint(peer);
+        if (epState != null && epState.getHeartBeatState().compareTo(broadcastEndpointState.getHeartBeatState()) >= 0)
+            return false;
+
+        applyStateLocally(Collections.singletonMap(peer, broadcastEndpointState));
+        return true;
+    }
 }

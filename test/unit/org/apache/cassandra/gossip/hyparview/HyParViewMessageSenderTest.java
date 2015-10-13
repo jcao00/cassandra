@@ -12,6 +12,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
@@ -48,9 +49,9 @@ public class HyParViewMessageSenderTest
         random = new Random(SEED);
     }
 
-    private HPVMessageId generateMessageId()
+    private GossipMessageId generateMessageId()
     {
-        return new HPVMessageId.IdGenerator(random.nextInt()).generate();
+        return new GossipMessageId.IdGenerator(random.nextInt()).generate();
     }
 
     @Test
@@ -75,7 +76,7 @@ public class HyParViewMessageSenderTest
     @Test
     public void joinResponseMessage_WithoutDisconnect() throws IOException
     {
-        JoinResponseMessage msg = new JoinResponseMessage(generateMessageId(), sender, DC_1, Optional.<HPVMessageId>empty());
+        JoinResponseMessage msg = new JoinResponseMessage(generateMessageId(), sender, DC_1, Optional.<GossipMessageId>empty());
         roundTripSerialization(msg, JOIN_RESPONSE_SERIALIZER);
     }
 
@@ -97,7 +98,7 @@ public class HyParViewMessageSenderTest
     public void neighborRequestMessage_WithoutDisconnect() throws IOException
     {
         NeighborRequestMessage msg = new NeighborRequestMessage(generateMessageId(), sender, DC_1, NeighborRequestMessage.Priority.LOW,
-                                                                2, Optional.<HPVMessageId>empty());
+                                                                2, Optional.<GossipMessageId>empty());
         roundTripSerialization(msg, NEIGHBOR_REQUEST_SERAILIZER);
     }
 
@@ -113,7 +114,7 @@ public class HyParViewMessageSenderTest
     public void neighborResponseMessage_WithoutDisconnect() throws IOException
     {
         NeighborResponseMessage msg = new NeighborResponseMessage(generateMessageId(), sender, DC_1, NeighborResponseMessage.Result.DENY,
-                                                                2, Optional.<HPVMessageId>empty());
+                                                                2, Optional.<GossipMessageId>empty());
         roundTripSerialization(msg, NEIGHBOR_RESPONSE_SERIALIZER);
     }
 

@@ -3,6 +3,8 @@ package org.apache.cassandra.gossip.hyparview;
 import java.net.InetAddress;
 import java.util.Optional;
 
+import org.apache.cassandra.gossip.GossipMessageId;
+
 public class ForwardJoinMessage extends HyParViewMessage
 {
     /**
@@ -15,17 +17,17 @@ public class ForwardJoinMessage extends HyParViewMessage
      */
     private final String originatorDatacenter;
 
-    private final HPVMessageId originatorMessageId;
+    private final GossipMessageId originatorMessageId;
 
     /**
      * The number of steps remaining to forward the message. Not a TTL as in seconds.
      */
     public final int timeToLive;
 
-    public ForwardJoinMessage(HPVMessageId messgeId, InetAddress sender, String senderDatacenter, InetAddress originator,
-                              String originatorDatacenter, int timeToLive, HPVMessageId originatorId)
+    public ForwardJoinMessage(GossipMessageId messgeId, InetAddress sender, String senderDatacenter, InetAddress originator,
+                              String originatorDatacenter, int timeToLive, GossipMessageId originatorId)
     {
-        super(messgeId, sender, senderDatacenter, Optional.<HPVMessageId>empty());
+        super(messgeId, sender, senderDatacenter, Optional.<GossipMessageId>empty());
         this.originator = originator;
         this.originatorDatacenter = originatorDatacenter;
         this.timeToLive = timeToLive;
@@ -55,7 +57,7 @@ public class ForwardJoinMessage extends HyParViewMessage
         return originatorDatacenter;
     }
 
-    public HPVMessageId getOriginatorMessageId()
+    public GossipMessageId getOriginatorMessageId()
     {
         return originatorMessageId;
     }

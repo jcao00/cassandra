@@ -3,6 +3,8 @@ package org.apache.cassandra.gossip.hyparview;
 import java.net.InetAddress;
 import java.util.Optional;
 
+import org.apache.cassandra.gossip.GossipMessageId;
+
 public class NeighborResponseMessage extends HyParViewMessage
 {
     public enum Result { ACCEPT, DENY }
@@ -10,8 +12,8 @@ public class NeighborResponseMessage extends HyParViewMessage
     public final Result result;
     public final int neighborRequestsCount;
 
-    public NeighborResponseMessage(HPVMessageId messgeId, InetAddress sender, String datacenter, Result result,
-                                   int neighborRequestsCount, Optional<HPVMessageId> lastDisconnect)
+    public NeighborResponseMessage(GossipMessageId messgeId, InetAddress sender, String datacenter, Result result,
+                                   int neighborRequestsCount, Optional<GossipMessageId> lastDisconnect)
     {
         super(messgeId, sender, datacenter, lastDisconnect);
         this.result = result;

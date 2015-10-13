@@ -29,6 +29,7 @@ import org.apache.cassandra.gms.EndpointState;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms.IFailureDetectionEventListener;
 import org.apache.cassandra.gms.VersionedValue;
+import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
@@ -176,12 +177,12 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      */
     private final Random random;
 
-    private HPVMessageId.IdGenerator idGenerator;
+    private GossipMessageId.IdGenerator idGenerator;
 
     /**
      * Capture the highest message id received from each peer.
      */
-    private final Map<InetAddress, HPVMessageId> highestSeenMessageIds;
+    private final Map<InetAddress, GossipMessageId> highestSeenMessageIds;
 
     /**
      * Capture the id of the last message DISCONNECT either received from or sent to a peer.
@@ -238,7 +239,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     @VisibleForTesting
     void testInit(int epoch)
     {
-        idGenerator = new HPVMessageId.IdGenerator(epoch);
+        idGenerator = new GossipMessageId.IdGenerator(epoch);
         executing = true;
     }
 
@@ -247,7 +248,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     {
         if (executing)
             return;
-        idGenerator = new HPVMessageId.IdGenerator(epoch);
+        idGenerator = new GossipMessageId.IdGenerator(epoch);
         executing = true;
         executorService.execute(this::join);
         connectivityChecker = scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), 1, 1, TimeUnit.MINUTES);
@@ -334,11 +335,11 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
      * the membership update that the peer was added versus when we receive a message from the peer, update our internal view
      * of the cluster if we're out of date.
      */
-    private void updatePeersInfo(InetAddress peer, String datacenter, HPVMessageId messgeId)
+    private void updatePeersInfo(InetAddress peer, String datacenter, GossipMessageId messgeId)
     {
         if (peer.equals(localAddress))
             return;
-        HPVMessageId previousEntry = highestSeenMessageIds.get(peer);
+        GossipMessageId previousEntry = highestSeenMessageIds.get(peer);
         if (previousEntry != null && messgeId.compareTo(previousEntry) <= 0)
             return;
 
@@ -372,10 +373,10 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         }
     }
 
-    private Optional<HPVMessageId> lastDisconnectMsgId(InetAddress peer)
+    private Optional<GossipMessageId> lastDisconnectMsgId(InetAddress peer)
     {
         Disconnects disconnects = lastDisconnect.get(peer);
-        return disconnects == null ? Optional.<HPVMessageId>empty() : Optional.ofNullable(disconnects.fromPeer);
+        return disconnects == null ? Optional.<GossipMessageId>empty() : Optional.ofNullable(disconnects.fromPeer);
     }
 
     /**
@@ -442,7 +443,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     @VisibleForTesting
-    boolean addPeerToView(InetAddress peer, String datacenter, HPVMessageId messageId)
+    boolean addPeerToView(InetAddress peer, String datacenter, GossipMessageId messageId)
     {
         highestSeenMessageIds.put(peer, messageId);
         endpointStateSubscriber.add(peer, datacenter);
@@ -469,10 +470,10 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 
     private void expungeNode(InetAddress peer, String datacenter, boolean informListeners)
     {
-        HPVMessageId id = idGenerator.generate();
+        GossipMessageId id = idGenerator.generate();
 //        logger.info(String.format("%s removing %s from active view (msgId: %s) due to new node in view", localAddress, peer, id));
 
-        HPVMessageId previousMessageId = highestSeenMessageIds.get(peer);
+        GossipMessageId previousMessageId = highestSeenMessageIds.get(peer);
         Preconditions.checkNotNull(previousMessageId, String.format("%s has no previous message id from peer %s", localAddress, peer));
         Disconnects disconnects = lastDisconnect.get(peer);
         if (disconnects == null)
@@ -632,7 +633,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     void handleNeighborRequest(NeighborRequestMessage message)
     {
         // if the node is already in our active view, go ahead and send an ACCEPT message
-        Optional<HPVMessageId> lastDisconnect = lastDisconnectMsgId(message.sender);
+        Optional<GossipMessageId> lastDisconnect = lastDisconnectMsgId(message.sender);
         if (isPeerInActiveView(message.sender))
         {
             messageSender.send(message.sender, new NeighborResponseMessage(idGenerator.generate(), localAddress, datacenter,
@@ -932,7 +933,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     }
 
     @VisibleForTesting
-    public HPVMessageId getHighestSeenMessageId(InetAddress peer)
+    public GossipMessageId getHighestSeenMessageId(InetAddress peer)
     {
         return highestSeenMessageIds.get(peer);
     }
@@ -1128,14 +1129,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         /**
          * Last disconnect message id sent to a peer.
          */
-        final HPVMessageId fromPeer;
+        final GossipMessageId fromPeer;
 
         /**
          * Last disconnect message id sent to a peer and the last seen message ID from that peer when the DISCONNECT was sent.
          */
-        final Pair<HPVMessageId, HPVMessageId> toPeer;
+        final Pair<GossipMessageId, GossipMessageId> toPeer;
 
-        Disconnects(HPVMessageId fromPeer, Pair<HPVMessageId, HPVMessageId> toPeer)
+        Disconnects(GossipMessageId fromPeer, Pair<GossipMessageId, GossipMessageId> toPeer)
         {
             if (toPeer != null)
             {
@@ -1149,7 +1150,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         /**
          * create a new instance with an updated fromPeer value.
          */
-        Disconnects withNewFromPeerMsgId(HPVMessageId fromMsgId)
+        Disconnects withNewFromPeerMsgId(GossipMessageId fromMsgId)
         {
             return new Disconnects(fromMsgId, toPeer);
         }
@@ -1157,7 +1158,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         /**
          * create a new instance with an updated toPeer value.
          */
-        Disconnects withNewToPeerMsgId(Pair<HPVMessageId, HPVMessageId> toMsgId)
+        Disconnects withNewToPeerMsgId(Pair<GossipMessageId, GossipMessageId> toMsgId)
         {
             return new Disconnects(fromPeer, toMsgId);
         }
@@ -1165,7 +1166,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         /**
          * Test if the parameter message ID is higher than the currently recorded fromPeer value.
          */
-        boolean hasSeenMostRecentFromPeer(HPVMessageId msgId)
+        boolean hasSeenMostRecentFromPeer(GossipMessageId msgId)
         {
             return fromPeer == null || msgId.compareTo(fromPeer) > 0;
         }
@@ -1176,7 +1177,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
          * the {@code messageId}'s epoch is higher (to prove that it bounced). Else, the peer has not received our most
          * recent DISCONNECT.
          */
-        boolean hasSeenMostRecentToPeer(HPVMessageId disconnectMessageId, HPVMessageId messageId)
+        boolean hasSeenMostRecentToPeer(GossipMessageId disconnectMessageId, GossipMessageId messageId)
         {
             if (toPeer == null)
                 return true;

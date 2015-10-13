@@ -4,7 +4,7 @@ import java.net.InetAddress;
 
 import org.apache.cassandra.gossip.MessageSender;
 
-public class SimulationMessageSender implements MessageSender
+public class SimulationMessageSender implements MessageSender<HyParViewMessage>
 {
     private final InetAddress senderAddress;
     private final PennStationDispatcher dispatcher;

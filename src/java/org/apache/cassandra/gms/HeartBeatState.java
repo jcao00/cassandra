@@ -27,7 +27,7 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 /**
  * HeartBeat State associated with any given endpoint.
  */
-class HeartBeatState
+public class HeartBeatState
 {
     public static final IVersionedSerializer<HeartBeatState> serializer = new HeartBeatStateSerializer();
 
@@ -50,7 +50,7 @@ class HeartBeatState
         return generation;
     }
 
-    void updateHeartBeat()
+    public void updateHeartBeat()
     {
         version = VersionGenerator.getNextVersion();
     }
@@ -73,6 +73,16 @@ class HeartBeatState
     public String toString()
     {
         return String.format("HeartBeat: generation = %d, version = %d", generation, version);
+    }
+
+    public int compareTo(HeartBeatState hbs)
+    {
+        if (hbs == null)
+            return 1;
+
+        if (hbs.generation == generation)
+            return version - hbs.version;
+        return generation - hbs.generation;
     }
 }
 

@@ -3,9 +3,11 @@ package org.apache.cassandra.gossip.hyparview;
 import java.net.InetAddress;
 import java.util.Optional;
 
+import org.apache.cassandra.gossip.GossipMessageId;
+
 public abstract class HyParViewMessage
 {
-    public final HPVMessageId messageId;
+    public final GossipMessageId messageId;
 
     /**
      * Address of the peer that is sending/sent this message.
@@ -20,9 +22,9 @@ public abstract class HyParViewMessage
     /**
      * The message id of the last disconnect the sender has received from the recipient.
      */
-    public final Optional<HPVMessageId> lastDisconnect;
+    public final Optional<GossipMessageId> lastDisconnect;
 
-    protected HyParViewMessage(HPVMessageId messageId, InetAddress sender, String datacenter, Optional<HPVMessageId> lastDisconnect)
+    protected HyParViewMessage(GossipMessageId messageId, InetAddress sender, String datacenter, Optional<GossipMessageId> lastDisconnect)
     {
         this.messageId = messageId;
         this.sender = sender;
@@ -65,7 +67,7 @@ public abstract class HyParViewMessage
         return datacenter;
     }
 
-    public HPVMessageId getOriginatorMessageId()
+    public GossipMessageId getOriginatorMessageId()
     {
         return messageId;
     }

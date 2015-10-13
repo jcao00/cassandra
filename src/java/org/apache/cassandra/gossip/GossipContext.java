@@ -52,7 +52,7 @@ public class GossipContext
         if (!enabled)
             return;
         hyparviewService.start(epoch);
-        thicketService.start();
+        thicketService.start(hyparviewService, epoch);
     }
 
     public void shutdown()

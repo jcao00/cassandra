@@ -134,6 +134,11 @@ public class EndpointState
     {
         return "EndpointState: HeartBeatState = " + hbState + ", AppStateMap = " + applicationState;
     }
+
+    public HeartBeatState getHeartbeatSnapshot()
+    {
+        return new HeartBeatState(hbState.getGeneration(), getHeartBeatState().getHeartBeatVersion());
+    }
 }
 
 class EndpointStateSerializer implements IVersionedSerializer<EndpointState>

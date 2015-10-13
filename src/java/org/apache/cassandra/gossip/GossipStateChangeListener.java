@@ -5,10 +5,10 @@ import java.util.EnumSet;
 
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.HeartBeatState;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms.VersionedValue;
-import org.apache.cassandra.gossip.BroadcastService;
-import org.apache.cassandra.gossip.BroadcastServiceClient;
 
 /**
  * Listens to the state changes of the local node and schedules relevant updates for broadcast.
@@ -28,6 +28,7 @@ class GossipStateChangeListener implements IEndpointStateChangeSubscriber, Broad
     private final BroadcastService broadcastService;
 
     private double lastSeverityValue = -1;
+    private HeartBeatState lastBroadcastedState;
 
     public GossipStateChangeListener(InetAddress localAddress, BroadcastService broadcastService)
     {
@@ -51,13 +52,19 @@ class GossipStateChangeListener implements IEndpointStateChangeSubscriber, Broad
         if (!localAddress.equals(endpoint) || !STATES.contains(state))
             return;
 
-        // optimize the SEVERITY broadcasts as the value is updated every second, and we dont't need to flood the cluster
-        // is the value has not changed
+        EndpointState epState = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+        HeartBeatState currentHeartBeat = epState.getHeartbeatSnapshot();
+        if (lastBroadcastedState.compareTo(currentHeartBeat) >= 0)
+            return;
+//        currentHeartBeat.updateHeartBeat();
+
+        // reduce the SEVERITY broadcasts as the value is updated every second, and we dont't need to flood the cluster
+        // if the value has not changed
         if (ApplicationState.SEVERITY == state && Double.parseDouble(value.value) != lastSeverityValue)
             return;
 
-        // TODO:JEB create the payload object
-        broadcastService.broadcast(value.version, );
+        broadcastService.broadcast(epState, this);
+        lastBroadcastedState = epState.getHeartbeatSnapshot();
     }
 
     public void onAlive(InetAddress endpoint, EndpointState state)
@@ -85,8 +92,11 @@ class GossipStateChangeListener implements IEndpointStateChangeSubscriber, Broad
         return CLIENT_NAME;
     }
 
-    public boolean receive(Object messageId, Object payload)
+    public boolean receive(Object payload)
     {
-        return true;
+        //TODO:JEB actaully do some deserialization or something ....
+        InetAddress peer = null;
+        EndpointState broadcastState = (EndpointState)payload;
+        return Gossiper.instance.acceptBroadcast(peer, broadcastState);
     }
 }

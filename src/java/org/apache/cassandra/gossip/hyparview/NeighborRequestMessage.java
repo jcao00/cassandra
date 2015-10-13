@@ -3,6 +3,8 @@ package org.apache.cassandra.gossip.hyparview;
 import java.net.InetAddress;
 import java.util.Optional;
 
+import org.apache.cassandra.gossip.GossipMessageId;
+
 public class NeighborRequestMessage extends HyParViewMessage
 {
     public enum Priority { HIGH, LOW }
@@ -15,8 +17,8 @@ public class NeighborRequestMessage extends HyParViewMessage
      */
     public final int neighborRequestsCount;
 
-    public NeighborRequestMessage(HPVMessageId messgeId, InetAddress sender, String datacenter, Priority priority,
-                                  int neighborRequestsCount, Optional<HPVMessageId> lastDisconnect)
+    public NeighborRequestMessage(GossipMessageId messgeId, InetAddress sender, String datacenter, Priority priority,
+                                  int neighborRequestsCount, Optional<GossipMessageId> lastDisconnect)
     {
         super(messgeId, sender, datacenter, lastDisconnect);
         this.priority = priority;

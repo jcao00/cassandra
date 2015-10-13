@@ -5,6 +5,7 @@ import java.net.InetAddress;
 import java.util.Optional;
 
 import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
@@ -68,7 +69,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
 
     static BaseMessageFields deserializeBaseFields(DataInputPlus in, int version) throws IOException
     {
-        HPVMessageId messageId = deserializeMessageId(in);
+        GossipMessageId messageId = deserializeMessageId(in);
         InetAddress addr = CompactEndpointSerializationHelper.deserialize(in);
         String datacenter = in.readUTF();
         return new BaseMessageFields(messageId, addr, datacenter);
@@ -77,11 +78,11 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
     // because we can't have tuples in java :(
     static class BaseMessageFields
     {
-        final HPVMessageId messgeId;
+        final GossipMessageId messgeId;
         final InetAddress sender;
         final String datacenter;
 
-        private BaseMessageFields(HPVMessageId messgeId, InetAddress sender, String datacenter)
+        private BaseMessageFields(GossipMessageId messgeId, InetAddress sender, String datacenter)
         {
             this.messgeId = messgeId;
             this.sender = sender;
@@ -92,26 +93,26 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
     /*
         methods for serializing the HPVMessageId
      */
-    private static void serialize(HPVMessageId messageId, DataOutputPlus out) throws IOException
+    private static void serialize(GossipMessageId messageId, DataOutputPlus out) throws IOException
     {
         out.writeInt(messageId.getEpoch());
         out.writeInt(messageId.getId());
     }
 
-    private static int serializedSize(HPVMessageId messageId)
+    private static int serializedSize(GossipMessageId messageId)
     {
         return TypeSizes.sizeof(messageId.getEpoch()) + TypeSizes.sizeof(messageId.getId());
     }
 
-    private static HPVMessageId deserializeMessageId(DataInputPlus in) throws IOException
+    private static GossipMessageId deserializeMessageId(DataInputPlus in) throws IOException
     {
-        return new HPVMessageId(in.readInt(), in.readInt());
+        return new GossipMessageId(in.readInt(), in.readInt());
     }
 
     /*
         methods for serializing the optional discconectMessageId field
      */
-    private static void serialize(Optional<HPVMessageId> optionalMessageId, DataOutputPlus out) throws IOException
+    private static void serialize(Optional<GossipMessageId> optionalMessageId, DataOutputPlus out) throws IOException
     {
         // write out an indicator that the disconnect msgId is present
         if (optionalMessageId.isPresent())
@@ -125,7 +126,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         }
     }
 
-    private static int serializedSize(Optional<HPVMessageId> messageId)
+    private static int serializedSize(Optional<GossipMessageId> messageId)
     {
         // byte indicator if there's a last diconnect messageId
         int size = 1;
@@ -134,7 +135,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         return size;
     }
 
-    private static Optional<HPVMessageId> deserializeOptionalMessageId(DataInputPlus in) throws IOException
+    private static Optional<GossipMessageId> deserializeOptionalMessageId(DataInputPlus in) throws IOException
     {
         int disconnectIndicator = in.readByte();
         if (disconnectIndicator == 1)
@@ -184,7 +185,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         public JoinResponseMessage deserialize(DataInputPlus in, int version) throws IOException
         {
             BaseMessageFields fields = HyParViewMessageSender.deserializeBaseFields(in, version);
-            Optional<HPVMessageId> disconnect = HyParViewMessageSender.deserializeOptionalMessageId(in);
+            Optional<GossipMessageId> disconnect = HyParViewMessageSender.deserializeOptionalMessageId(in);
             return new JoinResponseMessage(fields.messgeId, fields.sender, fields.datacenter, disconnect);
         }
     }
@@ -217,7 +218,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         public ForwardJoinMessage deserialize(DataInputPlus in, int version) throws IOException
         {
             BaseMessageFields fields = HyParViewMessageSender.deserializeBaseFields(in, version);
-            HPVMessageId originatorMsgId = HyParViewMessageSender.deserializeMessageId(in);
+            GossipMessageId originatorMsgId = HyParViewMessageSender.deserializeMessageId(in);
             InetAddress originator = CompactEndpointSerializationHelper.deserialize(in);
             String originatorDatacenter = in.readUTF();
             int timeToLove = in.readByte();
@@ -252,7 +253,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         public NeighborRequestMessage deserialize(DataInputPlus in, int version) throws IOException
         {
             BaseMessageFields fields = HyParViewMessageSender.deserializeBaseFields(in, version);
-            Optional<HPVMessageId> disconnect = HyParViewMessageSender.deserializeOptionalMessageId(in);
+            Optional<GossipMessageId> disconnect = HyParViewMessageSender.deserializeOptionalMessageId(in);
             NeighborRequestMessage.Priority priority = NeighborRequestMessage.Priority.values()[in.readByte()];
             int requestCount = in.readByte();
             return new NeighborRequestMessage(fields.messgeId, fields.sender, fields.datacenter, priority, requestCount, disconnect);
@@ -284,7 +285,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         public NeighborResponseMessage deserialize(DataInputPlus in, int version) throws IOException
         {
             BaseMessageFields fields = HyParViewMessageSender.deserializeBaseFields(in, version);
-            Optional<HPVMessageId> disconnect = HyParViewMessageSender.deserializeOptionalMessageId(in);
+            Optional<GossipMessageId> disconnect = HyParViewMessageSender.deserializeOptionalMessageId(in);
             NeighborResponseMessage.Result result = NeighborResponseMessage.Result.values()[in.readByte()];
             int requestCount = in.readByte();
             return new NeighborResponseMessage(fields.messgeId, fields.sender, fields.datacenter, result, requestCount, disconnect);

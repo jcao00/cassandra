@@ -3,7 +3,9 @@ package org.apache.cassandra.gossip.thicket;
 import java.net.InetAddress;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -17,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.concurrent.DebuggableScheduledThreadPoolExecutor;
 import org.apache.cassandra.gossip.BroadcastService;
 import org.apache.cassandra.gossip.BroadcastServiceClient;
+import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
 
@@ -33,7 +36,28 @@ import org.apache.cassandra.gossip.PeerSamplingServiceListener;
  * the active peers if it is not at capacity. The peers in the two sets are largely derived from the view provided by the PeerSamplingService.
  *
  * Messages:
+ * - DATA - encapsulates the broadcast payload to be sent to the peers in the cluster.
+ * - SUMMARY -
+ * - GRAFT -
+ * - GRAFT_RESPONSE -
+ * - PRUNE -
  *
+ *
+ * State machine
+ * A nice way to think about the active and passive peers sets is to consider them like a state machine, wherein each node controls how peers
+ * are allowed into node's (local) peers sets. We can consider a state machine for peers with four states:
+ * - START - The beginning state. Any peers to be added to the thicket views are learned about from the underlying PeerSamplingService,
+ * through either a call to {@link PeerSamplingService#getPeers()} or a neighborUp notification, and then transition directly
+ * to the BACKUP state.
+ * - BACKUP - A peer is stored in the backup peers set, and is sent SUMMARY messages as part of tree repair. A peer can be transitioned
+ * into this state from the ACTIVE state when we receive PRUNE message from the peer. The PRUNE could be due to the peer receiving a
+ * duplicate message, rejecting a GRAFT request due to it's load, and so on.
+ * - ACTIVE - A node is stored in the active peers set, and sends/receives broadcast messages. A peer can be transitioned to the
+ * ACTIVE state when it receives GRAFT or GRAFT_RESPONSE message (sent as part of the SUMMARY tree repair process).
+ * - REMOVED - The peer has been removed both views. This happen when the underlying PeerSamplingService send a neighborDown notification,
+ * or the current node is shutting down.
+ *
+ * The primary
  */
 public class ThicketService implements BroadcastService, PeerSamplingServiceListener
 {
@@ -44,12 +68,15 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     private static final int MESSAGE_ID_RETAIN_COUNT = 8;
 
-    private static final long MESSAGE_ID_RETENTION_TIME = TimeUnit.NANOSECONDS.convert(20, TimeUnit.SECONDS);
+    private static final long MESSAGE_ID_RETENTION_TIME = TimeUnit.NANOSECONDS.convert(40, TimeUnit.SECONDS);
+
+    private static final int MISSING_MESSAGES_TIMER_DELAY_SECONSS = 10;
 
     private final InetAddress localAddress;
     private final ThicketMessageSender messageSender;
     private final ExecutorService executor;
     private final DebuggableScheduledThreadPoolExecutor scheduledTasks;
+    private GossipMessageId.IdGenerator idGenerator;
 
     private boolean executing;
 
@@ -63,7 +90,37 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     private final Map<String, BroadcastServiceClient> clients;
     private ScheduledFuture<?> summarySender;
-    private final Map<InetAddress, LinkedList<TimestampedMessageId>> receivedMessages;
+
+    /**
+     * Collection of the most recently seen message ids. Entries will be published in SUMMARY messages, then moved to the recently
+     * seen collection, and this list will be cleared for next batch of incoming messages.
+     */
+    private final List<TimestampedMessageId> receivedMessages;
+
+    /**
+     * A log of the message ids after they've been published to peers in SUMMARY messages.
+     * We keep them here for a limited time so that we can successfully match against incoming SUMMARY messages that we have indeed
+     * seen the message ids. However, we can't keep the message ids around in memory forever, so we have to expunge them
+     * after some time.
+     */
+    private final List<TimestampedMessageId> messagesLedger;
+
+    /**
+     * Record of message ids that have been reported to this node via SUMMARY messages, but which we have not seen.
+     * (In the thicket paper, this data is referred to as the 'announcements' set.). Missing messages are grouped by the
+     * tree root to which the messages belong (simplified, each message sender is the root of it's own tree), and because
+     * branching is unique per-tree, we need to identify uniquely which tree is broken/partitioned/unhappy.
+     */
+    private final Multimap<InetAddress, TimestampedMessageId> missingMessages;
+
+    // TODO:JEB need a way to determine this size
+    private int fanout;
+
+    /**
+     *
+     * Note: should be logarithmic with the number of nodes in the system.
+     */
+    private int maxLoad;
 
     public ThicketService(InetAddress localAddress, ThicketMessageSender messageSender, ExecutorService executor, DebuggableScheduledThreadPoolExecutor scheduledTasks)
     {
@@ -73,48 +130,44 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         this.scheduledTasks = scheduledTasks;
 
         clients = new HashMap<>();
-        receivedMessages = new HashMap<>();
+        receivedMessages = new LinkedList<>();
+        messagesLedger = new LinkedList<>();
+        missingMessages = HashMultimap.create();
         activePeers = HashMultimap.create();
         backupPeers = new LinkedList<>();
     }
 
-    public void start()
+    public void start(PeerSamplingService peerSamplingService, int epoch)
     {
         if (executing)
             return;
+        idGenerator = new GossipMessageId.IdGenerator(epoch);
+        backupPeers.addAll(peerSamplingService.getPeers());
         executing = true;
         summarySender = scheduledTasks.scheduleWithFixedDelay(new SummarySender(), 10, 1, TimeUnit.SECONDS);
     }
 
-    public void broadcast(Object messageId, Object payload)
+    public void broadcast(Object payload, BroadcastServiceClient client)
     {
-        recordMessageId(localAddress, messageId);
-        broadcast(localAddress, messageId, payload, localAddress);
+        GossipMessageId messageId = idGenerator.generate();
+        receivedMessages.add(new TimestampedMessageId(localAddress, client.getClientName(), messageId, System.nanoTime() + MESSAGE_ID_RETENTION_TIME));
+        if (!activePeers.containsKey(localAddress))
+            // TODO:JEB paper suggests using fanout as number of backup node to put into active view
+            activePeers.putAll(localAddress, backupPeers);
+
+        DataMessage msg = new DataMessage(localAddress, messageId, payload, localAddress, client.getClientName());
+        for (InetAddress peer : activePeers.get(localAddress))
+            messageSender.send(peer, msg);
     }
 
-    void recordMessageId(InetAddress address, Object messageId)
+    /**
+     * Add the message id to the recently seen list, as well as remove it from any missing messages list.
+     */
+    void recordMessage(InetAddress originator, BroadcastServiceClient client, GossipMessageId messageId)
     {
-        LinkedList<TimestampedMessageId> ids = receivedMessages.get(address);
-        if (ids == null)
-        {
-            ids = new LinkedList<>();
-            receivedMessages.put(address, ids);
-        }
-        ids.add(new TimestampedMessageId(messageId, System.nanoTime()));
-    }
-
-    void broadcast(InetAddress sender, Object messageId, Object payload, InetAddress originator)
-    {
-        // TODO:JEB - this is not correct, need to account for if this node already interior somewhere else
-        if (!activePeers.containsKey(originator))
-        {
-            activePeers.putAll(originator, backupPeers);
-        }
-
-        DataMessage msg = new DataMessage(localAddress, messageId, payload, originator);
-        for (InetAddress peer : activePeers.get(originator))
-            if (!peer.equals(sender))
-                messageSender.send(peer, msg);
+        TimestampedMessageId msgId = new TimestampedMessageId(originator, client.getClientName(), messageId, System.nanoTime() + MESSAGE_ID_RETENTION_TIME);
+        receivedMessages.add(msgId);
+        missingMessages.remove(originator, msgId);
     }
 
     public void receiveMessage(ThicketMessage message)
@@ -124,7 +177,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             switch (message.getMessageType())
             {
                 case DATA:      handleData((DataMessage)message); break;
-                case SUMMARY:   handleSummary(message); break;
+                case SUMMARY:   handleSummary((SummaryMessage)message); break;
                 case GRAFT:     handleGraft(message); break;
                 case PRUNE:     handlePrune(message); break;
                 default:
@@ -137,26 +190,62 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
     }
 
-    private void handleData(DataMessage message)
+    void handleData(DataMessage message)
     {
-        // forward along to our peers
-        broadcast(message.sender, message.messageId, message.payload, message.originator);
+        BroadcastServiceClient client = clients.get(message.client);
+        if (client == null)
+        {
+            logger.info("recieved broadcast message for unknown client component: " + message.client);
+            return;
+        }
 
-        // TODO:JEB now process message
+        if (client.receive(message.payload))
+        {
+            //broadcast(message.sender, message.payload, message.originator, client);
+        }
+        else
+        {
+            // TODO:JEB we've seen the messageId already
+
+        }
+    }
+
+    /**
+     * Process an incoming SUMMARY message from a peer. The goal here is to ensure the tree is healthy (no broken branches,
+     * entire tree is spanned), *not* data convergence. Data convergence can be piggy-backed here for convenience,
+     * or via anti-entropy, but that's not the primary purpose of the SUMMARY flow.
+     */
+    void handleSummary(SummaryMessage msg)
+    {
+        Multimap<InetAddress, TimestampedMessageId> missingMessages = HashMultimap.create();
+        for (TimestampedMessageId message : msg.receivedMessages)
+        {
+            // TODO:JEB optimize these data structures for fast lookups (lists will iterate the whole enchillada)
+            if (!receivedMessages.contains(message) || !messagesLedger.contains(message))
+            {
+                // TODO:JEB add in SUMMARY sender's addr here so we can GRAFT to that node later
+                missingMessages.put(message.originator, message);
+            }
+        }
+
+        // TODO:JEB do we want to send a response back to the SUMMARY sender?
+
+        if (missingMessages.isEmpty())
+            return;
+
+        // "store missing message ids in the 'announcements' field"
+        this.missingMessages.putAll(missingMessages);
+
+        // "for each tree t where a message is missing, start a repair timer"
+        scheduledTasks.schedule(new MissingMessagesTimer(missingMessages), MISSING_MESSAGES_TIMER_DELAY_SECONSS, TimeUnit.SECONDS);
+    }
+
+    void handleGraft(ThicketMessage message)
+    {
 
     }
 
-    private void handleSummary(ThicketMessage message)
-    {
-
-    }
-
-    private void handleGraft(ThicketMessage message)
-    {
-
-    }
-
-    private void handlePrune(ThicketMessage message)
+    void handlePrune(ThicketMessage message)
     {
 
     }
@@ -169,11 +258,27 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         if (!executing)
             return;
 
-        SummaryMessage message = new SummaryMessage(localAddress);
-        // TODO:JEB add message IDs - iterate through
+        SummaryMessage message = new SummaryMessage(localAddress, idGenerator.generate(), receivedMessages);
 
         for (InetAddress peer : backupPeers)
             messageSender.send(peer, message);
+
+        pruneMessageLedger(messagesLedger);
+        messagesLedger.addAll(receivedMessages);
+        receivedMessages.clear();
+    }
+
+    void pruneMessageLedger(List<TimestampedMessageId> messagesLedger)
+    {
+        // TODO:JEB perhaps we should bound the number of messages in the ledger, as well
+        //prune the message ledger - since this class is single threaded, we can assume the messages are in arrival timestamp order
+        final long now = System.nanoTime();
+        for (Iterator<TimestampedMessageId> iter = messagesLedger.iterator(); iter.hasNext(); )
+        {
+            if (iter.next().expirationTime >= now)
+                break;
+            iter.remove();
+        }
     }
 
     public void register(BroadcastServiceClient client)
@@ -186,6 +291,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         if (!executing)
             return;
         executing = false;
+        summarySender.cancel(true);
         scheduledTasks.shutdown();
     }
 
@@ -206,6 +312,59 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         backupPeers.remove(peer);
     }
 
+    void checkMissingMessages(Multimap<InetAddress, TimestampedMessageId> reportedMissing)
+    {
+        // target address {key} to which we want to add current node for the given tree roots {values}.
+        // creating this structure to optimize the GRAFT message count we send
+        Multimap<InetAddress, InetAddress> graftTargets = null;
+        for (Map.Entry<InetAddress, Collection<TimestampedMessageId>> tree : reportedMissing.asMap().entrySet())
+        {
+            Collection<TimestampedMessageId> missingTreeMessages = missingMessages.get(tree.getKey());
+
+            // we've received all the outstanding messages
+            if (missingTreeMessages.isEmpty())
+                continue;
+
+            // check to see if the reported missing have been received - other peers could have sent us SUMAMRY messages
+            // with either older or newer message ids
+            Collection<TimestampedMessageId> msgs = tree.getValue();
+            for (Iterator<TimestampedMessageId> iter = msgs.iterator(); iter.hasNext(); )
+            {
+                if (missingTreeMessages.contains(iter.next()))
+                    iter.remove();
+            }
+
+            // we have received all of the outstanding messages this event was interested in
+            if (msgs.isEmpty())
+                continue;
+
+            if (graftTargets == null)
+                graftTargets = HashMultimap.create();
+            // TODO:JEB select the target for the GRAFT message (rather than hacking in 'null')
+            // should also add into the calculation of loadEstimate for further iterations
+            graftTargets.put(null, tree.getKey());
+
+            // TODO:JEB we've determined we want to graft, so clear out the missing messages field for the tree root
+            // so no other (currently scheduled) timer goes off and tries to GRAFT for the same root
+            missingMessages.removeAll(tree.getKey());
+
+
+            // GRAFT_RESPONSE - sends along update for data converegnce (possibly), but because we know we'll be getting
+            // future updates, allows us to invalidate/ignore any message ids received between the time we send the GRAFT request
+            // and the time we recieved the the GRAFT_RESPONSE. (It would be great to send the outstanding missing message ids
+            // in the GRAFT req, and have *some* data come back in the response.)
+
+        }
+
+        if (graftTargets == null)
+            return;
+
+        for (Map.Entry<InetAddress, Collection<InetAddress>> entry : graftTargets.asMap().entrySet())
+        {
+            messageSender.send(entry.getKey(), new GraftMessage(idGenerator.generate(), entry.getValue()));
+        }
+    }
+
     private class SummarySender implements Runnable
     {
         public void run()
@@ -214,13 +373,35 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
     }
 
-    private class TimestampedMessageId
+    private class MissingMessagesTimer implements Runnable
     {
-        final Object messageId;
+        private final Multimap<InetAddress, TimestampedMessageId> missingMessages;
+
+        public MissingMessagesTimer(Multimap<InetAddress, TimestampedMessageId> missingMessages)
+        {
+            this.missingMessages = missingMessages;
+        }
+
+        public void run()
+        {
+            executor.execute(ThicketService.this::checkMissingMessages);
+        }
+    }
+
+    /**
+     * A simple struct to capture metadata about recently received messages from peers.
+     */
+    class TimestampedMessageId
+    {
+        final InetAddress originator;
+        final String clientName;
+        final GossipMessageId messageId;
         final long expirationTime;
 
-        private TimestampedMessageId(Object messageId, long expirationTime)
+        private TimestampedMessageId(InetAddress originator, String clientName, GossipMessageId messageId, long expirationTime)
         {
+            this.originator = originator;
+            this.clientName = clientName;
             this.messageId = messageId;
             this.expirationTime = expirationTime;
         }
