@@ -1,13 +1,17 @@
 package org.apache.cassandra.gossip.thicket;
 
+import java.net.InetAddress;
+
 import org.apache.cassandra.gossip.GossipMessageId;
 
 public abstract class ThicketMessage
 {
-    private final GossipMessageId messageId;
+    public final InetAddress sender;
+    public final GossipMessageId messageId;
 
-    protected ThicketMessage(GossipMessageId messageId)
+    protected ThicketMessage(InetAddress sender, GossipMessageId messageId)
     {
+        this.sender = sender;
         this.messageId = messageId;
     }
 

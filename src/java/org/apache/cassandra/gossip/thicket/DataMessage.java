@@ -6,17 +6,15 @@ import org.apache.cassandra.gossip.GossipMessageId;
 
 public class DataMessage extends ThicketMessage
 {
+    public final InetAddress treeRoot;
     public final Object payload;
-    public final InetAddress sender;
-    public final InetAddress originator;
     public final String client;
 
-    public DataMessage(InetAddress sender, GossipMessageId messageId, Object payload, InetAddress originator, String client)
+    public DataMessage(InetAddress sender, GossipMessageId messageId, InetAddress treeRoot, Object payload, String client)
     {
-        super(messageId);
+        super(sender, messageId);
+        this.treeRoot = treeRoot;
         this.payload = payload;
-        this.sender = sender;
-        this.originator = originator;
         this.client = client;
     }
 
