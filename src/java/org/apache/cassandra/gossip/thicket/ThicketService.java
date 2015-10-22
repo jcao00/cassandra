@@ -143,6 +143,12 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     private final Multimap<InetAddress, LoadEstimate> loadEstimates;
 
+    /**
+     * Timestamp at which current thicket session started. This is necessary to avoid unnecessary tree thrashing (via GRAFT/PRUNE messages)
+     * due to the arrival SUMMARYs that contain message ids tha never could have been received.
+     */
+    private long startTimeNanos;
+
     public ThicketService(InetAddress localAddress, MessageSender messageSender, ExecutorService executor, ScheduledExecutorService scheduledTasks)
     {
         this.localAddress = localAddress;
@@ -160,6 +166,12 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     public void start(PeerSamplingService peerSamplingService, int epoch)
+    {
+        start(peerSamplingService, epoch, System.nanoTime());
+    }
+
+    @VisibleForTesting
+    void start(PeerSamplingService peerSamplingService, int epoch, long startTimeNanos)
     {
         if (executing)
             return;
@@ -222,6 +234,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             backup.remove(include.get());
             maxActive--;
         }
+
+        // TODO:JEB when building a branch (not the tree root), need to check load of peer
 
         Collections.shuffle(backup);
         while (active.size() < maxActive && !backup.isEmpty())
@@ -336,15 +350,24 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      * Process an incoming SUMMARY message from a peer. The goal here is to ensure the tree is healthy (no broken branches,
      * entire tree is spanned), *not* data convergence. Data convergence can be piggy-backed here for convenience,
      * or via anti-entropy, but that's not the primary purpose of the SUMMARY flow.
+     *
+     * Also, if the current thicket session has just started (either due to process launch or enabling gossip via nodetool)
+     * there's little to no chance we've seen any message ids that might be contained in the SUMMARY. To alleviate
+     * any tree thrashing that might occur due to subsequent GRAFT/PRUNE actions, just ignore any SUMMARY messages for a brief
+     * time after session start so we can catch up on the thicket traffic.
      */
     void handleSummary(SummaryMessage msg)
     {
         // TODO:JEB do we want to send a response back to the SUMMARY sender?
 
+        // might not need a window as large as MESSAGE_ID_RETENTION_TIME, but it seems reasonable enough
+        if (startTimeNanos + MESSAGE_ID_RETENTION_TIME > System.nanoTime())
+            return;
+
         recordLoadEstimates(loadEstimates, msg.sender, msg.estimates);
 
         Multimap<InetAddress, GossipMessageId> reportedMissing = msg.receivedMessages;
-        filterMissingMessages(reportedMissing, this.receivedMessages, messagesLedger);
+        filterMissingMessages(reportedMissing, mergeSeenMessages());
 
         if (reportedMissing.isEmpty())
             return;
@@ -358,27 +381,37 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         localEstimates.putAll(peer, estimates);
     }
 
+    private Multimap<InetAddress, GossipMessageId> mergeSeenMessages()
+    {
+        Multimap<InetAddress, GossipMessageId> seenMessagesPerTreeRoot = HashMultimap.create();
+
+        for (TimestampedMessageId msgId : receivedMessages)
+            seenMessagesPerTreeRoot.put(msgId.treeRoot, msgId.messageId);
+
+        for (TimestampedMessageId msgId : messagesLedger)
+            seenMessagesPerTreeRoot.put(msgId.treeRoot, msgId.messageId);
+
+        return seenMessagesPerTreeRoot;
+    }
+
     /**
      * Filter out messages the local node has already recieved.
      */
     @VisibleForTesting
-    void filterMissingMessages(Multimap<InetAddress, GossipMessageId> summary,
-                               List<TimestampedMessageId> receivedMessages,
-                               List<TimestampedMessageId> messagesLedger)
+    void filterMissingMessages(Multimap<InetAddress, GossipMessageId> summary, Multimap<InetAddress, GossipMessageId> seenMessagesPerTreeRoot)
     {
         // TODO:JEB test me
+
+        // probably reasonable to assume we've seen our own messages
+        summary.removeAll(localAddress);
+
         for (Map.Entry<InetAddress, Collection<GossipMessageId>> entry : summary.asMap().entrySet())
         {
             Collection<GossipMessageId> ids = entry.getValue();
-            for (Iterator<GossipMessageId> iter = ids.iterator(); iter.hasNext(); )
-            {
-                GossipMessageId id = iter.next();
-                // TODO:JEB optimize these data structures for fast lookups (lists will iterate the whole enchillada)
+            ids.removeAll(seenMessagesPerTreeRoot.get(entry.getKey()));
 
-                // TODO:JEB this is wrong - i have a GossipMsgId but the target collections contain TimestampMsgId
-                if (receivedMessages.contains(id) || messagesLedger.contains(id))
-                    iter.remove();
-            }
+            if (ids.isEmpty())
+                summary.removeAll(entry.getKey());
         }
     }
 

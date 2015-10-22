@@ -17,6 +17,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -53,8 +55,13 @@ public class ThicketServiceTest
 
     private ThicketService createService(int peersCount)
     {
+        return createService(peersCount, System.nanoTime());
+    }
+
+    private ThicketService createService(int peersCount, long startTime)
+    {
         ThicketService thicket = new ThicketService(localNodeAddr, new TestMessageSender(), executorService, scheduler);
-        thicket.start(new SimplePeerSamplingService(peersCount), 42);
+        thicket.start(new SimplePeerSamplingService(peersCount), 42, startTime);
         return thicket;
     }
 
@@ -189,6 +196,46 @@ public class ThicketServiceTest
         Assert.assertEquals(1, missingSummary.messages.size());
     }
 
+    @Test
+    public void filterMissingMessages_Simple() throws UnknownHostException
+    {
+        ThicketService thicket = createService(1);
+
+        InetAddress treeRoot = InetAddress.getByName("127.97.21.1");
+        GossipMessageId messageId = idGenerator.generate();
+
+        Multimap<InetAddress, GossipMessageId> summary = HashMultimap.create();
+        summary.put(treeRoot, messageId);
+
+        Multimap<InetAddress, GossipMessageId> seen = HashMultimap.create();
+        seen.put(treeRoot, messageId);
+
+        Assert.assertFalse(summary.isEmpty());
+        thicket.filterMissingMessages(summary, seen);
+        Assert.assertTrue(summary.isEmpty());
+    }
+
+    @Test
+    public void filterMissingMessages_MultipleIds() throws UnknownHostException
+    {
+        ThicketService thicket = createService(1);
+
+        InetAddress treeRoot = InetAddress.getByName("127.97.21.1");
+        GossipMessageId messageId = idGenerator.generate();
+
+        Multimap<InetAddress, GossipMessageId> summary = HashMultimap.create();
+        summary.put(treeRoot, messageId);
+        summary.put(treeRoot, idGenerator.generate());
+
+        Multimap<InetAddress, GossipMessageId> seen = HashMultimap.create();
+        seen.put(treeRoot, messageId);
+
+        Assert.assertFalse(summary.isEmpty());
+        thicket.filterMissingMessages(summary, seen);
+        Assert.assertFalse(summary.isEmpty());
+        Collection<GossipMessageId> gossipMessageIds = summary.get(treeRoot);
+        Assert.assertEquals(1, gossipMessageIds.size());
+    }
 
 
 
