@@ -400,8 +400,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     @VisibleForTesting
     void filterMissingMessages(Multimap<InetAddress, GossipMessageId> summary, Multimap<InetAddress, GossipMessageId> seenMessagesPerTreeRoot)
     {
-        // TODO:JEB test me
-
         // probably reasonable to assume we've seen our own messages
         summary.removeAll(localAddress);
 
@@ -415,64 +413,76 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
     }
 
+    /**
+     * Add missing message ids to existing {@code missingMessages} instances (indexed by tree-root), and if any
+     * {@code reportedMissing} entries remain, add new structs to the list.
+     */
     @VisibleForTesting
     void addToMissingMessages(InetAddress sender, List<MissingMessges> missingMessages, Multimap<InetAddress, GossipMessageId> reportedMissing)
     {
-        //TODO:JEB test me
         for (MissingMessges missingMessges : missingMessages)
         {
             for (Map.Entry<InetAddress, MissingSummary> entry : missingMessges.trees.entrySet())
             {
-                Collection<GossipMessageId> ids = reportedMissing.get(entry.getKey());
+                Collection<GossipMessageId> ids = reportedMissing.removeAll(entry.getKey());
                 if (ids != null && !ids.isEmpty())
                     entry.getValue().add(sender, ids);
             }
         }
+
+        MissingMessges msgs = new MissingMessges(System.nanoTime() + MESSAGE_ID_RETENTION_TIME);
+        for (Map.Entry<InetAddress, Collection<GossipMessageId>> entry : reportedMissing.asMap().entrySet())
+        {
+            MissingSummary missingSummary = new MissingSummary();
+            missingSummary.add(sender, entry.getValue());
+            msgs.trees.put(entry.getKey(), missingSummary);
+        }
+        missingMessages.add(msgs);
     }
 
     void handleGraft(GraftMessage message)
     {
-        //TODO:JEB test me
         recordLoadEstimates(loadEstimates, message.sender, message.estimates);
 
         if (shouldAcceptGraft(message))
-        {
-            for (InetAddress treeRoot : message.treeRoots)
-            {
-                BroadcastPeers peers = broadcastPeers.get(treeRoot);
-                if (peers == null)
-                {
-                    // TODO:JEB should we do more here?!?!? like add backup peers? or just bail out?!?!?
-
-                    // It's unlikely we don't have an entry for the treee root (because we actaully told the peer
-                    // about missing messages *from* that tree root). but just to be safe
-                    peers = new BroadcastPeers(new LinkedList<InetAddress>() {{ add(message.sender);  }}, new LinkedList<>());
-                    broadcastPeers.put(treeRoot, peers);
-                } else {
-                    peers.addToActive(message.sender);
-                }
-            }
-        }
+            applyGraft(broadcastPeers, message.treeRoots, message.sender);
         else
-        {
             messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, loadEstimates.get(localAddress)));
-        }
     }
 
-    private boolean shouldAcceptGraft(GraftMessage message)
+    @VisibleForTesting
+    boolean shouldAcceptGraft(GraftMessage message)
     {
         // TODO:JEB test me
         // TODO:JEB base on loadEst
         return true;
     }
 
+    @VisibleForTesting
+    void applyGraft(Map<InetAddress, BroadcastPeers> existingPeers, Collection<InetAddress> treeRoots, InetAddress sender)
+    {
+        for (InetAddress treeRoot : treeRoots)
+        {
+            BroadcastPeers peers = existingPeers.get(treeRoot);
+            if (peers == null || peers.activePeers.isEmpty())
+            {
+                // It's highly unlikely we don't have an entry for the tree root (because we actaully told the peer
+                // about missing messages *from* that tree root), but just to be safe recreate the peers set
+                existingPeers.put(treeRoot, selectBroadcastPeers(backupPeers, Optional.of(sender), deriveFanout()));
+            }
+            else
+            {
+                peers.addToActive(sender);
+            }
+        }
+    }
+
     /**
-     * When a PRUNE message is received, remove it from the active for the tree referenced in the message. Then,
+     * When a PRUNE message is received, remove it from the active peers for the tree-root in the message. Then,
      * add it to the backup peers.
      */
     void handlePrune(PruneMessage message)
     {
-        // TODO:JEB test me
         recordLoadEstimates(loadEstimates, message.sender, message.estimates);
 
         for (InetAddress treeRoot : message.treeRoots)
@@ -486,8 +496,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     /**
      * Send a SUMMARY message containing all received message IDs to all peers in the backup set, assumming, of course, we have any
-     * recently received messages. Further, if this node is at or above it's max load threshold, it cannot help out other nodes with tree repair,
-     * and thus no SUMMARY message is sent out.
+     * recently received messages. Further, if this node is at or above it's max load threshold, it cannot help out other nodes
+     * with tree repair, and thus no SUMMARY message is sent out.
      */
     void sendSummary()
     {
@@ -512,8 +522,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     private Multimap<InetAddress, GossipMessageId> convert(List<TimestampedMessageId> receivedMessages)
     {
-        //TODO:JEB test me
-
         Multimap<InetAddress, GossipMessageId> result = HashMultimap.create();
         for (TimestampedMessageId msgId : receivedMessages)
             result.put(msgId.treeRoot, msgId.messageId);
@@ -547,9 +555,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     public void neighborDown(InetAddress peer, String datacenter)
     {
-        //TODO:JEB test me
         broadcastPeers.remove(peer);
-        // TODO:JEB is there a better way to remove the peer from the values in the map???
         for (BroadcastPeers peers : broadcastPeers.values())
             peers.remove(peer);
         backupPeers.remove(peer);
@@ -612,6 +618,12 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     InetAddress getLocalAddress()
     {
         return localAddress;
+    }
+
+    @VisibleForTesting
+    Collection<InetAddress> getBackupPeers()
+    {
+        return backupPeers;
     }
 
     /**
@@ -704,6 +716,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             //TODO:JEB test me
             if (!activePeers.contains(peer))
                 activePeers.add(peer);
+            backupPeers.remove(peer);
         }
         
         public void moveToBackup(InetAddress peer)

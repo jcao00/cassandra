@@ -2,10 +2,13 @@ package org.apache.cassandra.gossip.thicket;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.Callable;
@@ -237,8 +240,90 @@ public class ThicketServiceTest
         Assert.assertEquals(1, gossipMessageIds.size());
     }
 
+    @Test
+    public void addToMissingMessages_EmptyExisting() throws UnknownHostException
+    {
+        ThicketService thicket = createService(1);
+        InetAddress treeRoot = InetAddress.getByName("127.97.21.1");
+        GossipMessageId messageId = idGenerator.generate();
 
+        Multimap<InetAddress, GossipMessageId> reportedMissing = HashMultimap.create();
+        reportedMissing.put(treeRoot, messageId);
 
+        InetAddress sender = InetAddress.getByName("127.87.12.221");
+        List<ThicketService.MissingMessges> missing = new LinkedList<>();
+        thicket.addToMissingMessages(sender, missing, reportedMissing);
+
+        Assert.assertFalse(missing.isEmpty());
+        ThicketService.MissingMessges missingMessges = missing.get(0);
+        ThicketService.MissingSummary missingSummary = missingMessges.trees.get(treeRoot);
+        Assert.assertNotNull(missingSummary);
+        Assert.assertTrue(missingSummary.messages.contains(messageId));
+        Assert.assertTrue(missingSummary.peers.contains(sender));
+    }
+
+    @Test
+    public void addToMissingMessages_AddToExisting() throws UnknownHostException
+    {
+        ThicketService thicket = createService(1);
+        InetAddress treeRoot = InetAddress.getByName("127.97.21.1");
+        GossipMessageId messageId = idGenerator.generate();
+        GossipMessageId messageId2 = idGenerator.generate();
+
+        Multimap<InetAddress, GossipMessageId> reportedMissing = HashMultimap.create();
+        reportedMissing.put(treeRoot, messageId);
+        reportedMissing.put(treeRoot, messageId2);
+
+        InetAddress sender = InetAddress.getByName("127.87.12.221");
+        List<ThicketService.MissingMessges> existingMissing = new LinkedList<>();
+        ThicketService.MissingMessges mm = new ThicketService.MissingMessges(42);
+        ThicketService.MissingSummary sm = new ThicketService.MissingSummary();
+        sm.add(sender, Collections.singletonList(messageId));
+        mm.trees.put(treeRoot, sm);
+
+        thicket.addToMissingMessages(sender, existingMissing, reportedMissing);
+
+        Assert.assertFalse(existingMissing.isEmpty());
+        ThicketService.MissingMessges missingMessges = existingMissing.get(0);
+        ThicketService.MissingSummary missingSummary = missingMessges.trees.get(treeRoot);
+        Assert.assertNotNull(missingSummary);
+        Assert.assertTrue(missingSummary.messages.contains(messageId));
+        Assert.assertTrue(missingSummary.messages.contains(messageId2));
+        Assert.assertTrue(missingSummary.peers.contains(sender));
+    }
+
+    @Test
+    public void applyGraft_AddToExistingEntry() throws UnknownHostException
+    {
+        ThicketService thicket = createService(4);
+
+        InetAddress treeRoot = InetAddress.getByName("127.87.12.91");
+        Map<InetAddress, ThicketService.BroadcastPeers> existingPeers = new HashMap<>();
+        ThicketService.BroadcastPeers peers = new ThicketService.BroadcastPeers(new ArrayList<InetAddress>(){{ add(InetAddress.getByName("128.54.132.1")); }},
+                                                                                new LinkedList<>(thicket.getBackupPeers()));
+        existingPeers.put(treeRoot, peers);
+
+        InetAddress sender = InetAddress.getByName("127.87.12.221");
+        thicket.applyGraft(existingPeers, Collections.singletonList(treeRoot), sender);
+
+        ThicketService.BroadcastPeers broadcastPeers = existingPeers.get(treeRoot);
+        Assert.assertEquals(2, broadcastPeers.activePeers.size());
+        Assert.assertTrue(broadcastPeers.activePeers.contains(sender));
+    }
+
+    @Test
+    public void applyGraft_NewEntry() throws UnknownHostException
+    {
+        ThicketService thicket = createService(4);
+
+        InetAddress treeRoot = InetAddress.getByName("127.87.12.91");
+        Map<InetAddress, ThicketService.BroadcastPeers> existingPeers = new HashMap<>();
+        InetAddress sender = InetAddress.getByName("127.87.12.221");
+        thicket.applyGraft(existingPeers, Collections.singletonList(treeRoot), sender);
+
+        ThicketService.BroadcastPeers broadcastPeers = existingPeers.get(treeRoot);
+        Assert.assertTrue(broadcastPeers.activePeers.contains(sender));
+    }
 
 
 
