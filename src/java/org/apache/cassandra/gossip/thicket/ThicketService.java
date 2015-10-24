@@ -10,6 +10,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
@@ -19,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
+import org.apache.commons.lang3.mutable.MutableInt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -199,6 +201,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         missingMessages.clear();
         receivedMessages.clear();
         messagesLedger.clear();
+        loadEstimates.clear();
     }
 
     public void broadcast(Object payload, BroadcastServiceClient client)
@@ -444,14 +447,14 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     {
         recordLoadEstimates(loadEstimates, message.sender, message.estimates);
 
-        if (shouldAcceptGraft(message))
+        if (isOverMaxLoad())
             applyGraft(broadcastPeers, message.treeRoots, message.sender);
         else
             messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, loadEstimates.get(localAddress)));
     }
 
     @VisibleForTesting
-    boolean shouldAcceptGraft(GraftMessage message)
+    boolean isOverMaxLoad()
     {
         // TODO:JEB test me
         // TODO:JEB base on loadEst
@@ -495,29 +498,41 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     /**
-     * Send a SUMMARY message containing all received message IDs to all peers in the backup set, assumming, of course, we have any
+     * Send a SUMMARY message containing all received message IDs to peers in the backup set, assumming, of course, we have any
      * recently received messages. Further, if this node is at or above it's max load threshold, it cannot help out other nodes
      * with tree repair, and thus no SUMMARY message is sent out.
+     *
+     * In the Thicket paper, SUMMARY messages are sent to all nodes in the backup peers set. However, we treat the backup peers
+     * differently from the paper (nodes are reused across tree-roots), and so we don't have a clean, easy to use set of peers.
      */
     void sendSummary()
     {
         //TODO:JEB test me
 
-        if (!executing || receivedMessages.isEmpty())
+        if (!executing || receivedMessages.isEmpty() || isOverMaxLoad())
             return;
 
-        // TODO:JEB do not send SUMMARY if we're over the maxLoad threshold
-
-        // TODO:JEB this function needs a refresher - since we're not keeping a 'pure' notion of backup peers (like the paper), we should
-        // be smart about which peers we send a SUMMARY to (to not overwhelm peers)
-
         SummaryMessage message = new SummaryMessage(localAddress, idGenerator.generate(), convert(receivedMessages), loadEstimates.get(localAddress));
-        for (InetAddress peer : backupPeers)
+
+        // TODO:JEB since we're not keeping a 'pure' notion of backup peers (unlike what's described in the paper),
+        // we should be smart about which peers we send a SUMMARY to (to not overwhelm peers)
+
+        // but first, which node do we really send a SUMMARY message to? everything in backup peers?
+        for (InetAddress peer : determineSummaryTargets())
             messageSender.send(peer, message);
 
         pruneMessageLedger(messagesLedger);
         messagesLedger.addAll(receivedMessages);
         receivedMessages.clear();
+    }
+
+    private List<InetAddress> determineSummaryTargets()
+    {
+        List<InetAddress> targets = new LinkedList<>(backupPeers);
+        Collections.shuffle(targets);
+        int maxSize = new Random().nextInt(targets.size());
+
+        return targets.subList(0, maxSize);
     }
 
     private Multimap<InetAddress, GossipMessageId> convert(List<TimestampedMessageId> receivedMessages)
@@ -559,6 +574,13 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         for (BroadcastPeers peers : broadcastPeers.values())
             peers.remove(peer);
         backupPeers.remove(peer);
+
+        for (MissingMessges missingMessage : missingMessages)
+        {
+            if (missingMessage.trees.remove(peer) != null)
+                break;
+        }
+        loadEstimates.removeAll(peer);
     }
 
     void checkMissingMessages()
