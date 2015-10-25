@@ -58,13 +58,8 @@ public class ThicketServiceTest
 
     private ThicketService createService(int peersCount)
     {
-        return createService(peersCount, System.nanoTime());
-    }
-
-    private ThicketService createService(int peersCount, long startTime)
-    {
         ThicketService thicket = new ThicketService(localNodeAddr, new TestMessageSender(), executorService, scheduler);
-        thicket.start(new SimplePeerSamplingService(peersCount), 42, startTime);
+        thicket.start(new SimplePeerSamplingService(peersCount), 42);
         return thicket;
     }
 
@@ -72,7 +67,7 @@ public class ThicketServiceTest
     public void selectBroadcastPeers_Empty()
     {
         ThicketService thicket = createService(0);
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBroadcastPeers(Collections.emptyList(), Optional.<InetAddress>empty(), 5);
+        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(Collections.emptyList(), Optional.<InetAddress>empty(), 5);
         Assert.assertTrue(broadcastPeers.activePeers.isEmpty());
         Assert.assertTrue(broadcastPeers.backupPeers.isEmpty());
     }
@@ -86,7 +81,7 @@ public class ThicketServiceTest
         for (int i = 0; i < (maxSize - 2); i ++)
             peers.add(InetAddress.getByName("127.0.1." + i));
 
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBroadcastPeers(peers, Optional.of(InetAddress.getByName("127.0.1.1")), maxSize);
+        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(InetAddress.getByName("127.0.1.1")), maxSize);
         Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
         Assert.assertTrue(broadcastPeers.backupPeers.isEmpty());
     }
@@ -100,7 +95,7 @@ public class ThicketServiceTest
         for (int i = 0; i < (maxSize - 2); i ++)
             peers.add(InetAddress.getByName("127.0.1." + i));
 
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
+        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
         Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
         Assert.assertTrue(broadcastPeers.backupPeers.isEmpty());
     }
@@ -114,7 +109,7 @@ public class ThicketServiceTest
         for (int i = 0; i < (maxSize + 2); i ++)
             peers.add(InetAddress.getByName("127.0.1." + i));
 
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
+        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
         Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
         Assert.assertFalse(broadcastPeers.backupPeers.isEmpty());
         Assert.assertTrue(Collections.disjoint(broadcastPeers.activePeers, broadcastPeers.backupPeers));
@@ -129,7 +124,7 @@ public class ThicketServiceTest
         for (int i = 0; i < (maxSize + 2); i ++)
             peers.add(InetAddress.getByName("127.0.1." + i));
 
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
+        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
         Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
         Assert.assertFalse(broadcastPeers.backupPeers.isEmpty());
         Assert.assertTrue(Collections.disjoint(broadcastPeers.activePeers, broadcastPeers.backupPeers));
