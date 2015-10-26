@@ -202,8 +202,27 @@ public class ThicketServiceTest
     }
 
     @Test
-    public void selectBranchBroadcastPeers() throws UnknownHostException
+    public void selectBranchBroadcastPeers_NoBackupPeers() throws UnknownHostException
     {
+        ThicketService thicket = createService(0);
+        InetAddress upstream = InetAddress.getByName("127.0.0.233");
+        Collection<InetAddress> broadcastPeers = thicket.selectBranchBroadcastPeers(upstream, 2);
+        Assert.assertEquals(1, broadcastPeers.size());
+        Assert.assertTrue(broadcastPeers.contains(upstream));
+        Assert.assertFalse(thicket.getBackupPeers().contains(upstream));
+        Assert.assertTrue(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
+    }
+
+    @Test
+    public void selectBranchBroadcastPeers_InBackupPeers() throws UnknownHostException
+    {
+        ThicketService thicket = createService(3);
+        InetAddress upstream = thicket.getBackupPeers().iterator().next();
+        Collection<InetAddress> broadcastPeers = thicket.selectBranchBroadcastPeers(upstream, 2);
+        Assert.assertEquals(2, broadcastPeers.size());
+        Assert.assertTrue(broadcastPeers.contains(upstream));
+        Assert.assertFalse(thicket.getBackupPeers().contains(upstream));
+        Assert.assertTrue(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
     }
 
 

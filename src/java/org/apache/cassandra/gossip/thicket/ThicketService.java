@@ -29,6 +29,7 @@ import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
 
+//TODO:JEB add more top-level documentation!!!!!!
 /**
  * An implementation of <a href="http://asc.di.fct.unl.pt/~jleitao/pdf/srds10-mario.pdf">
  * Thicket: A Protocol for Maintaining Multiple Trees in a P2P Overlay</a>.
@@ -382,10 +383,9 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     @VisibleForTesting
     Collection<InetAddress> selectBranchBroadcastPeers(InetAddress upstreamPeer, int maxActive)
     {
-        //TODO:JEB test me
         LinkedList<InetAddress> active = new LinkedList<>();
         active.add(upstreamPeer);
-        maxActive--;
+        backupPeers.remove(upstreamPeer);
 
         // copy the peers into a LinkedList so we can shuffle and remove easily
         LinkedList<InetAddress> peersList = new LinkedList<>(backupPeers);
@@ -402,7 +402,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     /**
-     * INvoked periodically, this will send a SUMMARY message containing all received message IDs to peers in the backup set,
+     * Invoked periodically, this will send a SUMMARY message containing all received message IDs to peers in the backup set,
      * assumming, of course, we have any recently received messages. Further, if this node is at or above it's max load threshold,
      * it cannot help out other nodes with tree repair, and thus no SUMMARY message is sent out.
      *
