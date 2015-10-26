@@ -8,7 +8,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.Callable;
@@ -32,6 +31,7 @@ import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
+import org.apache.pig.builtin.MAX;
 
 public class ThicketServiceTest
 {
@@ -64,70 +64,32 @@ public class ThicketServiceTest
     }
 
     @Test
-    public void selectBroadcastPeers_Empty()
+    public void selectRootBroadcastPeers_Empty()
     {
         ThicketService thicket = createService(0);
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(Collections.emptyList(), Optional.<InetAddress>empty(), 5);
-        Assert.assertTrue(broadcastPeers.activePeers.isEmpty());
-        Assert.assertTrue(broadcastPeers.backupPeers.isEmpty());
+        Assert.assertTrue(thicket.selectRootBroadcastPeers(Collections.emptyList(), 5).isEmpty());
     }
 
     @Test
-    public void selectBroadcastPeers_NonTreeRoot_SmallPeersList() throws UnknownHostException
+    public void selectRootBroadcastPeers_SmallPeersList() throws UnknownHostException
     {
-        ThicketService thicket = createService(0);
-        List<InetAddress> peers = new LinkedList<>();
         int maxSize = 5;
-        for (int i = 0; i < (maxSize - 2); i ++)
-            peers.add(InetAddress.getByName("127.0.1." + i));
+        ThicketService thicket = createService(maxSize - 2);
 
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(InetAddress.getByName("127.0.1.1")), maxSize);
-        Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
-        Assert.assertTrue(broadcastPeers.backupPeers.isEmpty());
+        Collection<InetAddress> broadcastPeers = thicket.selectRootBroadcastPeers(thicket.getBackupPeers(), maxSize);
+        Assert.assertFalse(broadcastPeers.isEmpty());
+        Assert.assertFalse(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
     }
 
     @Test
-    public void selectBroadcastPeers_TreeRoot_SmallPeersList() throws UnknownHostException
+    public void selectRootBroadcastPeers_LargePeersList() throws UnknownHostException
     {
-        ThicketService thicket = createService(0);
-        List<InetAddress> peers = new LinkedList<>();
         int maxSize = 5;
-        for (int i = 0; i < (maxSize - 2); i ++)
-            peers.add(InetAddress.getByName("127.0.1." + i));
+        ThicketService thicket = createService(maxSize + 2);
 
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
-        Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
-        Assert.assertTrue(broadcastPeers.backupPeers.isEmpty());
-    }
-
-    @Test
-    public void selectBroadcastPeers_NonTreeRoot_LargePeersList() throws UnknownHostException
-    {
-        ThicketService thicket = createService(0);
-        List<InetAddress> peers = new LinkedList<>();
-        int maxSize = 5;
-        for (int i = 0; i < (maxSize + 2); i ++)
-            peers.add(InetAddress.getByName("127.0.1." + i));
-
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
-        Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
-        Assert.assertFalse(broadcastPeers.backupPeers.isEmpty());
-        Assert.assertTrue(Collections.disjoint(broadcastPeers.activePeers, broadcastPeers.backupPeers));
-    }
-
-    @Test
-    public void selectBroadcastPeers_TreeRoot_LargePeersList() throws UnknownHostException
-    {
-        ThicketService thicket = createService(0);
-        List<InetAddress> peers = new LinkedList<>();
-        int maxSize = 5;
-        for (int i = 0; i < (maxSize + 2); i ++)
-            peers.add(InetAddress.getByName("127.0.1." + i));
-
-        ThicketService.BroadcastPeers broadcastPeers = thicket.selectBranchBroadcastPeers(peers, Optional.of(thicket.getLocalAddress()), maxSize);
-        Assert.assertFalse(broadcastPeers.activePeers.isEmpty());
-        Assert.assertFalse(broadcastPeers.backupPeers.isEmpty());
-        Assert.assertTrue(Collections.disjoint(broadcastPeers.activePeers, broadcastPeers.backupPeers));
+        Collection<InetAddress> broadcastPeers = thicket.selectRootBroadcastPeers(thicket.getBackupPeers(), maxSize);
+        Assert.assertFalse(broadcastPeers.isEmpty());
+        Assert.assertFalse(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
     }
 
     @Test
@@ -194,6 +156,59 @@ public class ThicketServiceTest
         Assert.assertEquals(1, missingSummary.messages.size());
     }
 
+    @Test
+    public void relayMessage()
+    {
+
+    }
+
+    @Test
+    public void isInterior_EmptyBroadcastPeers()
+    {
+        ThicketService thicket = createService(3);
+        Assert.assertFalse(thicket.isInterior(HashMultimap.create()));
+    }
+
+    @Test
+    public void isInterior_OnlyAsLeaf() throws UnknownHostException
+    {
+        ThicketService thicket = createService(3);
+        HashMultimap<InetAddress, InetAddress> broadcastPeers = HashMultimap.create();
+        for (int i = 0; i < 4; i++)
+        {
+            InetAddress treeRoot = InetAddress.getByName("127.0.1." + i);
+            broadcastPeers.put(treeRoot, treeRoot);
+        }
+
+        Assert.assertFalse(thicket.isInterior(broadcastPeers));
+
+    }
+
+    @Test
+    public void isInterior() throws UnknownHostException
+    {
+        ThicketService thicket = createService(3);
+        HashMultimap<InetAddress, InetAddress> broadcastPeers = HashMultimap.create();
+        for (int i = 0; i < 4; i++)
+        {
+            InetAddress treeRoot = InetAddress.getByName("127.0.1." + i);
+            broadcastPeers.put(treeRoot, treeRoot);
+            broadcastPeers.put(treeRoot, InetAddress.getByName("127.0.2." + i));
+            broadcastPeers.put(treeRoot, InetAddress.getByName("127.0.2." + (i + 10)));
+        }
+
+        Assert.assertTrue(thicket.isInterior(broadcastPeers));
+
+    }
+
+    @Test
+    public void selectBranchBroadcastPeers() throws UnknownHostException
+    {
+    }
+
+
+
+    /*
     @Test
     public void filterMissingMessages_Simple() throws UnknownHostException
     {
@@ -320,7 +335,7 @@ public class ThicketServiceTest
         Assert.assertTrue(broadcastPeers.activePeers.contains(sender));
     }
 
-
+*/
 
 
 

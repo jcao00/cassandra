@@ -180,6 +180,11 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         missingMessagesResolver = scheduledTasks.scheduleWithFixedDelay(new MissingMessagesTimer(), 10, 1, TimeUnit.SECONDS);
     }
 
+    /**
+     * Shut down the broadcast behaviors, and clear out some data structures.
+     * On process shutdown, this is not so interesting, but if temporarily stopping gossip (via nodetool, for example)
+     * it will reset everything for starting up again.
+     */
     public void shutdown()
     {
         if (!executing)
@@ -189,8 +194,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         summarySender.cancel(true);
         missingMessagesResolver.cancel(true);
 
-        // clear out some data structures.
-        // on process shutdown this is not so interesting, but if temporarily stopping gossip it will reset everything for starting up again
         broadcastPeers.clear();
         backupPeers.clear();
         missingMessages.clear();
@@ -223,7 +226,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     @VisibleForTesting
     Collection<InetAddress> selectRootBroadcastPeers(Collection<InetAddress> peers, int maxActive)
     {
-        // TODO:JEB test me
         LinkedList<InetAddress> candidates = new LinkedList<>(peers);
         Collections.shuffle(candidates);
 
@@ -290,7 +292,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     void handleData(DataMessage message)
     {
-        //TODO:JEB test me
         recordMessage(message.treeRoot, message.messageId);
         removeFromMissing(missingMessages, message.treeRoot, message.messageId);
 
@@ -303,7 +304,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
         // TODO:JEB should we also look at the message id, as well, in determining if the message is stale?
         if (client.receive(message.payload))
-            rebroadcast(message);
+            relayMessage(message);
         else
             messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), Collections.singletonList(message.treeRoot), loadEstimates.get(localAddress)));
     }
@@ -330,12 +331,17 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
     }
 
-    void rebroadcast(DataMessage message)
+    /**
+     * Send a received message to peers on downstream branches, if any.
+     */
+    void relayMessage(DataMessage message)
     {
         //TODO:JEB test me
         Collection<InetAddress> peers = broadcastPeers.get(message.sender);
         if (peers.isEmpty())
         {
+            // TODO:JEB is this really the correct metric?? just identifying if we're interior in a tree? what about if
+            // we've still got capacity under the maxLoad?
             if (isInterior(broadcastPeers))
             {
                 peers = new LinkedList<>();
@@ -357,10 +363,9 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      * Check if the current node is interior to at least one tree in the cluster.
      */
     @VisibleForTesting
-    boolean isInterior(Multimap<InetAddress, InetAddress> currentBranches)
+    boolean isInterior(Multimap<InetAddress, InetAddress> broadcastPeers)
     {
-        //TODO:JEB test me
-        for (Map.Entry<InetAddress, Collection<InetAddress>> entry : currentBranches.asMap().entrySet())
+        for (Map.Entry<InetAddress, Collection<InetAddress>> entry : broadcastPeers.asMap().entrySet())
         {
             // ignore the entry for the localAddress (this node)
             if (entry.getValue().size() > 1 && !entry.getKey().equals(localAddress))
