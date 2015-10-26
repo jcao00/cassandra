@@ -768,6 +768,12 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         return backupPeers;
     }
 
+    @VisibleForTesting
+    Multimap<InetAddress, InetAddress> getBroadcastPeers()
+    {
+        return broadcastPeers;
+    }
+
     /**
      * A simple struct to capture metadata about recently received messages from peers.
      */

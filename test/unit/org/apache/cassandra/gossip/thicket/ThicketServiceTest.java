@@ -157,9 +157,49 @@ public class ThicketServiceTest
     }
 
     @Test
-    public void relayMessage()
+    public void relayMessage_IsLeaf_EmptyBackupPeers() throws UnknownHostException
     {
+        ThicketService thicket = createService(0);
+        InetAddress sender = InetAddress.getByName("127.123.234.1");
+        DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client");
+        thicket.relayMessage(msg);
+        TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
+        Assert.assertTrue(messageSender.messages.isEmpty());
+    }
 
+    @Test
+    public void relayMessage_IsLeaf_AlreadyInterior() throws UnknownHostException
+    {
+        ThicketService thicket = createService(0);
+        // set up another tree for which our node is interior
+        Multimap<InetAddress, InetAddress> broadcastPeers = thicket.getBroadcastPeers();
+        InetAddress treeRoot = InetAddress.getByName("127.123.234.10");
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.77"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.78"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.79"));
+
+        InetAddress sender = InetAddress.getByName("127.123.234.1");
+        DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client");
+        thicket.relayMessage(msg);
+        TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
+        Assert.assertTrue(messageSender.messages.isEmpty());
+    }
+
+    @Test
+    public void relayMessage_IsInterior() throws UnknownHostException
+    {
+        ThicketService thicket = createService(3);
+        // set up another tree for which our node is interior
+        Multimap<InetAddress, InetAddress> broadcastPeers = thicket.getBroadcastPeers();
+        InetAddress treeRoot = InetAddress.getByName("127.123.234.10");
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.77"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.78"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.79"));
+
+        DataMessage msg = new DataMessage(treeRoot, idGenerator.generate(), treeRoot, "ThisIsThePayload", "client");
+        thicket.relayMessage(msg);
+        TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
+        Assert.assertFalse(messageSender.messages.isEmpty());
     }
 
     @Test
