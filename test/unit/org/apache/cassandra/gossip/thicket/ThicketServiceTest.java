@@ -2,13 +2,11 @@ package org.apache.cassandra.gossip.thicket;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -31,7 +29,6 @@ import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
-import org.apache.pig.builtin.MAX;
 
 public class ThicketServiceTest
 {
@@ -265,9 +262,49 @@ public class ThicketServiceTest
         Assert.assertTrue(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
     }
 
+    @Test
+    public void localLoadEstimate_Empty()
+    {
+        Assert.assertTrue(ThicketService.localLoadEstimate(HashMultimap.create()).isEmpty());
+    }
+
+    @Test
+    public void localLoadEstimate_OnlyLeaves() throws UnknownHostException
+    {
+        Multimap<InetAddress, InetAddress> broadcastPeers = HashMultimap.create();
+        for (int i = 0; i < 4; i ++)
+        {
+            InetAddress treeRoot = InetAddress.getByName("127.0.1." + i);
+            broadcastPeers.put(treeRoot, treeRoot);
+        }
+
+        Collection<LoadEstimate> estimates = ThicketService.localLoadEstimate(broadcastPeers);
+        Assert.assertTrue(estimates.isEmpty());
+    }
+
+    @Test
+    public void localLoadEstimate_OneInterior() throws UnknownHostException
+    {
+        Multimap<InetAddress, InetAddress> broadcastPeers = HashMultimap.create();
+        for (int i = 0; i < 4; i ++)
+        {
+            InetAddress treeRoot = InetAddress.getByName("127.0.1." + i);
+            broadcastPeers.put(treeRoot, treeRoot);
+        }
+
+        InetAddress treeRoot = InetAddress.getByName("127.1.1.0");
+        broadcastPeers.put(treeRoot, treeRoot);
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.1.1.1"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.1.1.2"));
+
+        Collection<LoadEstimate> estimates = ThicketService.localLoadEstimate(broadcastPeers);
+        Assert.assertEquals(1, estimates.size());
+        LoadEstimate estimate = estimates.iterator().next();
+        Assert.assertEquals(treeRoot, estimate.treeRoot);
+        Assert.assertEquals(2, estimate.load);
+    }
 
 
-    /*
     @Test
     public void filterMissingMessages_Simple() throws UnknownHostException
     {
@@ -361,46 +398,95 @@ public class ThicketServiceTest
         Assert.assertTrue(missingSummary.peers.contains(sender));
     }
 
+
+
+
+
     @Test
-    public void applyGraft_AddToExistingEntry() throws UnknownHostException
+    public void isOverMaxLoad_EmptyEstimates()
     {
-        ThicketService thicket = createService(4);
-
-        InetAddress treeRoot = InetAddress.getByName("127.87.12.91");
-        Map<InetAddress, ThicketService.BroadcastPeers> existingPeers = new HashMap<>();
-        ThicketService.BroadcastPeers peers = new ThicketService.BroadcastPeers(new ArrayList<InetAddress>(){{ add(InetAddress.getByName("128.54.132.1")); }},
-                                                                                new LinkedList<>(thicket.getBackupPeers()));
-        existingPeers.put(treeRoot, peers);
-
-        InetAddress sender = InetAddress.getByName("127.87.12.221");
-        thicket.applyGraft(existingPeers, Collections.singletonList(treeRoot), sender);
-
-        ThicketService.BroadcastPeers broadcastPeers = existingPeers.get(treeRoot);
-        Assert.assertEquals(2, broadcastPeers.activePeers.size());
-        Assert.assertTrue(broadcastPeers.activePeers.contains(sender));
+        Assert.assertFalse(ThicketService.isOverMaxLoad(Collections.emptyList(), 2));
     }
 
     @Test
-    public void applyGraft_NewEntry() throws UnknownHostException
+    public void isOverMaxLoad_InManyTrees() throws UnknownHostException
     {
-        ThicketService thicket = createService(4);
+        int maxTrees = 3;
+        List<LoadEstimate> estimates = new LinkedList<>();
+        for (int i = 0; i < maxTrees; i ++)
+            estimates.add(new LoadEstimate(InetAddress.getByName("127.0.0." + i), 1));
 
-        InetAddress treeRoot = InetAddress.getByName("127.87.12.91");
-        Map<InetAddress, ThicketService.BroadcastPeers> existingPeers = new HashMap<>();
-        InetAddress sender = InetAddress.getByName("127.87.12.221");
-        thicket.applyGraft(existingPeers, Collections.singletonList(treeRoot), sender);
-
-        ThicketService.BroadcastPeers broadcastPeers = existingPeers.get(treeRoot);
-        Assert.assertTrue(broadcastPeers.activePeers.contains(sender));
+        Assert.assertTrue(ThicketService.isOverMaxLoad(estimates, 7));
     }
 
-*/
+    @Test
+    public void isOverMaxLoad_AtMaxLoad() throws UnknownHostException
+    {
+        int maxLoad = 5;
+        List<LoadEstimate> estimates = new LinkedList<>();
+        estimates.add(new LoadEstimate(InetAddress.getByName("127.0.0.2"), 1));
+        estimates.add(new LoadEstimate(InetAddress.getByName("127.0.0.3"), maxLoad - 1));
 
+        Assert.assertTrue(ThicketService.isOverMaxLoad(estimates, maxLoad));
+    }
 
+    @Test
+    public void handleGraft_UnderMaxLoad() throws UnknownHostException
+    {
+        ThicketService thicket = createService(5);
+        InetAddress sender = thicket.getBackupPeers().iterator().next();
+        InetAddress treeRoot1 = InetAddress.getByName("127.1.1.1");
+        InetAddress treeRoot2 = InetAddress.getByName("127.1.1.2");
+        List<InetAddress> roots = new LinkedList<InetAddress>() {{ add(treeRoot1); add(treeRoot2); }};
 
+        thicket.handleGraft(new GraftMessage(sender, idGenerator.generate(), roots, Collections.emptyList()));
 
+        Multimap<InetAddress, InetAddress> broadcastPeers = thicket.getBroadcastPeers();
+        Assert.assertTrue(broadcastPeers.containsEntry(treeRoot1, sender));
+        Assert.assertTrue(broadcastPeers.containsEntry(treeRoot2, sender));
+        Assert.assertTrue(((TestMessageSender) thicket.messageSender).messages.isEmpty());
+    }
 
+    @Test
+    public void handleGraft_OverMaxLoad() throws UnknownHostException
+    {
+        ThicketService thicket = createService(1);
+        InetAddress sender = thicket.getBackupPeers().iterator().next();
+        Multimap<InetAddress, InetAddress> broadcastPeers = thicket.getBroadcastPeers();
+        InetAddress treeRoot = InetAddress.getByName("127.123.234.10");
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.77"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.78"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.79"));
 
+        InetAddress treeRoot1 = InetAddress.getByName("127.1.1.1");
+        InetAddress treeRoot2 = InetAddress.getByName("127.1.1.2");
+        List<InetAddress> roots = new LinkedList<InetAddress>() {{ add(treeRoot1); add(treeRoot2); }};
+
+        thicket.handleGraft(new GraftMessage(sender, idGenerator.generate(), roots, Collections.emptyList()));
+
+        broadcastPeers = thicket.getBroadcastPeers();
+        Assert.assertFalse(broadcastPeers.containsEntry(treeRoot1, sender));
+        Assert.assertFalse(broadcastPeers.containsEntry(treeRoot2, sender));
+        Assert.assertFalse(((TestMessageSender) thicket.messageSender).messages.isEmpty());
+    }
+
+    @Test
+    public void handlePrune() throws UnknownHostException
+    {
+        ThicketService thicket = createService(1);
+        Multimap<InetAddress, InetAddress> broadcastPeers = thicket.getBroadcastPeers();
+        InetAddress treeRoot = InetAddress.getByName("127.123.234.10");
+        InetAddress sender = InetAddress.getByName("127.123.234.77");
+        broadcastPeers.put(treeRoot, sender);
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.78"));
+        broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.79"));
+
+        Assert.assertTrue(broadcastPeers.containsEntry(treeRoot, sender));
+        thicket.handlePrune(new PruneMessage(sender, idGenerator.generate(), new LinkedList<InetAddress>() {{ add(treeRoot); }}, Collections.emptyList()));
+        broadcastPeers = thicket.getBroadcastPeers();
+        Assert.assertFalse(broadcastPeers.containsEntry(treeRoot, sender));
+        Assert.assertTrue(thicket.getBackupPeers().contains(sender));
+    }
 
     /*
         testing fixtures

@@ -101,7 +101,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     private boolean executing;
 
     /**
-     * Mapping of a message originatorig's address to the downstream branch peers.
+     * Mapping of a message originator's address (the tree root) to the downstream branch peers from this node.
      *
      * "for each tree T rooted at R, here is set the downstream peers P"
      */
@@ -337,7 +337,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     void relayMessage(DataMessage message)
     {
-        //TODO:JEB test me
         Collection<InetAddress> peers = broadcastPeers.get(message.sender);
         if (peers.isEmpty())
         {
@@ -413,10 +412,14 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     {
         //TODO:JEB test me
 
-        if (!executing || receivedMessages.isEmpty() || isOverMaxLoad() || backupPeers.isEmpty())
+        if (!executing || receivedMessages.isEmpty())
             return;
 
-        SummaryMessage message = new SummaryMessage(localAddress, idGenerator.generate(), convert(receivedMessages), loadEstimates.get(localAddress));
+        Collection<LoadEstimate> loadEstimates = localLoadEstimate(broadcastPeers);
+        if (loadCount(loadEstimates) >= deriveMaxLoad())
+            return;
+
+        SummaryMessage message = new SummaryMessage(localAddress, idGenerator.generate(), convert(receivedMessages), loadEstimates);
         for (InetAddress peer : backupPeers)
             messageSender.send(peer, message);
 
@@ -425,12 +428,35 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         receivedMessages.clear();
     }
 
+    /**
+     * Create a view of the load estimate for this node that can be sent to peers. The return value will not contain
+     * entries for trees where this node is a leaf (as that does not contribute to the load factor of the node).
+     */
     @VisibleForTesting
-    boolean isOverMaxLoad()
+    static Collection<LoadEstimate> localLoadEstimate(Multimap<InetAddress, InetAddress> broadcastPeers)
     {
-        // TODO:JEB test me
-        // TODO:JEB base on loadEst
-        return true;
+        List<LoadEstimate> estimates = new LinkedList<>();
+
+        for (Map.Entry<InetAddress, Collection<InetAddress>> entry : broadcastPeers.asMap().entrySet())
+        {
+            if (entry.getValue().size() > 1)
+            {
+                // subtract one from the size because we include the upstream peer (the one that sends us the message)
+                // in the list, so remove it from the count as we don't send messages to it (in this tree)
+                int load = entry.getValue().size() - 1;
+                estimates.add(new LoadEstimate(entry.getKey(), load));
+            }
+        }
+
+        return estimates;
+    }
+
+    private static int loadCount(Collection<LoadEstimate> estimates)
+    {
+        int load = 0;
+        for (LoadEstimate estimate : estimates)
+            load += estimate.load;
+        return load;
     }
 
     private Multimap<InetAddress, GossipMessageId> convert(List<TimestampedMessageId> receivedMessages)
@@ -441,12 +467,14 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         return result;
     }
 
+    /**
+     * Remove expired entries from the {@code messagesLedger}.
+     */
     void pruneMessageLedger(List<TimestampedMessageId> messagesLedger)
     {
-        // TODO:JEB test me
+        // perhaps we should bound the overall number of messages in the ledger, as well?
 
-        // TODO:JEB perhaps we should bound the overall number of messages in the ledger, as well
-        //prune the message ledger - since this class is single threaded, we can assume the messages are in arrival timestamp order
+        // prune the message ledger - since this class is single threaded, we can assume the messages are in arrival timestamp order
         final long now = System.nanoTime();
         for (Iterator<TimestampedMessageId> iter = messagesLedger.iterator(); iter.hasNext(); )
         {
@@ -456,12 +484,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
     }
 
-    private void recordLoadEstimates(Multimap<InetAddress, LoadEstimate> localEstimates, InetAddress peer, Collection<LoadEstimate> estimates)
-    {
-        localEstimates.removeAll(peer);
-        localEstimates.putAll(peer, estimates);
-    }
-
     /**
      * Process an incoming SUMMARY message from a peer. The goal here is to ensure all trees are healthy (no broken branches,
      * entire tree is spanned), *not* data convergence. Data convergence can be piggy-backed here for convenience,
@@ -469,8 +491,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     void handleSummary(SummaryMessage msg)
     {
-        // TODO:JEB test me
-
         // TODO:JEB do we want to send a response back to the SUMMARY sender?
 
         recordLoadEstimates(loadEstimates, msg.sender, msg.estimates);
@@ -482,6 +502,12 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             return;
 
         addToMissingMessages(msg.sender, missingMessages, reportedMissing);
+    }
+
+    private void recordLoadEstimates(Multimap<InetAddress, LoadEstimate> localEstimates, InetAddress peer, Collection<LoadEstimate> estimates)
+    {
+        localEstimates.removeAll(peer);
+        localEstimates.putAll(peer, estimates);
     }
 
     private Multimap<InetAddress, GossipMessageId> mergeSeenMessages()
@@ -504,7 +530,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     @VisibleForTesting
     void filterMissingMessages(Multimap<InetAddress, GossipMessageId> summary, Multimap<InetAddress, GossipMessageId> seenMessagesPerTreeRoot)
     {
-        // TODO:JEB test me (might already be done)
         // probably reasonable to assume we've seen our own messages
         summary.removeAll(localAddress);
 
@@ -564,13 +589,14 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         Multimap<InetAddress, InetAddress> graftTargets = calculateGraftTragets(loadEstimates, graftCandidates, deriveMaxLoad());
 
         for (Map.Entry<InetAddress, Collection<InetAddress>> entry : graftTargets.asMap().entrySet())
-            messageSender.send(entry.getKey(), new GraftMessage(localAddress, idGenerator.generate(), entry.getValue(), loadEstimates.get(localAddress)));
+            messageSender.send(entry.getKey(), new GraftMessage(localAddress, idGenerator.generate(), entry.getValue(), localLoadEstimate(broadcastPeers)));
     }
 
     /**
      * Find potential peers to GRAFT for each tree-root for which there are missing messages.
      */
-    Multimap<InetAddress, InetAddress> discoverGraftCandidates(List<MissingMessges> missing)
+    @VisibleForTesting
+    static Multimap<InetAddress, InetAddress> discoverGraftCandidates(List<MissingMessges> missing)
     {
         //TODO:JEB test me
 
@@ -599,9 +625,10 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         return graftCandidates;
     }
 
-    private Multimap<InetAddress, InetAddress> calculateGraftTragets(Multimap<InetAddress, LoadEstimate> loadEstimates,
-                                                                     Multimap<InetAddress, InetAddress> graftCandidates,
-                                                                     int maxLoad)
+    @VisibleForTesting
+    static Multimap<InetAddress, InetAddress> calculateGraftTragets(Multimap<InetAddress, LoadEstimate> loadEstimates,
+                                                                    Multimap<InetAddress, InetAddress> graftCandidates,
+                                                                    int maxLoad)
     {
         // TODO:JEB test me
         Multimap<InetAddress, InetAddress> targetToTrees = HashMultimap.create();
@@ -627,24 +654,15 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         return targetToTrees;
     }
 
-    private Optional<InetAddress> detetmineBestCandidate(Multimap<InetAddress, LoadEstimate> loadEstimates, Collection<InetAddress> treeCandidates, int maxLoad)
+    @VisibleForTesting
+    static Optional<InetAddress> detetmineBestCandidate(Multimap<InetAddress, LoadEstimate> loadEstimates, Collection<InetAddress> treeCandidates, int maxLoad)
     {
         // TODO:JEB test me
 
         LinkedList<InetAddress> filtered = new LinkedList<>();
         for (InetAddress candidate : treeCandidates)
         {
-            Collection<LoadEstimate> loadEst = loadEstimates.get(candidate);
-            // either we have no data on the target, or it really is not in any tree (as an interior node)
-            if (loadEst.isEmpty())
-                filtered.add(candidate);
-
-            // if the node is interior in n number of trees already, pass on it
-            int load = loadEstimateSum(loadEst);
-
-            // TODO:JEB what is the right value here for loadEst.size() (which indicates the number of trees where node is interior)?
-            // is it 2?  3?  ?????
-            if (load < maxLoad && loadEst.size() < 3)
+            if (!isOverMaxLoad(loadEstimates.get(candidate), maxLoad))
                 filtered.add(candidate);
         }
 
@@ -657,28 +675,29 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     /**
-     * Sum up the number of peers to which a node would be forwarding DATA broadcasts. If the loadEstimate for a given
-     * tree is equal to 1, then the node if just a leaf in the tree (and does not count toward the sum being calculated).
-     *
+     * Determine if a node is at over the maxLoad allowed by inspecting the {@code loadEstimates} collection.
+     * In addition to not being over the maxLoad, the node should be interior to a limited number of trees.
      */
-    private int loadEstimateSum(Collection<LoadEstimate> loadEstimates)
+    @VisibleForTesting
+    static boolean isOverMaxLoad(Collection<LoadEstimate> loadEstimates, int maxLoad)
     {
-        // TODO:JEB test me
-        int sum = 0;
-        for (LoadEstimate loadEstimate : loadEstimates)
-        {
-            if (loadEstimate.load > 1)
-                sum += loadEstimate.load;
-        }
-        return sum;
+        // TODO:JEB what is the right value here for loadEst.size() to be less than?
+        return loadCount(loadEstimates) >= maxLoad || loadEstimates.size() >= 3;
     }
 
+    /**
+     * Process an incoming GRAFT message. If we have not exceeded the maxLoad limit on this node, go ahead and accept
+     * the GRAFT request and heal the tree by adding the sender to the broadcastPeers for the given tree-roots.
+     * Else if we are over the limit, send a PRUNE message back to the sender (maybe it will have better luck next time
+     * finding a peer to heal it's branch).
+     */
     void handleGraft(GraftMessage message)
     {
-        // TODO:JEB test me
         recordLoadEstimates(loadEstimates, message.sender, message.estimates);
 
-        if (!isOverMaxLoad())
+         // should we calculate this per-tree, or make life simpler and just take the whole bunch and potentially be interior
+        // to more trees?
+        if (!isOverMaxLoad(localLoadEstimate(broadcastPeers), deriveMaxLoad()))
         {
             for (InetAddress treeRoot : message.treeRoots)
             {
@@ -688,18 +707,16 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
         else
         {
-            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, loadEstimates.get(localAddress)));
+            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, localLoadEstimate(broadcastPeers)));
         }
     }
 
     /**
-     * When a PRUNE message is received, remove it from the active peers for the tree-root in the message. Then,
+     * When a PRUNE message is received, remove it from the active peers for the tree-roots in the message. Then,
      * add it to the backup peers.
      */
     void handlePrune(PruneMessage message)
     {
-        // TODO:JEB test me
-
         recordLoadEstimates(loadEstimates, message.sender, message.estimates);
 
         for (InetAddress treeRoot : message.treeRoots)
@@ -723,13 +740,10 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     public void neighborDown(InetAddress peer, String datacenter)
     {
-        // TODO:JEB test me
         broadcastPeers.removeAll(peer);
-        for (Iterator<InetAddress> iter = broadcastPeers.values().iterator(); iter.hasNext(); )
-        {
-            if (iter.next().equals(peer))
-                iter.remove();
-        }
+        for (InetAddress treeRoot : broadcastPeers.keySet())
+            broadcastPeers.remove(treeRoot, peer);
+
         backupPeers.remove(peer);
 
         for (MissingMessges missingMessage : missingMessages)
