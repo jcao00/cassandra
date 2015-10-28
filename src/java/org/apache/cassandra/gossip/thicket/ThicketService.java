@@ -410,8 +410,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     void sendSummary()
     {
-        //TODO:JEB test me
-
         if (!executing || receivedMessages.isEmpty())
             return;
 
@@ -576,7 +574,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     void checkMissingMessages()
     {
-        //TODO:JEB test me
         if (!executing || missingMessages.isEmpty())
             return;
 
@@ -585,23 +582,22 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         if (graftCandidates == null)
             return;
 
-        // map of GRAFT targets to the tree-roots that are being healed (by the GRAFT target)
-        Multimap<InetAddress, InetAddress> graftTargets = calculateGraftTragets(loadEstimates, graftCandidates, deriveMaxLoad());
-
-        for (Map.Entry<InetAddress, Collection<InetAddress>> entry : graftTargets.asMap().entrySet())
-            messageSender.send(entry.getKey(), new GraftMessage(localAddress, idGenerator.generate(), entry.getValue(), localLoadEstimate(broadcastPeers)));
+        for (Map.Entry<InetAddress, Collection<InetAddress>> entry : graftCandidates.asMap().entrySet())
+        {
+            Optional<InetAddress> target = detetmineBestCandidate(loadEstimates, entry.getValue(), deriveMaxLoad());
+            if (target.isPresent())
+                messageSender.send(target.get(), new GraftMessage(localAddress, idGenerator.generate(), entry.getValue(), localLoadEstimate(broadcastPeers)));
+        }
     }
 
     /**
-     * Find potential peers to GRAFT for each tree-root for which there are missing messages.
+     * For each tree-root with missing messages, find potential peers to GRAFT onto.
+     * @return a multimap of tree-root to potential GRAFT peers
      */
     @VisibleForTesting
     static Multimap<InetAddress, InetAddress> discoverGraftCandidates(List<MissingMessges> missing)
     {
-        //TODO:JEB test me
-
-        // map of peer address to which we want to add current node for the given tree roots.
-        // creating this structure to optimize the GRAFT message count we send
+        // tree-root -> graft peers
         Multimap<InetAddress, InetAddress> graftCandidates = null;
 
         long now = System.nanoTime();
@@ -626,39 +622,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     @VisibleForTesting
-    static Multimap<InetAddress, InetAddress> calculateGraftTragets(Multimap<InetAddress, LoadEstimate> loadEstimates,
-                                                                    Multimap<InetAddress, InetAddress> graftCandidates,
-                                                                    int maxLoad)
-    {
-        // TODO:JEB test me
-        Multimap<InetAddress, InetAddress> targetToTrees = HashMultimap.create();
-
-        for (Map.Entry<InetAddress, Collection<InetAddress>> entry : graftCandidates.asMap().entrySet())
-        {
-            Collection<InetAddress> treeCandidates = entry.getValue();
-            // err, this case really shouldn't happen, but let's be safe
-            if (treeCandidates.size() == 0)
-                continue;
-            if (treeCandidates.size() == 1)
-            {
-                targetToTrees.put(treeCandidates.iterator().next(), entry.getKey());
-                continue;
-            }
-
-            // select peer with lowest loadEst
-            Optional<InetAddress> target = detetmineBestCandidate(loadEstimates, treeCandidates, maxLoad);
-            if (target.isPresent())
-                targetToTrees.put(target.get(), entry.getKey());
-        }
-
-        return targetToTrees;
-    }
-
-    @VisibleForTesting
     static Optional<InetAddress> detetmineBestCandidate(Multimap<InetAddress, LoadEstimate> loadEstimates, Collection<InetAddress> treeCandidates, int maxLoad)
     {
-        // TODO:JEB test me
-
         LinkedList<InetAddress> filtered = new LinkedList<>();
         for (InetAddress candidate : treeCandidates)
         {

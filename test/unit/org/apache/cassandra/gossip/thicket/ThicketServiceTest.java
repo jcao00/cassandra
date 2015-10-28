@@ -4,9 +4,9 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -29,6 +29,8 @@ import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
+import org.apache.cassandra.gossip.thicket.ThicketService.MissingMessges;
+import org.apache.cassandra.gossip.thicket.ThicketService.MissingSummary;
 
 public class ThicketServiceTest
 {
@@ -114,12 +116,12 @@ public class ThicketServiceTest
     @Test
     public void removeFromMissing_RemoveEmptyTree() throws UnknownHostException
     {
-        List<ThicketService.MissingMessges> missing = new LinkedList<>();
+        List<MissingMessges> missing = new LinkedList<>();
         InetAddress treeRoot = InetAddress.getByName("127.0.1.23");
         GossipMessageId messageId = idGenerator.generate();
 
-        ThicketService.MissingMessges msgs = new ThicketService.MissingMessges(42);
-        ThicketService.MissingSummary summary = new ThicketService.MissingSummary();
+        MissingMessges msgs = new MissingMessges(42);
+        MissingSummary summary = new MissingSummary();
         summary.add(InetAddress.getByName("127.8.1.55"), Collections.singletonList(messageId));
         msgs.trees.put(treeRoot, summary);
         missing.add(msgs);
@@ -132,12 +134,12 @@ public class ThicketServiceTest
     @Test
     public void removeFromMissing_NonEmptyTree() throws UnknownHostException
     {
-        List<ThicketService.MissingMessges> missing = new LinkedList<>();
+        List<MissingMessges> missing = new LinkedList<>();
         InetAddress treeRoot = InetAddress.getByName("127.0.1.23");
         GossipMessageId messageId = idGenerator.generate();
 
-        ThicketService.MissingMessges msgs = new ThicketService.MissingMessges(42);
-        ThicketService.MissingSummary summary = new ThicketService.MissingSummary();
+        MissingMessges msgs = new MissingMessges(42);
+        MissingSummary summary = new MissingSummary();
         List<GossipMessageId> msgIds = new LinkedList<>();
         msgIds.add(messageId);
         msgIds.add(idGenerator.generate());
@@ -148,7 +150,7 @@ public class ThicketServiceTest
 
         ThicketService thicket = createService(1);
         thicket.removeFromMissing(missing, treeRoot, messageId);
-        ThicketService.MissingSummary missingSummary = msgs.trees.get(treeRoot);
+        MissingSummary missingSummary = msgs.trees.get(treeRoot);
         Assert.assertNotNull(missingSummary);
         Assert.assertEquals(1, missingSummary.messages.size());
     }
@@ -357,12 +359,12 @@ public class ThicketServiceTest
         reportedMissing.put(treeRoot, messageId);
 
         InetAddress sender = InetAddress.getByName("127.87.12.221");
-        List<ThicketService.MissingMessges> missing = new LinkedList<>();
+        List<MissingMessges> missing = new LinkedList<>();
         thicket.addToMissingMessages(sender, missing, reportedMissing);
 
         Assert.assertFalse(missing.isEmpty());
-        ThicketService.MissingMessges missingMessges = missing.get(0);
-        ThicketService.MissingSummary missingSummary = missingMessges.trees.get(treeRoot);
+        MissingMessges missingMessges = missing.get(0);
+        MissingSummary missingSummary = missingMessges.trees.get(treeRoot);
         Assert.assertNotNull(missingSummary);
         Assert.assertTrue(missingSummary.messages.contains(messageId));
         Assert.assertTrue(missingSummary.peers.contains(sender));
@@ -381,26 +383,91 @@ public class ThicketServiceTest
         reportedMissing.put(treeRoot, messageId2);
 
         InetAddress sender = InetAddress.getByName("127.87.12.221");
-        List<ThicketService.MissingMessges> existingMissing = new LinkedList<>();
-        ThicketService.MissingMessges mm = new ThicketService.MissingMessges(42);
-        ThicketService.MissingSummary sm = new ThicketService.MissingSummary();
+        List<MissingMessges> existingMissing = new LinkedList<>();
+        MissingMessges mm = new MissingMessges(42);
+        MissingSummary sm = new MissingSummary();
         sm.add(sender, Collections.singletonList(messageId));
         mm.trees.put(treeRoot, sm);
 
         thicket.addToMissingMessages(sender, existingMissing, reportedMissing);
 
         Assert.assertFalse(existingMissing.isEmpty());
-        ThicketService.MissingMessges missingMessges = existingMissing.get(0);
-        ThicketService.MissingSummary missingSummary = missingMessges.trees.get(treeRoot);
+        MissingMessges missingMessges = existingMissing.get(0);
+        MissingSummary missingSummary = missingMessges.trees.get(treeRoot);
         Assert.assertNotNull(missingSummary);
         Assert.assertTrue(missingSummary.messages.contains(messageId));
         Assert.assertTrue(missingSummary.messages.contains(messageId2));
         Assert.assertTrue(missingSummary.peers.contains(sender));
     }
 
+    @Test
+    public void discoverGraftCandidates_NoneReadyForEvaluation()
+    {
+        List<MissingMessges> missingMessges = new LinkedList<>();
+        MissingMessges msgs = new MissingMessges(System.nanoTime());
+        missingMessges.add(msgs);
+        Assert.assertNull(ThicketService.discoverGraftCandidates(missingMessges));
+    }
 
+    @Test
+    public void discoverGraftCandidates_OnlyOnePastTimestamp() throws UnknownHostException
+    {
+        List<MissingMessges> missingMessges = new LinkedList<>();
+        MissingMessges msgs = new MissingMessges(System.nanoTime() - TimeUnit.NANOSECONDS.convert(20, TimeUnit.SECONDS));
+        missingMessges.add(msgs);
+        MissingSummary summary = new MissingSummary();
 
+        InetAddress summarizer1 = InetAddress.getByName("127.1.1.1");
+        summary.add(summarizer1, Collections.singleton(idGenerator.generate()));
+        InetAddress summarizer2 = InetAddress.getByName("127.1.1.2");
+        summary.add(summarizer2, Collections.singleton(idGenerator.generate()));
+        InetAddress treeRoot1 = InetAddress.getByName("127.0.1.1");
+        msgs.trees.put(treeRoot1, summary);
 
+        msgs = new MissingMessges(System.nanoTime() + TimeUnit.NANOSECONDS.convert(20, TimeUnit.SECONDS));
+        missingMessges.add(msgs);
+        summary = new MissingSummary();
+        InetAddress summarizer3 = InetAddress.getByName("127.1.1.3");
+        summary.add(summarizer3, Collections.singleton(idGenerator.generate()));
+        InetAddress treeRoot2 = InetAddress.getByName("127.0.1.2");
+        msgs.trees.put(treeRoot2, summary);
+
+        Multimap<InetAddress, InetAddress> graftCandidates = ThicketService.discoverGraftCandidates(missingMessges);
+        Assert.assertNotNull(graftCandidates);
+        Assert.assertEquals(1, graftCandidates.keySet().size());
+        Collection<InetAddress> peers = graftCandidates.get(treeRoot1);
+        Assert.assertEquals(2, peers.size());
+        Assert.assertTrue(peers.contains(summarizer1));
+        Assert.assertTrue(peers.contains(summarizer2));
+    }
+
+    @Test
+    public void detetmineBestCandidate_SimpleDeny() throws UnknownHostException
+    {
+        Multimap<InetAddress, LoadEstimate> estimates = HashMultimap.create();
+        List<InetAddress> candidates = new LinkedList<>();
+        InetAddress peer = InetAddress.getByName("127.0.1.1");
+        candidates.add(peer);
+        estimates.put(peer, new LoadEstimate(InetAddress.getByName("127.1.1.0"), 4));
+        estimates.put(peer, new LoadEstimate(InetAddress.getByName("127.1.1.1"), 1));
+
+        Optional<InetAddress> target = ThicketService.detetmineBestCandidate(estimates, candidates, 5);
+        Assert.assertFalse(target.isPresent());
+    }
+
+    @Test
+    public void detetmineBestCandidate_SimpleOK() throws UnknownHostException
+    {
+        Multimap<InetAddress, LoadEstimate> estimates = HashMultimap.create();
+        List<InetAddress> candidates = new LinkedList<>();
+        InetAddress peer = InetAddress.getByName("127.0.1.1");
+        candidates.add(peer);
+        estimates.put(peer, new LoadEstimate(InetAddress.getByName("127.1.1.0"), 3));
+
+        Optional<InetAddress> target = ThicketService.detetmineBestCandidate(estimates, candidates, 5);
+        Assert.assertTrue(target.isPresent());
+        Assert.assertEquals(peer, target.get());
+    }
 
     @Test
     public void isOverMaxLoad_EmptyEstimates()
