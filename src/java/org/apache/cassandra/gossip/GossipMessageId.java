@@ -40,6 +40,14 @@ public class GossipMessageId implements Comparable<GossipMessageId>
         return id;
     }
 
+    public int hashCode()
+    {
+        int result = 17;
+        result = 37 * result + epoch;
+        result = 37 * result + id;
+        return result;
+    }
+
     public boolean equals(Object o)
     {
         if (o == null || !(o instanceof GossipMessageId))

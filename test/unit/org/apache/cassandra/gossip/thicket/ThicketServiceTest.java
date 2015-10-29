@@ -24,7 +24,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import org.apache.cassandra.gossip.BroadcastServiceClient;
 import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
@@ -160,7 +159,7 @@ public class ThicketServiceTest
     {
         ThicketService thicket = createService(0);
         InetAddress sender = InetAddress.getByName("127.123.234.1");
-        DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client");
+        DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client", Collections.emptyList());
         thicket.relayMessage(msg);
         TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
         Assert.assertTrue(messageSender.messages.isEmpty());
@@ -178,7 +177,7 @@ public class ThicketServiceTest
         broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.79"));
 
         InetAddress sender = InetAddress.getByName("127.123.234.1");
-        DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client");
+        DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client", Collections.emptyList());
         thicket.relayMessage(msg);
         TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
         Assert.assertTrue(messageSender.messages.isEmpty());
@@ -195,7 +194,7 @@ public class ThicketServiceTest
         broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.78"));
         broadcastPeers.put(treeRoot, InetAddress.getByName("127.123.234.79"));
 
-        DataMessage msg = new DataMessage(treeRoot, idGenerator.generate(), treeRoot, "ThisIsThePayload", "client");
+        DataMessage msg = new DataMessage(treeRoot, idGenerator.generate(), treeRoot, "ThisIsThePayload", "client", Collections.emptyList());
         thicket.relayMessage(msg);
         TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
         Assert.assertFalse(messageSender.messages.isEmpty());
@@ -558,24 +557,6 @@ public class ThicketServiceTest
     /*
         testing fixtures
      */
-
-    static class SimpleClient implements BroadcastServiceClient
-    {
-        private final List<String> received = new LinkedList<>();
-
-        public String getClientName()
-        {
-            return "simple-client";
-        }
-
-        public boolean receive(Object payload)
-        {
-            if (received.contains(payload))
-                return false;
-            received.add(payload.toString());
-            return true;
-        }
-    }
 
     static class SimplePeerSamplingService implements PeerSamplingService
     {

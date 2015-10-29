@@ -9,17 +9,28 @@ import org.apache.cassandra.gossip.GossipMessageId;
 public class PruneMessage extends ThicketMessage
 {
     public final Collection<InetAddress> treeRoots;
-    public final Collection<LoadEstimate> estimates;
 
     public PruneMessage(InetAddress sender, GossipMessageId messageId, Collection<InetAddress> treeRoots, Collection<LoadEstimate> estimates)
     {
-        super(sender, messageId);
+        super(sender, messageId, estimates);
         this.treeRoots = treeRoots;
-        this.estimates = estimates;
     }
 
     public ThicketMessageType getMessageType()
     {
         return ThicketMessageType.PRUNE;
+    }
+
+    public String toString()
+    {
+        return String.format("%s, treeRoots: %s", super.toString(), treeRoots);
+    }
+
+    public boolean equals(Object o)
+    {
+        if (o == null || !(o instanceof PruneMessage))
+            return false;
+        PruneMessage msg = (PruneMessage)o;
+        return super.equals(o) && treeRoots.equals(msg.treeRoots);
     }
 }

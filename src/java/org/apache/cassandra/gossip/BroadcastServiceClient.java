@@ -1,6 +1,8 @@
 package org.apache.cassandra.gossip;
 
-public interface BroadcastServiceClient
+import org.apache.cassandra.io.IVersionedSerializer;
+
+public interface BroadcastServiceClient<T>
 {
     /**
      * A unique name for this client.
@@ -13,5 +15,7 @@ public interface BroadcastServiceClient
      * @return true if the has not been seen before (not delivered earlier);
      * else, false if it is a duplicate.
      */
-    boolean receive(Object payload);
+    boolean receive(T payload);
+
+    IVersionedSerializer<T> getSerializer();
 }

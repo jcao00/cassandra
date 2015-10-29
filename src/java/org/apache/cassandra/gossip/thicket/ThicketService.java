@@ -208,7 +208,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         GossipMessageId messageId = idGenerator.generate();
         recordMessage(localAddress, messageId);
 
-        // TODO:JEB might want to consider rebuilding the root peers is the size is less than the fanout
+        // TODO:JEB might want to consider rebuilding the root peers if the size is less than the fanout
         Collection<InetAddress> peers = broadcastPeers.get(localAddress);
         if (peers.isEmpty())
         {
@@ -216,7 +216,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             broadcastPeers.putAll(localAddress, peers);
         }
 
-        DataMessage msg = new DataMessage(localAddress, messageId, localAddress, payload, client.getClientName());
+        DataMessage msg = new DataMessage(localAddress, messageId, localAddress, payload, client.getClientName(), localLoadEstimate(broadcastPeers));
         for (InetAddress peer : peers)
             messageSender.send(peer, msg);
     }
@@ -307,7 +307,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         if (client.receive(message.payload))
             relayMessage(message);
         else
-            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), Collections.singletonList(message.treeRoot), loadEstimates.get(localAddress)));
+            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), Collections.singletonList(message.treeRoot), localLoadEstimate(broadcastPeers)));
     }
 
     /**
@@ -355,7 +355,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
 
         GossipMessageId messageId = idGenerator.generate();
-        DataMessage msg = new DataMessage(localAddress, messageId, message.treeRoot, message.payload, message.client);
+        DataMessage msg = new DataMessage(localAddress, messageId, message.treeRoot, message.payload, message.client, localLoadEstimate(broadcastPeers));
         peers.stream().filter(peer -> !peer.equals(message.sender)).forEach(peer -> messageSender.send(peer, msg));
     }
 

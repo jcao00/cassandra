@@ -61,7 +61,7 @@ public class HyParViewMessageSenderTest
         roundTripSerialization(msg, JOIN_SERIALIZER);
     }
 
-    private <T extends HyParViewMessage> void roundTripSerialization(T msg, IVersionedSerializer<T> serializer) throws IOException
+    private static <T extends HyParViewMessage> void roundTripSerialization(T msg, IVersionedSerializer<T> serializer) throws IOException
     {
         DataOutputBuffer out = new DataOutputBuffer(1024);
         serializer.serialize(msg, out, VERSION);

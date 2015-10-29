@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.gossip.MessageSender;
+import org.apache.cassandra.gossip.SerializationUtils;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
@@ -55,21 +56,21 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
      */
     static void serializeBaseFields(HyParViewMessage message, DataOutputPlus out, int version) throws IOException
     {
-        serialize(message.messageId, out);
+        SerializationUtils.serialize(message.messageId, out);
         CompactEndpointSerializationHelper.serialize(message.sender, out);
         out.writeUTF(message.datacenter);
     }
 
     static long serializedSizeBaseFields(HyParViewMessage message, int version)
     {
-        return serializedSize(message.messageId) +
+        return SerializationUtils.serializedSize(message.messageId) +
                CompactEndpointSerializationHelper.serializedSize(message.sender) +
                TypeSizes.sizeof(message.datacenter);
     }
 
     static BaseMessageFields deserializeBaseFields(DataInputPlus in, int version) throws IOException
     {
-        GossipMessageId messageId = deserializeMessageId(in);
+        GossipMessageId messageId = SerializationUtils.deserializeMessageId(in);
         InetAddress addr = CompactEndpointSerializationHelper.deserialize(in);
         String datacenter = in.readUTF();
         return new BaseMessageFields(messageId, addr, datacenter);
@@ -91,25 +92,6 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
     }
 
     /*
-        methods for serializing the HPVMessageId
-     */
-    private static void serialize(GossipMessageId messageId, DataOutputPlus out) throws IOException
-    {
-        out.writeInt(messageId.getEpoch());
-        out.writeInt(messageId.getId());
-    }
-
-    private static int serializedSize(GossipMessageId messageId)
-    {
-        return TypeSizes.sizeof(messageId.getEpoch()) + TypeSizes.sizeof(messageId.getId());
-    }
-
-    private static GossipMessageId deserializeMessageId(DataInputPlus in) throws IOException
-    {
-        return new GossipMessageId(in.readInt(), in.readInt());
-    }
-
-    /*
         methods for serializing the optional discconectMessageId field
      */
     private static void serialize(Optional<GossipMessageId> optionalMessageId, DataOutputPlus out) throws IOException
@@ -118,7 +100,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         if (optionalMessageId.isPresent())
         {
             out.write(1);
-            HyParViewMessageSender.serialize(optionalMessageId.get(), out);
+            SerializationUtils.serialize(optionalMessageId.get(), out);
         }
         else
         {
@@ -131,7 +113,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         // byte indicator if there's a last diconnect messageId
         int size = 1;
         if (messageId.isPresent())
-            size += HyParViewMessageSender.serializedSize(messageId.get());
+            size += SerializationUtils.serializedSize(messageId.get());
         return size;
     }
 
@@ -139,7 +121,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
     {
         int disconnectIndicator = in.readByte();
         if (disconnectIndicator == 1)
-            return Optional.of(HyParViewMessageSender.deserializeMessageId(in));
+            return Optional.of(SerializationUtils.deserializeMessageId(in));
         return Optional.empty();
     }
 
@@ -198,7 +180,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         public void serialize(ForwardJoinMessage forwardJoinMessage, DataOutputPlus out, int version) throws IOException
         {
             serializeBaseFields(forwardJoinMessage, out, version);
-            HyParViewMessageSender.serialize(forwardJoinMessage.getOriginatorMessageId(), out);
+            SerializationUtils.serialize(forwardJoinMessage.getOriginatorMessageId(), out);
             CompactEndpointSerializationHelper.serialize(forwardJoinMessage.getOriginator(), out);
             out.writeUTF(forwardJoinMessage.getOriginatorDatacenter());
             out.write(forwardJoinMessage.timeToLive);
@@ -207,7 +189,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         public long serializedSize(ForwardJoinMessage forwardJoinMessage, int version)
         {
             long size = serializedSizeBaseFields(forwardJoinMessage, version);
-            size += HyParViewMessageSender.serializedSize(forwardJoinMessage.getOriginatorMessageId());
+            size += SerializationUtils.serializedSize(forwardJoinMessage.getOriginatorMessageId());
             size += CompactEndpointSerializationHelper.serializedSize(forwardJoinMessage.getOriginator());
             size += TypeSizes.sizeof(forwardJoinMessage.getOriginatorDatacenter());
             size += 1; // timeToLive field
@@ -218,7 +200,7 @@ public class HyParViewMessageSender implements MessageSender<HyParViewMessage>
         public ForwardJoinMessage deserialize(DataInputPlus in, int version) throws IOException
         {
             BaseMessageFields fields = HyParViewMessageSender.deserializeBaseFields(in, version);
-            GossipMessageId originatorMsgId = HyParViewMessageSender.deserializeMessageId(in);
+            GossipMessageId originatorMsgId = SerializationUtils.deserializeMessageId(in);
             InetAddress originator = CompactEndpointSerializationHelper.deserialize(in);
             String originatorDatacenter = in.readUTF();
             int timeToLove = in.readByte();
