@@ -24,13 +24,13 @@ public class PennStationDispatcher
     private static final Logger logger = LoggerFactory.getLogger(PennStationDispatcher.class);
     private static final int SEED = 1723618723;
 
-    private final Map<InetAddress, NodeContext> peers;
-    private final SeedProvider seedProvider;
+    protected final Map<InetAddress, NodeContext> peers;
+    protected final SeedProvider seedProvider;
 
-    private final Random random;
-    private final AtomicInteger currentlyProcessingCount = new AtomicInteger();
-    private final AtomicInteger totalMessagesSent = new AtomicInteger();
-    private final boolean verbose;
+    protected final Random random;
+    protected final AtomicInteger currentlyProcessingCount = new AtomicInteger();
+    protected final AtomicInteger totalMessagesSent = new AtomicInteger();
+    protected final boolean verbose;
 
     public PennStationDispatcher(boolean verbose)
     {
@@ -98,9 +98,7 @@ public class PennStationDispatcher
     public void shutdown()
     {
         for (NodeContext context : peers.values())
-        {
-            context.scheduler.shutdownNow();
-        }
+            context.shutdown();
     }
 
     public void dumpCurrentState()
@@ -132,13 +130,13 @@ public class PennStationDispatcher
         return peers.keySet();
     }
 
-    class NodeContext
+    public class NodeContext
     {
-        final HyParViewService hpvService;
-        final ScheduledThreadPoolExecutor scheduler;
+        protected final HyParViewService hpvService;
+        protected final ScheduledThreadPoolExecutor scheduler;
 
-        NodeContext(InetAddress addr, String datacenter, SeedProvider seedProvider,
-                           SimulationMessageSender messageSender)
+        protected NodeContext(InetAddress addr, String datacenter, SeedProvider seedProvider,
+                              SimulationMessageSender messageSender)
         {
             scheduler = new ScheduledThreadPoolExecutor(1);
             hpvService = new HyParViewService(addr, datacenter, seedProvider, messageSender, scheduler, scheduler, 3);
@@ -172,6 +170,13 @@ public class PennStationDispatcher
         {
             hpvService.checkFullActiveView();
             currentlyProcessingCount.decrementAndGet();
+        }
+
+        public void shutdown()
+        {
+            scheduler.shutdown();
+            // do not call HyParViewService.shutdown() as it will send out more messages to peers,
+            // announcing the shutdown - which we don't care about about here
         }
     }
 

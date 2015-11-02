@@ -81,8 +81,9 @@ public class HyParViewSimulator
                 try
                 {
                     long start = System.nanoTime();
-                    executeCluster(new int[]{ i }, false);
-                    dispatcher.shutdown();
+                    dispatcher = new PennStationDispatcher(false);
+                    executeCluster(dispatcher, new int[]{ i });
+                    assertCluster(dispatcher);
                     long end = System.nanoTime();
                     logger.info("\titeration {} on cluster size {}; time taken: {}ms, msgs sent: {}",
                                 j, i, TimeUnit.MILLISECONDS.convert(end - start, TimeUnit.NANOSECONDS), dispatcher.totalMessagesSent());
@@ -92,14 +93,16 @@ public class HyParViewSimulator
                     logger.error("test run failed" , e);
                     throw e;
                 }
+                finally
+                {
+                    dispatcher.shutdown();
+                }
             }
         }
     }
 
-    void executeCluster(int[] clusterSizePerDatacenter, boolean verbose) throws UnknownHostException
+    public static void executeCluster(PennStationDispatcher dispatcher, int[] clusterSizePerDatacenter) throws UnknownHostException
     {
-        dispatcher = new PennStationDispatcher(verbose);
-
         // add all the nodes to the dispatcher
         for (int i = 0; i < clusterSizePerDatacenter.length; i++)
         {
@@ -129,7 +132,10 @@ public class HyParViewSimulator
             dispatcher.checkActiveView(hpvService.getLocalAddress());
 
         dispatcher.awaitQuiesence();
+    }
 
+    public static void assertCluster(PennStationDispatcher dispatcher)
+    {
         for (HyParViewService hpvService : dispatcher.getNodes())
         {
             assertLocalDatacenter(hpvService, dispatcher);
@@ -138,7 +144,7 @@ public class HyParViewSimulator
         }
     }
 
-    private void assertCompleteMeshCoverage(HyParViewService hpvService, PennStationDispatcher dispatcher)
+    private static void assertCompleteMeshCoverage(HyParViewService hpvService, PennStationDispatcher dispatcher)
     {
         Set<InetAddress> completePeers = new HashSet<>(dispatcher.getPeers());
         Queue<HyParViewService> queue = new LinkedList<>();
@@ -149,7 +155,7 @@ public class HyParViewSimulator
             HyParViewService hpv = queue.poll();
             completePeers.remove(hpv.getLocalAddress());
             // bail out if we have a fully connected mesh
-            if (completePeers.size() == 0)
+            if (completePeers.isEmpty())
                 return;
 
             for (InetAddress peer : hpv.getPeers())
@@ -165,14 +171,14 @@ public class HyParViewSimulator
         logger.info(String.format("%s cannot reach the following peers %s", hpvService.getLocalAddress(), completePeers));
     }
 
-    InetAddress generateAddr(int dc, int node) throws UnknownHostException
+    static InetAddress generateAddr(int dc, int node) throws UnknownHostException
     {
         int thirdOctet = node / 256;
         int fourthOctet = node % 256;
         return InetAddress.getByName(String.format("127.%d.%d.%d", dc, thirdOctet, fourthOctet));
     }
 
-    private void assertLocalDatacenter(HyParViewService hpvService, PennStationDispatcher dispatcher)
+    private static void assertLocalDatacenter(HyParViewService hpvService, PennStationDispatcher dispatcher)
     {
         Assert.assertFalse(String.format("node: %s", hpvService), hpvService.getLocalDatacenterView().isEmpty());
 
@@ -185,7 +191,7 @@ public class HyParViewSimulator
         }
     }
 
-    private void assertRemoteDatacenters(HyParViewService hpvService, PennStationDispatcher dispatcher)
+    private static void assertRemoteDatacenters(HyParViewService hpvService, PennStationDispatcher dispatcher)
     {
         Multimap<String, InetAddress> peers = hpvService.endpointStateSubscriber.getPeers();
 
@@ -238,8 +244,9 @@ public class HyParViewSimulator
                         dcSizes[dcSizes.length - 1] = j;
                         logger.info("******* starting next multi-dc run: {} *********", Arrays.toString(dcSizes));
 
-                        executeCluster(dcSizes, false);
-                        dispatcher.shutdown();
+                        dispatcher = new PennStationDispatcher(false);
+                        executeCluster(dispatcher, dcSizes);
+                        assertCluster(dispatcher);
                         long end = System.nanoTime();
                         logger.info("\ton cluster sizes {}; time taken: {}ms, msgs sent: {}",
                                     Arrays.toString(dcSizes), TimeUnit.MILLISECONDS.convert(end - start, TimeUnit.NANOSECONDS), dispatcher.totalMessagesSent());
@@ -248,6 +255,10 @@ public class HyParViewSimulator
                     {
                         logger.error("test run failed", e);
                         throw e;
+                    }
+                    finally
+                    {
+                        dispatcher.shutdown();
                     }
                 }
             }

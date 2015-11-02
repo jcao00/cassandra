@@ -1,8 +1,8 @@
 package org.apache.cassandra.gossip.thicket;
 
 import java.io.IOException;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.gossip.BroadcastServiceClient;
@@ -12,7 +12,7 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 
 class SimpleClient implements BroadcastServiceClient<String>
 {
-    private final List<String> received = new LinkedList<>();
+    private final Set<String> received = new HashSet<>();
 
     public String getClientName()
     {

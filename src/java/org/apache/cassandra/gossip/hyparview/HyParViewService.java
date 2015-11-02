@@ -818,8 +818,10 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
     {
         if (!executing)
             return;
-        connectivityChecker.cancel(true);
         executing = false;
+
+        if (connectivityChecker != null)
+            connectivityChecker.cancel(true);
 
         for (InetAddress peer : localDatacenterView)
             expungeNode(peer, datacenter, false);
@@ -966,7 +968,14 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
          * The minimum size for the number of nodes in a local datacenter to be larger than
          * to use the natural log for the fanout value.
          */
-        public static final int NATURAL_LOG_THRESHOLD = 10;
+        public static final int NATURAL_LOG_THRESHOLD = 5;
+
+        /**
+         * A constant value that is added to the size of the fanout (for the local datacenter).
+         * According to the HyParView paper (section 4.1), a small constant is added to the natural log
+         * of the cluster size to when determining the fanout.
+         */
+        static final int FANOUT_CONSTANT_ADDITION = 1;
 
         /**
          * Internal mapping of all nodes to their respective datacenters.
@@ -1001,7 +1010,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             int localPeerCount = localPeers.size();
             if (localPeerCount == 0)
                 return 1;
-            return localPeerCount >= NATURAL_LOG_THRESHOLD ? (int)Math.ceil(Math.log(localPeerCount)) : localPeerCount;
+            return localPeerCount >= NATURAL_LOG_THRESHOLD ? (int)Math.ceil(Math.log(localPeerCount)) + FANOUT_CONSTANT_ADDITION : localPeerCount;
         }
 
         public Optional<String> getDatacenter(InetAddress addr)

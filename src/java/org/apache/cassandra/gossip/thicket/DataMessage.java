@@ -11,12 +11,28 @@ public class DataMessage extends ThicketMessage
     public final Object payload;
     public final String client;
 
+    /**
+     * The number of nodes this message has already been passed through on it's traversal
+     * down the spanning tree.
+     */
+    public final int hopCount;
+
     public DataMessage(InetAddress sender, GossipMessageId messageId, InetAddress treeRoot, Object payload, String client, Collection<LoadEstimate> estimates)
     {
         super(sender, messageId, estimates);
         this.treeRoot = treeRoot;
         this.payload = payload;
         this.client = client;
+        hopCount = 1;
+    }
+
+    public DataMessage(InetAddress sender, Collection<LoadEstimate> estimates, DataMessage message)
+    {
+        super(sender, message.messageId, estimates);
+        treeRoot = message.treeRoot;
+        payload = message.payload;
+        client = message.client;
+        hopCount = message.hopCount + 1;
     }
 
     public ThicketMessageType getMessageType()

@@ -64,8 +64,7 @@ public class ThicketServiceTest
     @Test
     public void selectRootBroadcastPeers_Empty()
     {
-        ThicketService thicket = createService(0);
-        Assert.assertTrue(thicket.selectRootBroadcastPeers(Collections.emptyList(), 5).isEmpty());
+        Assert.assertTrue(ThicketService.selectRootBroadcastPeers(Collections.emptyList(), Collections.emptyList(), 5).isEmpty());
     }
 
     @Test
@@ -74,7 +73,7 @@ public class ThicketServiceTest
         int maxSize = 5;
         ThicketService thicket = createService(maxSize - 2);
 
-        Collection<InetAddress> broadcastPeers = thicket.selectRootBroadcastPeers(thicket.getBackupPeers(), maxSize);
+        Collection<InetAddress> broadcastPeers = ThicketService.selectRootBroadcastPeers(Collections.emptyList(), thicket.getBackupPeers(), maxSize);
         Assert.assertFalse(broadcastPeers.isEmpty());
         Assert.assertFalse(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
     }
@@ -85,9 +84,25 @@ public class ThicketServiceTest
         int maxSize = 5;
         ThicketService thicket = createService(maxSize + 2);
 
-        Collection<InetAddress> broadcastPeers = thicket.selectRootBroadcastPeers(thicket.getBackupPeers(), maxSize);
+        Collection<InetAddress> broadcastPeers = ThicketService.selectRootBroadcastPeers(Collections.emptyList(), thicket.getBackupPeers(), maxSize);
         Assert.assertFalse(broadcastPeers.isEmpty());
         Assert.assertFalse(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
+    }
+
+    @Test
+    public void selectRootBroadcastPeers_LargePeersList_WithExistingPeers() throws UnknownHostException
+    {
+        int maxSize = 5;
+        ThicketService thicket = createService(maxSize + 2);
+
+        List<InetAddress> existingPeers = new LinkedList<>();
+        InetAddress peer = thicket.getBackupPeers().iterator().next();
+        existingPeers.add(peer);
+
+        Collection<InetAddress> broadcastPeers = ThicketService.selectRootBroadcastPeers(existingPeers, thicket.getBackupPeers(), maxSize);
+        Assert.assertFalse(broadcastPeers.isEmpty());
+        Assert.assertFalse(Collections.disjoint(broadcastPeers, thicket.getBackupPeers()));
+        Assert.assertTrue(broadcastPeers.contains(peer));
     }
 
     @Test
@@ -95,7 +110,7 @@ public class ThicketServiceTest
     {
         // might be the first (and only) node in the cluster (think standalone testing)
         ThicketService thicket = createService(0);
-        thicket.broadcast("testing..1..2..3", new SimpleClient());
+        thicket.performBroadcast("testing..1..2..3", new SimpleClient());
 
         TestMessageSender messageSender = (TestMessageSender) thicket.messageSender;
         Assert.assertTrue(messageSender.messages.isEmpty());
@@ -106,7 +121,7 @@ public class ThicketServiceTest
     {
         int peersSize = 3;
         ThicketService thicket = createService(peersSize);
-        thicket.broadcast("testing..1..2..3", new SimpleClient());
+        thicket.performBroadcast("testing..1..2..3", new SimpleClient());
 
         TestMessageSender messageSender = (TestMessageSender) thicket.messageSender;
         Assert.assertFalse(messageSender.messages.isEmpty());
@@ -125,8 +140,7 @@ public class ThicketServiceTest
         msgs.trees.put(treeRoot, summary);
         missing.add(msgs);
 
-        ThicketService thicket = createService(1);
-        thicket.removeFromMissing(missing, treeRoot, messageId);
+        ThicketService.removeFromMissing(missing, treeRoot, messageId);
         Assert.assertTrue(msgs.trees.isEmpty());
     }
 
@@ -147,8 +161,7 @@ public class ThicketServiceTest
         msgs.trees.put(treeRoot, summary);
         missing.add(msgs);
 
-        ThicketService thicket = createService(1);
-        thicket.removeFromMissing(missing, treeRoot, messageId);
+        ThicketService.removeFromMissing(missing, treeRoot, messageId);
         MissingSummary missingSummary = msgs.trees.get(treeRoot);
         Assert.assertNotNull(missingSummary);
         Assert.assertEquals(1, missingSummary.messages.size());
@@ -321,8 +334,7 @@ public class ThicketServiceTest
         seen.put(treeRoot, messageId);
 
         Assert.assertFalse(summary.isEmpty());
-        thicket.filterMissingMessages(summary, seen);
-        Assert.assertTrue(summary.isEmpty());
+        Assert.assertTrue(thicket.filterMissingMessages(summary, seen).isEmpty());
     }
 
     @Test
@@ -341,16 +353,15 @@ public class ThicketServiceTest
         seen.put(treeRoot, messageId);
 
         Assert.assertFalse(summary.isEmpty());
-        thicket.filterMissingMessages(summary, seen);
-        Assert.assertFalse(summary.isEmpty());
-        Collection<GossipMessageId> gossipMessageIds = summary.get(treeRoot);
+        Multimap<InetAddress, GossipMessageId> filtered = thicket.filterMissingMessages(summary, seen);
+        Assert.assertFalse(filtered.isEmpty());
+        Collection<GossipMessageId> gossipMessageIds = filtered.get(treeRoot);
         Assert.assertEquals(1, gossipMessageIds.size());
     }
 
     @Test
     public void addToMissingMessages_EmptyExisting() throws UnknownHostException
     {
-        ThicketService thicket = createService(1);
         InetAddress treeRoot = InetAddress.getByName("127.97.21.1");
         GossipMessageId messageId = idGenerator.generate();
 
@@ -359,7 +370,7 @@ public class ThicketServiceTest
 
         InetAddress sender = InetAddress.getByName("127.87.12.221");
         List<MissingMessges> missing = new LinkedList<>();
-        thicket.addToMissingMessages(sender, missing, reportedMissing);
+        ThicketService.addToMissingMessages(sender, missing, reportedMissing);
 
         Assert.assertFalse(missing.isEmpty());
         MissingMessges missingMessges = missing.get(0);
@@ -372,7 +383,6 @@ public class ThicketServiceTest
     @Test
     public void addToMissingMessages_AddToExisting() throws UnknownHostException
     {
-        ThicketService thicket = createService(1);
         InetAddress treeRoot = InetAddress.getByName("127.97.21.1");
         GossipMessageId messageId = idGenerator.generate();
         GossipMessageId messageId2 = idGenerator.generate();
@@ -388,7 +398,7 @@ public class ThicketServiceTest
         sm.add(sender, Collections.singletonList(messageId));
         mm.trees.put(treeRoot, sm);
 
-        thicket.addToMissingMessages(sender, existingMissing, reportedMissing);
+        ThicketService.addToMissingMessages(sender, existingMissing, reportedMissing);
 
         Assert.assertFalse(existingMissing.isEmpty());
         MissingMessges missingMessges = existingMissing.get(0);
