@@ -23,17 +23,15 @@ import org.apache.cassandra.gossip.MessageSender;
 
 public class SimulationMessageSender implements MessageSender<HyParViewMessage>
 {
-    private final InetAddress senderAddress;
     private final PennStationDispatcher dispatcher;
 
-    public SimulationMessageSender(InetAddress senderAddress, PennStationDispatcher dispatcher)
+    public SimulationMessageSender(PennStationDispatcher dispatcher)
     {
-        this.senderAddress = senderAddress;
         this.dispatcher = dispatcher;
     }
 
     public void send(InetAddress destinationAddr, HyParViewMessage message)
     {
-        dispatcher.sendMessage(senderAddress, destinationAddr, message);
+        dispatcher.sendMessage(destinationAddr, message);
     }
 }

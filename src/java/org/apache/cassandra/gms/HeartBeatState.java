@@ -34,12 +34,12 @@ public class HeartBeatState
     private int generation;
     private int version;
 
-    HeartBeatState(int gen)
+    public HeartBeatState(int gen)
     {
         this(gen, 0);
     }
 
-    HeartBeatState(int gen, int ver)
+    public HeartBeatState(int gen, int ver)
     {
         generation = gen;
         version = ver;

@@ -95,7 +95,7 @@ public class HyParViewServiceTest
         SeedProvider seedProvider = new TestSeedProvider(seeds);
         HyParViewService hpvService = new HyParViewService(localNodeAddr, LOCAL_DC, seedProvider, new TestMessageSender(),
                                                            executorService, scheduler, 2);
-        hpvService.testInit(42);
+        hpvService.testInit(42, -1, -1);
 
         return hpvService;
     }

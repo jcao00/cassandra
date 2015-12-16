@@ -59,7 +59,7 @@ public class PennStationDispatcher
 
     public void addPeer(InetAddress addr, String datacenter)
     {
-        SimulationMessageSender messageSender = new SimulationMessageSender(addr, this);
+        SimulationMessageSender messageSender = new SimulationMessageSender(this);
         peers.put(addr, new NodeContext(addr, datacenter, seedProvider, messageSender));
     }
 
@@ -75,30 +75,30 @@ public class PennStationDispatcher
         return peers.get(addr).hpvService;
     }
 
-    public void sendMessage(InetAddress source, InetAddress destination, HyParViewMessage message)
+    public void sendMessage(InetAddress destination, HyParViewMessage message)
     {
-        if (!peers.containsKey(destination))
-        {
-            if (seedProvider.getSeeds().contains(destination))
-                return;
-            logger.info(String.format("%s sending [%s] to non-existent node %s - might be ok", source, message, destination));
+        if (!containsNode(destination))
             return;
-        }
-
         totalMessagesSent.incrementAndGet();
         peers.get(destination).send(message, 0);
     }
 
+    protected boolean containsNode(InetAddress addr)
+    {
+        if (!peers.containsKey(addr))
+        {
+            if (seedProvider.getSeeds().contains(addr))
+                return false;
+            logger.info(String.format("sending not found %s - might be ok", addr));
+            return false;
+        }
+        return true;
+    }
+
     public void checkActiveView(InetAddress destination)
     {
-        if (!peers.containsKey(destination))
-        {
-            if (seedProvider.getSeeds().contains(destination))
-                return;
-            logger.info(String.format("sending runnable to non-existent node %s - might be ok", destination));
-            return;
-        }
-        peers.get(destination).sendCheckActiveView(0);
+        if (containsNode(destination))
+            peers.get(destination).sendCheckActiveView(0);
     }
 
     public void awaitQuiesence()
@@ -157,7 +157,7 @@ public class PennStationDispatcher
         {
             scheduler = new ScheduledThreadPoolExecutor(1);
             hpvService = new HyParViewService(addr, datacenter, seedProvider, messageSender, scheduler, scheduler, 3);
-            hpvService.testInit(Math.abs(random.nextInt()));
+            hpvService.testInit(Math.abs(random.nextInt()), 10, 100);
         }
 
         void send(HyParViewMessage message, long delay)

@@ -19,10 +19,8 @@ package org.apache.cassandra.gossip.thicket;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedList;
-import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +35,7 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gossip.hyparview.HyParViewSimulator;
 import org.apache.cassandra.utils.Pair;
 
@@ -45,13 +44,11 @@ public class ThicketSimulator
     private static final Logger logger = LoggerFactory.getLogger(ThicketSimulator.class);
     TimesSquareDispacher dispatcher;
     AtomicInteger messagePayload;
-    Multimap<InetAddress, Object> sentMessages;
 
     @Before
     public void setup()
     {
         messagePayload = new AtomicInteger();
-        sentMessages = HashMultimap.create();
     }
 
     @After
@@ -66,29 +63,56 @@ public class ThicketSimulator
     {
         System.out.println("***** thicket simulation - establish peer sampling service *****");
         dispatcher = new TimesSquareDispacher(true);
-        HyParViewSimulator.executeCluster(dispatcher, new int[] { 9 });
+        HyParViewSimulator.executeCluster(dispatcher, new int[] { 6 });
+        dispatcher.awaitQuiesence();
         HyParViewSimulator.assertCluster(dispatcher);
         dispatcher.dumpCurrentState();
 
         System.out.println("***** thicket simulation - broadcasting messages *****");
-//        for (int i = 0; i < 1; i++)
-//            broadcastMessages(dispatcher, 1);
-        TimesSquareDispacher.BroadcastNodeContext cxt = dispatcher.selectRandom();
-        for (int i = 0; i < 10; i++)
-        {
-            broadcastMessage(cxt);
-            if (i % 10 == 0)
-                Uninterruptibles.sleepUninterruptibly(10, TimeUnit.MILLISECONDS);
-        }
-        dispatcher.awaitQuiesence();
+        for (int i = 0; i < 1; i++)
+            broadcastMessages(dispatcher, 1);
+            broadcastMessages(dispatcher, 1);
 
-        // give the broadcast trees time to GRAFT, PRUNE, and so on
-        Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+        int limit = 4;
+        int count = 0;
+//        for (InetAddress peer : dispatcher.getPeers())
+//        {
+//            TimesSquareDispacher.BroadcastNodeContext context = dispatcher.getContext(peer);
+//            broadcastMessage(context);
+//            dispatcher.awaitQuiesence();
+//            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+//            System.out.println("***** thicket simulation - assert trees *****");
+//            assertBroadcastTree(dispatcher);
+//            System.out.println("thicket simulation - complete!");
+//            count ++;
+//            if (count == limit)
+//                break;
+//        }
 
-        System.out.println("***** thicket simulation - assert trees *****");
-        assertBroadcastTree(dispatcher, sentMessages);
-
-        System.out.println("thicket simulation - complete!");
+//        TimesSquareDispacher.BroadcastNodeContext cxt = dispatcher.selectRandom();
+//        TimesSquareDispacher.BroadcastNodeContext cxt2 = dispatcher.selectRandom();
+//        for (int i = 0; i < 10; i++)
+//        {
+//            broadcastMessage(cxt);
+//            dispatcher.awaitQuiesence();
+//            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+//            broadcastMessage(cxt2);
+//            dispatcher.awaitQuiesence();
+//            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+//
+//            System.out.println("***** thicket simulation - assert trees *****");
+//            assertBroadcastTree(dispatcher, sentMessages);
+//            System.out.println("thicket simulation - complete!");
+//        }
+////        dispatcher.awaitQuiesence();
+//
+//        // give the broadcast trees time to GRAFT, PRUNE, and so on
+////        Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+////
+////        System.out.println("***** thicket simulation - assert trees *****");
+////        assertBroadcastTree(dispatcher, sentMessages);
+//
+//        System.out.println("thicket simulation - complete!");
     }
 
     private void broadcastMessages(TimesSquareDispacher dispatcher, int msgCount)
@@ -104,21 +128,21 @@ public class ThicketSimulator
 
     private void broadcastMessage(TimesSquareDispacher.BroadcastNodeContext ctx)
     {
-        String payload = String.valueOf(messagePayload.getAndIncrement());
-        ctx.thicketService.broadcast(payload, ctx.client);
-        sentMessages.put(ctx.thicketService.getLocalAddress(), payload);
+        ctx.broadcastUpdate();
     }
 
-    private static void assertBroadcastTree(TimesSquareDispacher dispatcher, Multimap<InetAddress, Object> sentMessages)
+    private static void assertBroadcastTree(TimesSquareDispacher dispatcher)
     {
         stopThickets(dispatcher);
 
         for (InetAddress addr : dispatcher.getPeers())
         {
             TimesSquareDispacher.BroadcastNodeContext ctx = dispatcher.getContext(addr);
+            dumpTree(dispatcher, ctx.thicketService);
             assertFullCoverage(ctx.thicketService, dispatcher);
-//            assertAllMessagesReceived(ctx, sentMessages);
         }
+
+        restartThickets(dispatcher);
     }
 
     private static void assertFullCoverage(ThicketService thicket, TimesSquareDispacher dispatcher)
@@ -167,52 +191,34 @@ public class ThicketSimulator
         }
 
         // TODO:JEB someday make this an assert that fails - using for information now
-        logger.info(String.format("*** %s broadcast peers: %s", treeRoot, thicket.getBroadcastPeers()));
         logger.error(String.format("%s cannot reach the following peers %s", thicket.getLocalAddress(), completePeers));
     }
 
-    private static String toCsv(InetAddress localAddress, Set<InetAddress> peers)
+    private static void dumpTree(TimesSquareDispacher dispatcher, ThicketService thicket)
     {
-        if (peers.isEmpty())
-            return "";
-
-        StringBuilder sb = new StringBuilder();
-        sb.append(localAddress);
-        for (InetAddress peer : peers)
-            sb.append(',').append(peer);
-        sb.append("\n");
-        return sb.toString();
-    }
-
-    private static void assertAllMessagesReceived(TimesSquareDispacher.BroadcastNodeContext ctx, Multimap<InetAddress, Object> sentMessages)
-    {
-        int receivedSize = ((TimesSquareDispacher.SimpleClient) ctx.client).received.size();
-        if (receivedSize + ctx.thicketService.getBroadcastedMessageCount() != sentMessages.size())
-        {
-            logger.error(String.format("%s only recevied %d messages, out of a toal of %d",
-                                       ctx.thicketService.getLocalAddress(), receivedSize  + ctx.thicketService.getBroadcastedMessageCount(), sentMessages.size()));
+        if (thicket.getBroadcastedMessageCount() == 0)
             return;
-        }
-
-        for (Map.Entry<InetAddress, Collection<Object>> entry : sentMessages.asMap().entrySet())
+        logger.info(String.format("*** tree peers for %s ***", thicket.getLocalAddress()));
+        for (InetAddress addr : dispatcher.getPeers())
         {
-            for (Object payload : entry.getValue())
-            {
-                if (entry.getKey().equals(ctx.thicketService.getLocalAddress()))
-                    continue;
-                if (ctx.client.receive(payload.toString()))
-                {
-                    logger.info(String.format("%s is missing from tree-root %s value %s",
-                                              ctx.thicketService.getLocalAddress(), entry.getKey(), payload));
-//                  Assert.assertFalse();
-                }
-            }
+            TimesSquareDispacher.BroadcastNodeContext context = dispatcher.getContext(addr);
+            ThicketService.BroadcastPeers broadcastPeers = context.thicketService.getBroadcastPeers().get(thicket.getLocalAddress());
+            if (broadcastPeers == null)
+                logger.info(String.format("\t\t%s - no peers in tree", context.thicketService.getLocalAddress()));
+            else
+                logger.info(String.format("\t\t%s %s", context.thicketService.getLocalAddress(), broadcastPeers));
         }
     }
 
     private static void stopThickets(TimesSquareDispacher dispatcher)
     {
         for (InetAddress addr : dispatcher.getPeers())
-            dispatcher.getContext(addr).thicketService.pause();
+            dispatcher.getContext(addr).thicketService.testingPause();
+    }
+
+    private static void restartThickets(TimesSquareDispacher dispatcher)
+    {
+        for (InetAddress addr : dispatcher.getPeers())
+            dispatcher.getContext(addr).thicketService.testingRestart();
     }
 }

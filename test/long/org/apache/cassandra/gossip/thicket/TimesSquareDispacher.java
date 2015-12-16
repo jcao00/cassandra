@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.gossip.thicket;
 
-import java.io.IOException;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -29,14 +28,20 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.dht.Murmur3Partitioner;
+import org.apache.cassandra.gms.ApplicationState;
+import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.HeartBeatState;
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
+import org.apache.cassandra.gms.VersionedValue.VersionedValueFactory;
 import org.apache.cassandra.gossip.BroadcastServiceClient;
+import org.apache.cassandra.gossip.GossipStateChangeListener;
+import org.apache.cassandra.gossip.GossipStateChangeListener.GossipProvider;
 import org.apache.cassandra.gossip.hyparview.PennStationDispatcher;
 import org.apache.cassandra.gossip.hyparview.SimulationMessageSender;
-import org.apache.cassandra.io.IVersionedSerializer;
-import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.locator.SeedProvider;
+import org.apache.cassandra.utils.Pair;
 
 // If keeping with famous NYC transportation hubs for naming the gossip simualtors,
 // I can't bring myself to name this class after the NYC Port Authority.
@@ -52,19 +57,14 @@ public class TimesSquareDispacher extends PennStationDispatcher
 
     public void addPeer(InetAddress addr, String datacenter)
     {
-        SimulationMessageSender messageSender = new SimulationMessageSender(addr, this);
+        SimulationMessageSender messageSender = new SimulationMessageSender(this);
         peers.put(addr, new BroadcastNodeContext(addr, datacenter, seedProvider, messageSender));
     }
 
-    public void sendMessage(InetAddress source, InetAddress destination, ThicketMessage message)
+    public void sendMessage(InetAddress destination, ThicketMessage message)
     {
-        if (!peers.containsKey(destination))
-        {
-            if (seedProvider.getSeeds().contains(destination))
-                return;
-            logger.info(String.format("%s sending [%s] to non-existent node %s - might be ok", source, message, destination));
+        if (!containsNode(destination))
             return;
-        }
 
         totalMessagesSent.incrementAndGet();
         ((BroadcastNodeContext)peers.get(destination)).send(message, 0);
@@ -86,64 +86,31 @@ public class TimesSquareDispacher extends PennStationDispatcher
         return (BroadcastNodeContext)peers.get(addr);
     }
 
-    protected static class SimpleClient implements BroadcastServiceClient<String>
-    {
-        private static final Serializer SERIALIZER = new Serializer();
-        final Set<String> received = new HashSet<>();
-
-        public String getClientName()
-        {
-            return "simple-client";
-        }
-
-        public boolean receive(String payload)
-        {
-            if (received.contains(payload))
-                return false;
-            received.add(payload.toString());
-            return true;
-        }
-
-        public IVersionedSerializer<String> getSerializer()
-        {
-            return SERIALIZER;
-        }
-
-        private static class Serializer implements IVersionedSerializer<String>
-        {
-            public void serialize(String s, DataOutputPlus out, int version) throws IOException
-            {
-                out.writeUTF(s);
-            }
-
-            public long serializedSize(String s, int version)
-            {
-                return TypeSizes.sizeof(s);
-            }
-
-            public String deserialize(DataInputPlus in, int version) throws IOException
-            {
-                return in.readUTF();
-            }
-        }
-    }
-
     protected class BroadcastNodeContext extends NodeContext
     {
         final ThicketService thicketService;
-        final BroadcastServiceClient<String> client;
+        final GossipStateChangeListener client;
+        private final VersionedValueFactory valueFactory;
+
 
         BroadcastNodeContext(InetAddress addr, String datacenter, SeedProvider seedProvider, SimulationMessageSender messageSender)
         {
             super(addr, datacenter, seedProvider, messageSender);
-            BroadcastMessageSender broadcastMessageSender = new BroadcastMessageSender(addr, TimesSquareDispacher.this);
+            valueFactory = new VersionedValueFactory(Murmur3Partitioner.instance);
+            BroadcastMessageSender broadcastMessageSender = new BroadcastMessageSender(TimesSquareDispacher.this);
             // reuse the schedule from the parent class, assuming hyparview and thicket execute in the thread (for each node)
             long summaryRetentionNanos = TimeUnit.NANOSECONDS.convert(10, TimeUnit.MILLISECONDS);
             thicketService = new ThicketService(addr, broadcastMessageSender, scheduler, scheduler, summaryRetentionNanos);
             hpvService.register(thicketService);
-            thicketService.start(hpvService, Math.abs(random.nextInt()), 0, 5, 10, 100);
-            client = new SimpleClient();
+            int epoch = Math.abs(random.nextInt());
+            thicketService.start(hpvService, epoch, 0, 5, 10, 100);
+            client = new GossipStateChangeListener(addr, thicketService, new FakeGossiper(hpvService.endpointStateSubscriber, epoch, valueFactory));
             thicketService.register(client);
+        }
+
+        public void broadcastUpdate()
+        {
+            client.onChange(thicketService.getLocalAddress(), ApplicationState.DC, valueFactory.datacenter("some_datacenter"));
         }
 
         void send(ThicketMessage message, long delay)
@@ -166,6 +133,47 @@ public class TimesSquareDispacher extends PennStationDispatcher
         {
             super.shutdown();
             thicketService.shutdown();
+        }
+    }
+
+    /**
+     * A rudimentary version of {@link Gossiper}, but pluggable for testing
+     */
+    public static class FakeGossiper implements GossipProvider
+    {
+        private final VersionedValueFactory valueFactory;
+        private final IEndpointStateChangeSubscriber stateChangeSubscriber;
+        private final EndpointState endpointState;
+        private final Set<InetAddress> livePeers;
+
+        public FakeGossiper(IEndpointStateChangeSubscriber stateChangeSubscriber, int epoch, VersionedValueFactory valueFactory)
+        {
+            this.stateChangeSubscriber = stateChangeSubscriber;
+            this.valueFactory = valueFactory;
+            livePeers = new HashSet<>();
+
+            endpointState = new EndpointState(new HeartBeatState(epoch));
+            // add in some values to make it look like a real endpoint
+            endpointState.addApplicationState(ApplicationState.DC, valueFactory.datacenter("some_datacenter"));
+            endpointState.addApplicationState(ApplicationState.RACK, valueFactory.rack("some_rack"));
+            endpointState.addApplicationState(ApplicationState.LOAD, valueFactory.load(310.5));
+        }
+
+        public EndpointState getLocalState()
+        {
+            endpointState.getHeartBeatState().updateHeartBeat();
+            return endpointState;
+        }
+
+        public boolean receive(InetAddress addr, EndpointState state)
+        {
+            if (livePeers.add(addr))
+            {
+                // pass some dummy versionedvalue, just to trigger the
+                stateChangeSubscriber.onChange(addr, ApplicationState.DC, valueFactory.datacenter("some_datacenter"));
+            }
+
+            return true;
         }
     }
 }

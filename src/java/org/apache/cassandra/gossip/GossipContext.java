@@ -54,7 +54,7 @@ public class GossipContext
         thicketService = new ThicketService(localAddress, new ThicketMessageSender(),
                                             StageManager.getStage(Stage.GOSSIP), ScheduledExecutors.scheduledTasks);
         hyparviewService.register(thicketService);
-        gossipListener = new GossipStateChangeListener(localAddress, thicketService);
+        gossipListener = new GossipStateChangeListener(localAddress, thicketService, new GossipStateChangeListener.GossiperProvider(localAddress));
         thicketService.register(gossipListener);
 
         if (enabled)

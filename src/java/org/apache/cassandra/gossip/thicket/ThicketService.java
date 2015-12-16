@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Interner;
 import com.google.common.collect.Multimap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -97,7 +98,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     private static final long MESSAGE_ID_RETENTION_TIME = TimeUnit.NANOSECONDS.convert(40, TimeUnit.SECONDS);
 
     /**
-     * The default time limit to retain data from SUMMARY messages, per tree-root.
+     * The default time limit to retain data from SUMMARY messages sent to this node, per tree-root.
      */
     static final long SUMMARY_RETENTION_TIME = TimeUnit.NANOSECONDS.convert(5, TimeUnit.SECONDS);
 
@@ -151,24 +152,24 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     private ScheduledFuture<?> missingMessagesResolver;
 
     /**
-     * Collection of the most recently seen message ids. Entries will be published in SUMMARY messages, then moved to
-     * {@code ThicketService#messagesLedger}, and this list will be cleared for next batch of incoming messages.
+     * Collection of the most recently seen message ids sent via DATA messages. These entries will be published in SUMMARY messages
+     * to other nodes, and then moved to {@code ThicketService#messagesLedger}, and then this list will be cleared for
+     * the next batch of incoming messages.
      */
     private final List<TimestampedMessageId> receivedMessages;
 
     /**
-     * A log of the message ids after they've been published to peers in SUMMARY messages.
-     * We keep them here for a limited time so that we can successfully match against incoming SUMMARY messages that we have indeed
-     * seen the message ids. However, we can't keep the message ids around in memory forever, so we have to expunge them
-     * after some time.
+     * A log of the message ids after they've been published to peers in SUMMARY messages. We keep them here for a limited time
+     * so that we can successfully match against incoming SUMMARY messages to prove that we have indeed seen the message ids.
+     * However, we can't keep the message ids around in memory forever, so we have to expunge them after some time.
      */
     private final List<TimestampedMessageId> messagesLedger;
 
     /**
      * Record of message ids that have been reported to this node via SUMMARY messages, but which we have not seen.
-     * (In the thicket paper, this data structure is referred to as the 'announcements' set.). Missing messages are grouped by the
-     * tree root to which the messages belong, and because branching is unique per-tree, we need to identify uniquely
-     * which tree is broken/partitioned/unhappy so we can repair the appropriate tree.
+     * (In the thicket paper, this data structure is referred to as the 'announcements' set.) Missing messages are grouped by the
+     * tree root to which the messages belong, and because branching is unique per-tree, we need to identify each tree uniquely
+     * to determine which one is broken/partitioned/unhappy so we can repair the appropriate tree.
      */
     private final List<MissingMessges> missingMessages;
 
@@ -233,15 +234,20 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     @VisibleForTesting
-    public void pause()
+    public void testingPause()
     {
         executing = false;
     }
 
+    @VisibleForTesting
+    public void testingRestart()
+    {
+        executing = true;
+    }
+
     /**
-     * Shut down the broadcast behaviors, and clear out some data structures.
-     * On process shutdown, this is not so interesting, but if temporarily stopping gossip (via nodetool, for example)
-     * it will reset everything for starting up again.
+     * Shut down the broadcast behaviors, and clear out some data structures. On process shutdown, this is not very interesting,
+     * but if temporarily stopping gossip (via nodetool, for example) it will reset everything for starting up again.
      */
     public void shutdown()
     {
@@ -263,18 +269,19 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     /**
-     * Broadcast a client's message down through the spanning tree. If we detect that the number of first-level peers
-     * is less than the fanout (probably because a node was shutdown or a partition occured or ...), select additional peers
-     * from the {@link ThicketService#backupPeers} to ensure a full fanout.
-     *
-     * The actual broadcast is scheduled into the internal (single-threaded) executor service as the
-     * act of broadcasting will need to reference internal state, which is not thread-safe.
+     * Broadcast a client's message down through the spanning tree. The actual broadcast is scheduled into the internal,
+     * single-threaded executor service as the act of broadcasting will need to reference internal state, which is not thread-safe.
      */
     public void broadcast(final Object payload, final BroadcastServiceClient client)
     {
         executor.execute(() -> performBroadcast(payload, client));
     }
 
+    /**
+     * Broadcast a client's message down through the spanning tree. If we detect that the number of first-level peers
+     * is less than the fanout (probably because a node was shutdown or a partition occured or ...), select additional peers
+     * from the {@link ThicketService#backupPeers} to ensure a full fanout.
+     */
     void performBroadcast(Object payload, BroadcastServiceClient client)
     {
         GossipMessageId messageId = idGenerator.generate();
@@ -290,7 +297,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             broadcastPeers.put(localAddress, peers);
         }
 
-        DataMessage msg = new DataMessage(localAddress, messageId, localAddress, payload, client.getClientName(), localLoadEstimate(broadcastPeers));
+        DataMessage msg = new DataMessage(localAddress, messageId, localAddress, payload, client.getClientName(), localLoadEstimate(broadcastPeers, localAddress));
         for (InetAddress peer : peers.active)
             messageSender.send(peer, msg);
         broadcastedMessages.incrementAndGet();
@@ -298,7 +305,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     /**
      * Select random peers from {@code peersPool} for the next level of peers in a broadcast tree; remainder peers, if any, will
-     * become the backup list for that tree.
+     * become the backup set for that tree.
      */
     @VisibleForTesting
     static BroadcastPeers selectBroadcastPeers(InetAddress treeRoot, Collection<InetAddress> currentPeers, Collection<InetAddress> peersPool, int maxActive)
@@ -320,27 +327,21 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
                 backup.add(peer);
         }
 
-        if (currentPeers.isEmpty())
-            logger.info("*** for new treeRoot, here's bcastPeers: " + new BroadcastPeers(active, backup));
-
         return new BroadcastPeers(active, backup);
     }
 
     /**
      * Calculate the fanout size, this is, the number of peers that will be broadcast to when the this node has a new
-     * message is wants to send (acting as the tree-root). The fanout size imust be smaller than the {@link PeerSamplingService#getPeers()}
-     * size, and a bit of headroom needs to be saved for healing broken branches, thus fanout must be smaller than the backupPeers size.
-     * As the {@link PeerSamplingService#getPeers()} size already something on the order of the natural log of the node count of
-     * the cluster, as long as we stay below that (or can adjust to that via PRUNE'ing) it should work well.
+     * message is wants to send. The fanout must be smaller than the backupPeers (which is the {@link PeerSamplingService#getPeers()})
+     * size in order to heal broken branches on a given tree-root.
      */
     @VisibleForTesting
     int deriveFanout()
     {
-        int size = peerSamplingService.getPeers().size();
+        int size = backupPeers.size();
         // NOTE: these values weren't scientifically calculated, but seemed reasonable based on comparisions with the thicket paper
         // and other broadcast tree gossip implementations
 
-        // create a fully connected tree, it will prune itself quite quickly if need be
         if (size <= 2)
             return size;
         if (size < 5)
@@ -359,7 +360,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      * Determine the maxLoad for forwarding DATA messages to peers.
      *
      * A careful reading of the thicket and hyparview papers will reveal that thicket's maxLoad value should be
-     * "logarithmic with the number of nodes in the system"; while hyparview's  active view (which becomes thicket's
+     * "logarithmic with the number of nodes in the system"; while hyparview's active view (which becomes thicket's
      * backupPeers set) is "log(n) + c", where n is the number of nodes in the system and c is a constant, usually 1
      * (according to the experiments in the paper). Thus, we would end up with a maxLoad value one less than the size
      * of the backupPeers size - which means there would always be an entry we could never make use of.
@@ -372,13 +373,9 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         return peerSamplingService.getPeers().size();
     }
 
-    /**
-     * Add the message id to the recently seen list.
-     */
     private void recordMessage(InetAddress treeRoot, GossipMessageId messageId)
     {
-        TimestampedMessageId msgId = new TimestampedMessageId(treeRoot, messageId, System.nanoTime() + MESSAGE_ID_RETENTION_TIME);
-        receivedMessages.add(msgId);
+        receivedMessages.add(new TimestampedMessageId(treeRoot, messageId, System.nanoTime() + MESSAGE_ID_RETENTION_TIME));
     }
 
     public void receiveMessage(ThicketMessage message)
@@ -420,13 +417,13 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
         else
         {
-            logger.info(String.format("%s sending PRUNE to %s due to duplicate message", localAddress, message.sender));
-            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), Collections.singletonList(message.treeRoot), localLoadEstimate(broadcastPeers)));
+            logger.info(String.format("%s sending PRUNE to %s due to duplicate message in tree", localAddress, message.sender, message.treeRoot));
+            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), Collections.singletonList(message.treeRoot), localLoadEstimate(broadcastPeers, localAddress)));
         }
     }
 
     /**
-     * Remove an entry from the missing messages collection (for a goven tree root). After removing, if there are no further
+     * Remove an entry from the missing messages collection (for a given tree root). After removing, if there are no further
      * outstanding missing messages ids for the tree-root, remove it's entry from {@code missing}, as well.
      */
     @VisibleForTesting
@@ -448,8 +445,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     /**
-     * Send a received DATA message to peers on downstream branches, if any. The current node can be identified as a leaf in the
-     * tree because it's broadcast peers list will only contain the peer that sent the DATA message to it.
+     * Send a received DATA message to peers on downstream branches, if any.
      */
     void relayMessage(DataMessage message)
     {
@@ -459,13 +455,13 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         // check if we are already a leaf in this tree
         if (peers.size() == 1 && peers.iterator().next().equals(message.sender))
         {
-            // TODO:JEB capture the message.hopCount as a reportable metric (as we're at a leaf)
+            // TODO:JEB capture the message.hopCount as a reportable metric (as we're a leaf)
             return;
         }
 
         if (peers.isEmpty())
         {
-            if (isInterior(broadcastPeers))
+            if (isInterior(broadcastPeers, localAddress))
                 bcastPeers = createLeafEntry(message.sender, backupPeers);
             else
                 bcastPeers = selectBroadcastPeers(message.treeRoot, Collections.singletonList(message.sender), backupPeers, deriveFanout());
@@ -474,7 +470,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             peers = bcastPeers.active;
         }
 
-        DataMessage msg = new DataMessage(localAddress, localLoadEstimate(broadcastPeers), message);
+        DataMessage msg = new DataMessage(localAddress, localLoadEstimate(broadcastPeers, localAddress), message);
         peers.stream().filter(peer -> !peer.equals(message.sender) && !peer.equals(message.treeRoot)).forEach(peer -> messageSender.send(peer, msg));
     }
 
@@ -482,7 +478,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      * Check if the current node is interior to at least one tree in the cluster.
      */
     @VisibleForTesting
-    boolean isInterior(Map<InetAddress, BroadcastPeers> broadcastPeers)
+    static boolean isInterior(Map<InetAddress, BroadcastPeers> broadcastPeers, InetAddress localAddress)
     {
         for (Map.Entry<InetAddress, BroadcastPeers> entry : broadcastPeers.entrySet())
         {
@@ -514,8 +510,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     /**
      * Invoked periodically, this will send a SUMMARY message containing all received message IDs to peers in the backup set,
-     * assumming, of course, we have any recently received messages. Further, if this node is at or above it's max load threshold,
-     * it cannot help out other nodes with tree repair, and thus no SUMMARY message is sent out.
+     * assumming, of course, we have any recently received messages.
      *
      * In the Thicket paper, SUMMARY messages are sent to all nodes in the backup peers set. However, we treat the backup peers
      * differently from the paper (nodes are reused across tree-roots), and so we don't have a clean, easy to use set of peers.
@@ -525,13 +520,11 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
          if (!executing || receivedMessages.isEmpty())
             return;
 
-        Collection<LoadEstimate> loadEstimates = localLoadEstimate(broadcastPeers);
-//        if (loadCount(loadEstimates) >= deriveMaxLoad())
-//            return;
-
-        // TODO:JEB this is where we need to split the messages to different backup hosts
+        logger.info(String.format("%s sendSummary() - found some receviedMessages", localAddress));
         Multimap<InetAddress, GossipMessageId> byTreeRoot = convert(receivedMessages);
         Map<InetAddress, Multimap<InetAddress, GossipMessageId>> targetedSummaries = findSummaryTargets(byTreeRoot, broadcastPeers);
+        Collection<LoadEstimate> loadEstimates = localLoadEstimate(broadcastPeers, localAddress);
+        logger.info(String.format("%s sendSummary() - will send SUMMARY to %s", localAddress, targetedSummaries.keySet()));
 
         for (Map.Entry<InetAddress, Multimap<InetAddress, GossipMessageId>> entry : targetedSummaries.entrySet())
         {
@@ -546,16 +539,17 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     /**
      * Create a view of the load estimate for this node that can be sent to peers. The return value will not contain
-     * entries for trees where this node is a leaf (as that does not contribute to the load factor of the node).
+     * entries for trees where this node is a leaf (as that does not contribute to the load factor of the node),
+     * nor will it include it's own tree data (where it acts as the tree-root).
      */
     @VisibleForTesting
-    static Collection<LoadEstimate> localLoadEstimate(Map<InetAddress, BroadcastPeers> broadcastPeers)
+    static Collection<LoadEstimate> localLoadEstimate(Map<InetAddress, BroadcastPeers> broadcastPeers, InetAddress localAddress)
     {
         List<LoadEstimate> estimates = new LinkedList<>();
 
         for (Map.Entry<InetAddress, BroadcastPeers> entry : broadcastPeers.entrySet())
         {
-            if (entry.getValue().active.size() > 1)
+            if (entry.getValue().active.size() > 1 && !entry.getKey().equals(localAddress))
             {
                 // subtract one from the size because we include the upstream peer (the one that sends us the message)
                 // in the list, so remove it from the count as we don't send messages to it in this tree
@@ -567,18 +561,10 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         return estimates;
     }
 
-    private static int loadCount(Collection<LoadEstimate> estimates)
-    {
-        int load = 0;
-        for (LoadEstimate estimate : estimates)
-            load += estimate.load;
-        return load;
-    }
-
     /**
      * Regroup the {@code receivedMessages} to a mapping of {tree-root -> messageIds}.
      */
-    private Multimap<InetAddress, GossipMessageId> convert(List<TimestampedMessageId> receivedMessages)
+    private static Multimap<InetAddress, GossipMessageId> convert(List<TimestampedMessageId> receivedMessages)
     {
         Multimap<InetAddress, GossipMessageId> result = HashMultimap.create();
         for (TimestampedMessageId msgId : receivedMessages)
@@ -596,8 +582,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         {
             BroadcastPeers peers = broadcastPeers.get(entry.getKey());
 
-            // if we've lost the peers entry for the tree or we're already at maxLoad for the tree,
-            // we can't help any peer repair it's branch for the tree, so ignore
+            // if we've lost the peers entry for the tree (maybe it's unavailable/down/out of our peer sampling service view)
+            // or we're already at maxLoad for the tree, we can't help any peer repair it's branch for the tree, so ignore
             if (peers == null || peers.backup.isEmpty())
                 continue;
 
@@ -605,23 +591,22 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             {
                 Multimap<InetAddress, GossipMessageId> messagesForTarget = summariesPerTraget.get(peer);
                 if (messagesForTarget == null)
+                {
                     messagesForTarget = HashMultimap.create();
+                    summariesPerTraget.put(peer, messagesForTarget);
+                }
                 messagesForTarget.putAll(entry.getKey(), entry.getValue());
-                summariesPerTraget.put(peer, messagesForTarget);
             }
         }
 
         return summariesPerTraget;
     }
 
-    /**
-     * Remove expired entries from the {@code messagesLedger}.
-     */
     static void pruneMessageLedger(List<TimestampedMessageId> messagesLedger)
     {
         // perhaps we should bound the overall number of messages in the ledger, as well?
 
-        // prune the message ledger - since this class is single threaded, we can assume the messages are in arrival timestamp order
+        // since this class is single threaded, we can assume the messages are in arrival timestamp order
         final long now = System.nanoTime();
         for (Iterator<TimestampedMessageId> iter = messagesLedger.iterator(); iter.hasNext(); )
         {
@@ -638,17 +623,12 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     void handleSummary(SummaryMessage msg)
     {
-        // do we want to send a response back to the SUMMARY sender? This might be a nice optimization to prevent
-        // peers from sending a bunch of SUMMARY messages to us
-
         recordLoadEstimates(loadEstimates, msg.sender, msg.estimates);
 
         Multimap<InetAddress, GossipMessageId> reportedMissing = filterMissingMessages(msg.receivedMessages, mergeSeenMessages());
 
-        if (reportedMissing.isEmpty())
-            return;
-
-        addToMissingMessages(msg.sender, missingMessages, reportedMissing, summaryRetentionNanos);
+        if (!reportedMissing.isEmpty())
+            addToMissingMessages(msg.sender, missingMessages, reportedMissing, summaryRetentionNanos);
     }
 
     private static void recordLoadEstimates(Multimap<InetAddress, LoadEstimate> localEstimates, InetAddress peer, Collection<LoadEstimate> estimates)
@@ -671,8 +651,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     /**
-     * Filter out messages the local node has already recieved. Mutates the {@code summary} parameter in place to avoid allocating
-     * a new Multimap.
+     * Filter out messages the local node has already recieved.
      */
     @VisibleForTesting
     Multimap<InetAddress, GossipMessageId> filterMissingMessages(Multimap<InetAddress, GossipMessageId> summary, Multimap<InetAddress, GossipMessageId> seenMessagesPerTreeRoot)
@@ -703,6 +682,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     static void addToMissingMessages(InetAddress sender, List<MissingMessges> missingMessages,
                                      Multimap<InetAddress, GossipMessageId> reportedMissing, long summaryRetentionNanos)
     {
+        // add to existing MissingMessages instances
         for (MissingMessges missingMessges : missingMessages)
         {
             for (Map.Entry<InetAddress, MissingSummary> entry : missingMessges.trees.entrySet())
@@ -713,6 +693,10 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             }
         }
 
+        if (reportedMissing.isEmpty())
+            return;
+
+        // now, add to new MissingMessages instance
         MissingMessges msgs = new MissingMessges(System.nanoTime() + summaryRetentionNanos);
         for (Map.Entry<InetAddress, Collection<GossipMessageId>> entry : reportedMissing.asMap().entrySet())
         {
@@ -736,8 +720,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     }
 
     /**
-     * A periodically invoked method that examines the missing messages set that we've recieved vai SUMMARY messages, and if
-     * those message ids are still outstanding, attempts to heal broken branches by GRAFTing peers into the tree.
+     * A periodically invoked method that examines the missing messages set that we've recieved via SUMMARY messages, and if
+     * those message ids are still outstanding, attempts to heal broken branches by GRAFTing peers for the message-specific tree-root.
      */
     void checkMissingMessages()
     {
@@ -770,12 +754,16 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
                     logger.info("**** found a last-ditch GRAFT target! " + target.get());
             }
 
-            logger.info(String.format("checkMissingMessages(): %s - sending GRAFT req to %s", localAddress, target));
             if (target.isPresent())
             {
+                logger.info(String.format("checkMissingMessages(): %s - sending GRAFT req to %s", localAddress, target));
                 messageSender.send(target.get(), new GraftMessage(localAddress, idGenerator.generate(),
-                                                                  Collections.singletonList(entry.getKey()), localLoadEstimate(broadcastPeers)));
+                                                                  Collections.singletonList(entry.getKey()), localLoadEstimate(broadcastPeers, localAddress)));
                 treeRootGrafts.put(entry.getKey(), target.get());
+            }
+            else
+            {
+                logger.warn(String.format("checkMissingMessages(): %s - could not find GRAFT target from SYMAMRY senders %s", localAddress, entry.getValue()));
             }
         }
 
@@ -785,7 +773,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
     /**
      * For each tree-root with missing messages, find potential peers to GRAFT onto.
-     * @return a multimap of tree-root to potential GRAFT peers
      */
     @VisibleForTesting
     static Multimap<InetAddress, InetAddress> discoverGraftCandidates(List<MissingMessges> missing)
@@ -797,7 +784,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         for (MissingMessges msgs : missing)
         {
             // as MissingMessages instances are in order (by timestamp) in the List, if we hit an instance
-            // with a higher timerstamp, we 're iterating
+            // with a higher timerstamp, we're done iterating
             if (msgs.evaluationTimestamp > now)
                 break;
             for (Map.Entry<InetAddress, MissingSummary> entry : msgs.trees.entrySet())
@@ -824,12 +811,24 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
                 filtered.add(candidate);
         }
 
-        if (!filtered.isEmpty())
+        if (filtered.isEmpty())
+            return Optional.empty();
+        if (filtered.size() == 1)
+            return Optional.of(filtered.get(0));
+
+        Collections.shuffle(filtered);
+        int lowestCount = Integer.MAX_VALUE;
+        InetAddress peer = null;
+        for (InetAddress addr : filtered)
         {
-            Collections.shuffle(filtered);
-            return Optional.of(filtered.getFirst());
+            int cnt = loadCount(loadEstimates.get(addr));
+            if (peer == null || cnt < lowestCount)
+            {
+                lowestCount = cnt;
+                peer = addr;
+            }
         }
-        return Optional.empty();
+        return Optional.of(peer);
     }
 
     /**
@@ -844,6 +843,14 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         // should the node be interior to, at the max). The thicket paper is hand-wavy about the 'real' max count when it
         // comes to interiority and healing trees, we'll make our best guess as practicioners.
         return loadCount(loadEstimates) >= maxLoad || loadEstimates.size() >= 3;
+    }
+
+    private static int loadCount(Collection<LoadEstimate> estimates)
+    {
+        int load = 0;
+        for (LoadEstimate estimate : estimates)
+            load += estimate.load;
+        return load;
     }
 
     private static void removeProcessed(List<MissingMessges> missingMessages, Collection<InetAddress> processedTreeRoots)
@@ -887,7 +894,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
          // should we calculate this per-tree, or make life simpler and just take the whole bunch and potentially be interior
         // to more trees?
-        if (!isOverMaxLoad(localLoadEstimate(broadcastPeers), deriveMaxLoad()))
+        Collection<LoadEstimate> loadEstimates = localLoadEstimate(broadcastPeers, localAddress);
+        if (!isOverMaxLoad(loadEstimates, deriveMaxLoad()))
         {
             for (InetAddress treeRoot : message.treeRoots)
             {
@@ -900,8 +908,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
         else
         {
-//            logger.info(String.format("%s sending PRUNE to %s due denied GRAFT", localAddress, message.sender));
-            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, localLoadEstimate(broadcastPeers)));
+            logger.info(String.format("%s sending PRUNE to %s due to denied GRAFT", localAddress, message.sender));
+            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, loadEstimates));
         }
     }
 

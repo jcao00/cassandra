@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.gossip;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.util.EnumSet;
 
@@ -27,13 +28,18 @@ import org.apache.cassandra.gms.HeartBeatState;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms.VersionedValue;
 import org.apache.cassandra.io.IVersionedSerializer;
+import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.CompactEndpointSerializationHelper;
+import org.apache.cassandra.utils.Pair;
 
 /**
  * Listens to the state changes of the local node and schedules relevant updates for broadcast.
  * Conversely, listens to a {@link BroadcastService} for updates about peers.
  */
-class GossipStateChangeListener implements IEndpointStateChangeSubscriber, BroadcastServiceClient<EndpointState>
+public class GossipStateChangeListener implements IEndpointStateChangeSubscriber, BroadcastServiceClient<Pair<InetAddress, EndpointState>>
 {
+    private static final IVersionedSerializer<Pair<InetAddress, EndpointState>> serializer = new AddressAndEndpointSerializer();
     private static final String CLIENT_NAME = "GOSSIP_LISTENER";
 
     /**
@@ -44,14 +50,17 @@ class GossipStateChangeListener implements IEndpointStateChangeSubscriber, Broad
                                                                 ApplicationState.INTERNAL_IP, ApplicationState.SEVERITY);
     private final InetAddress localAddress;
     private final BroadcastService broadcastService;
+    private final GossipProvider gossipProvider;
 
     private double lastSeverityValue = -1;
     private HeartBeatState lastBroadcastedState;
 
-    public GossipStateChangeListener(InetAddress localAddress, BroadcastService broadcastService)
+    public GossipStateChangeListener(InetAddress localAddress, BroadcastService broadcastService,
+                                     GossipProvider gossipProvider)
     {
         this.localAddress = localAddress;
         this.broadcastService = broadcastService;
+        this.gossipProvider = gossipProvider;
     }
 
     public void onJoin(InetAddress endpoint, EndpointState epState)
@@ -70,9 +79,12 @@ class GossipStateChangeListener implements IEndpointStateChangeSubscriber, Broad
         if (!localAddress.equals(endpoint) || !STATES.contains(state))
             return;
 
-        EndpointState epState = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+        EndpointState epState = gossipProvider.getLocalState();
+        if (epState == null)
+            return;
+
         HeartBeatState currentHeartBeat = epState.getHeartbeatSnapshot();
-        if (lastBroadcastedState.compareTo(currentHeartBeat) >= 0)
+        if (lastBroadcastedState != null && lastBroadcastedState.compareTo(currentHeartBeat) >= 0)
             return;
 //        currentHeartBeat.updateHeartBeat();
 
@@ -81,7 +93,7 @@ class GossipStateChangeListener implements IEndpointStateChangeSubscriber, Broad
         if (ApplicationState.SEVERITY == state && Double.parseDouble(value.value) != lastSeverityValue)
             return;
 
-        broadcastService.broadcast(epState, this);
+        broadcastService.broadcast(Pair.create(localAddress, epState), this);
         lastBroadcastedState = epState.getHeartbeatSnapshot();
     }
 
@@ -110,16 +122,72 @@ class GossipStateChangeListener implements IEndpointStateChangeSubscriber, Broad
         return CLIENT_NAME;
     }
 
-    public boolean receive(EndpointState payload)
+    public boolean receive(Pair<InetAddress, EndpointState> payload)
     {
-        //TODO:JEB actaully do some deserialization or something ....
-        InetAddress peer = null;
-        EndpointState broadcastState = (EndpointState)payload;
-        return Gossiper.instance.acceptBroadcast(peer, broadcastState);
+        return gossipProvider.receive(payload.left, payload.right);
     }
 
-    public IVersionedSerializer<EndpointState> getSerializer()
+    public IVersionedSerializer<Pair<InetAddress, EndpointState>> getSerializer()
     {
-        return EndpointState.serializer;
+        return serializer;
+    }
+
+    /**
+     * Needed as EndpointState nor it's serializer retain the addr of the host that owns the EndopintState
+     */
+    private static class AddressAndEndpointSerializer implements IVersionedSerializer<Pair<InetAddress, EndpointState>>
+    {
+        public void serialize(Pair<InetAddress, EndpointState> pair, DataOutputPlus out, int version) throws IOException
+        {
+            CompactEndpointSerializationHelper.serialize(pair.left, out);
+            EndpointState.serializer.serialize(pair.right, out, version);
+        }
+
+        public long serializedSize(Pair<InetAddress, EndpointState> pair, int version)
+        {
+            long size = CompactEndpointSerializationHelper.serializedSize(pair.left);
+            size += EndpointState.serializer.serializedSize(pair.right, version);
+            return size;
+        }
+
+        public Pair<InetAddress, EndpointState> deserialize(DataInputPlus in, int version) throws IOException
+        {
+            InetAddress addr = CompactEndpointSerializationHelper.deserialize(in);
+            EndpointState state = EndpointState.serializer.deserialize(in, version);
+            return Pair.create(addr, state);
+        }
+    }
+
+    /**
+     * Abstraction to use {@link GossipStateChangeListener} without a hard, explicit dependency on {@link Gossiper}.
+     */
+    public interface GossipProvider
+    {
+        /**
+         * Called on a node before sending updates about it's endpoint state
+         */
+        EndpointState getLocalState();
+
+        boolean receive(InetAddress addr, EndpointState state);
+    }
+
+    public static class GossiperProvider implements GossipProvider
+    {
+        private final InetAddress localAddress;
+
+        public GossiperProvider(InetAddress localAddress)
+        {
+            this.localAddress = localAddress;
+        }
+
+        public EndpointState getLocalState()
+        {
+            return Gossiper.instance.getEndpointStateForEndpoint(localAddress);
+        }
+
+        public boolean receive(InetAddress addr, EndpointState state)
+        {
+            return Gossiper.instance.acceptBroadcast(addr, state);
+        }
     }
 }

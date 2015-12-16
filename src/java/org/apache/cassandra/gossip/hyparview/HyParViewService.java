@@ -146,7 +146,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
 {
     private static final Logger logger = LoggerFactory.getLogger(HyParViewService.class);
 
-    static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 2;
+    static final int MAX_NEIGHBOR_REQUEST_ATTEMPTS = 3;
 
     /**
      * A default value for the Active Random Walk Length. Not sure if we really need it configurable.
@@ -253,13 +253,6 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         remoteView = new HashMap<>();
     }
 
-    @VisibleForTesting
-    void testInit(int epoch)
-    {
-        idGenerator = new GossipMessageId.IdGenerator(epoch);
-        executing = true;
-    }
-
     // note: this method will most likely be called by an external thread
     public void start(int epoch)
     {
@@ -269,6 +262,16 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         executing = true;
         executorService.execute(this::join);
         connectivityChecker = scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), 1, 1, TimeUnit.MINUTES);
+    }
+
+    @VisibleForTesting
+    void testInit(int epoch, long connectivityCheckStartMillis, long connectivityCheckDelayMillis)
+    {
+        idGenerator = new GossipMessageId.IdGenerator(epoch);
+        executing = true;
+
+        if (0 < connectivityCheckDelayMillis)
+            connectivityChecker = scheduler.scheduleWithFixedDelay(new ClusterConnectivityChecker(), connectivityCheckStartMillis, connectivityCheckDelayMillis, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -872,6 +875,18 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
             sendNeighborRequest(Optional.of(addr), datacenter);
     }
 
+    private void executeCheckFullActiveView()
+    {
+        try
+        {
+            checkFullActiveView();
+        }
+        catch (Exception e)
+        {
+            logger.error("failed to check the hyparview active view size check", e);
+        }
+    }
+
     /**
      * A check that should run periodically to ensure this node is properly connected to the peer sampling service.
      * For the local datacenter, this node should be connected the fanout number of nodes. For remote datacenters,
@@ -892,6 +907,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
                 int fanout = endpointStateSubscriber.fanout(this.datacenter, datacenter);
                 if (localDatacenterView.size() < fanout)
                 {
+                    logger.info(String.format("%s needs more peers in it's local DC", localAddress));
                     List<InetAddress> localPeers = new ArrayList<>(endpointStateSubscriber.peers.get(this.datacenter));
                     localPeers.removeAll(localDatacenterView);
                     localPeers.remove(localAddress);
@@ -1133,7 +1149,7 @@ public class HyParViewService implements PeerSamplingService, IFailureDetectionE
         {
             // because this class will be executed from the scheduled tasks thread, move the actaul execution
             // into the primary exec pool for the owning class
-            executorService.submit(HyParViewService.this::checkFullActiveView);
+            executorService.submit(HyParViewService.this::executeCheckFullActiveView);
         }
     }
 

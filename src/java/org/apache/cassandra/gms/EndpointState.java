@@ -32,8 +32,6 @@ import org.cliffc.high_scale_lib.NonBlockingHashMap;
  * This abstraction represents both the HeartBeatState and the ApplicationState in an EndpointState
  * instance. Any state for a given endpoint can be retrieved from this instance.
  */
-
-
 public class EndpointState
 {
     protected static final Logger logger = LoggerFactory.getLogger(EndpointState.class);
@@ -47,14 +45,14 @@ public class EndpointState
     private volatile long updateTimestamp;
     private volatile boolean isAlive;
 
-    EndpointState(HeartBeatState initialHbState)
+    public EndpointState(HeartBeatState initialHbState)
     {
         hbState = initialHbState;
         updateTimestamp = System.nanoTime();
         isAlive = true;
     }
 
-    HeartBeatState getHeartBeatState()
+    public HeartBeatState getHeartBeatState()
     {
         return hbState;
     }
@@ -79,7 +77,7 @@ public class EndpointState
         return applicationState;
     }
 
-    void addApplicationState(ApplicationState key, VersionedValue value)
+    public void addApplicationState(ApplicationState key, VersionedValue value)
     {
         applicationState.put(key, value);
     }

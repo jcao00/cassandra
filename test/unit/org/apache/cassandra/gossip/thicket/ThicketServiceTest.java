@@ -254,14 +254,12 @@ public class ThicketServiceTest
     @Test
     public void isInterior_EmptyBroadcastPeers()
     {
-        ThicketService thicket = createService(3);
-        Assert.assertFalse(thicket.isInterior(new HashMap<>()));
+        ThicketService.isInterior(new HashMap<>(), localNodeAddr);
     }
 
     @Test
     public void isInterior_OnlyAsLeaf() throws UnknownHostException
     {
-        ThicketService thicket = createService(3);
         Map<InetAddress, BroadcastPeers> broadcastPeers = new HashMap<>();
         for (int i = 0; i < 4; i++)
         {
@@ -269,14 +267,13 @@ public class ThicketServiceTest
             broadcastPeers.put(treeRoot, new BroadcastPeers(Collections.singleton(treeRoot), Collections.emptySet()));
         }
 
-        Assert.assertFalse(thicket.isInterior(broadcastPeers));
+        Assert.assertFalse(ThicketService.isInterior(broadcastPeers, localNodeAddr));
 
     }
 
     @Test
     public void isInterior() throws UnknownHostException
     {
-        ThicketService thicket = createService(3);
         Map<InetAddress, BroadcastPeers> broadcastPeers = new HashMap<>();
         for (int i = 0; i < 4; i++)
         {
@@ -291,13 +288,13 @@ public class ThicketServiceTest
             broadcastPeers.put(treeRoot, new BroadcastPeers(active, Collections.emptySet()));
         }
 
-        Assert.assertTrue(thicket.isInterior(broadcastPeers));
+        Assert.assertTrue(ThicketService.isInterior(broadcastPeers, localNodeAddr));
     }
 
     @Test
     public void localLoadEstimate_Empty()
     {
-        Assert.assertTrue(ThicketService.localLoadEstimate(new HashMap<>()).isEmpty());
+        Assert.assertTrue(ThicketService.localLoadEstimate(new HashMap<>(), localNodeAddr).isEmpty());
     }
 
     @Test
@@ -310,7 +307,7 @@ public class ThicketServiceTest
             broadcastPeers.put(treeRoot, new BroadcastPeers(Collections.singleton(treeRoot), Collections.emptySet()));
         }
 
-        Collection<LoadEstimate> estimates = ThicketService.localLoadEstimate(broadcastPeers);
+        Collection<LoadEstimate> estimates = ThicketService.localLoadEstimate(broadcastPeers, localNodeAddr);
         Assert.assertTrue(estimates.isEmpty());
     }
 
@@ -333,7 +330,7 @@ public class ThicketServiceTest
         }};
         broadcastPeers.put(treeRoot, new BroadcastPeers(active, Collections.emptySet()));
 
-        Collection<LoadEstimate> estimates = ThicketService.localLoadEstimate(broadcastPeers);
+        Collection<LoadEstimate> estimates = ThicketService.localLoadEstimate(broadcastPeers, localNodeAddr);
         Assert.assertEquals(1, estimates.size());
         LoadEstimate estimate = estimates.iterator().next();
         Assert.assertEquals(treeRoot, estimate.treeRoot);
@@ -595,9 +592,9 @@ public class ThicketServiceTest
     @Test
     public void handlePrune() throws UnknownHostException
     {
-        ThicketService thicket = createService(1);
+        ThicketService thicket = createService(2);
         Map<InetAddress, BroadcastPeers> broadcastPeers = thicket.getBroadcastPeers();
-        InetAddress sender = InetAddress.getByName("127.123.234.77");
+        InetAddress sender = thicket.getBackupPeers().iterator().next();
 
         Set<InetAddress> active = new HashSet<InetAddress>()
         {{
@@ -607,7 +604,7 @@ public class ThicketServiceTest
         }};
 
         InetAddress treeRoot = InetAddress.getByName("127.123.234.10");
-        broadcastPeers.put(treeRoot, new BroadcastPeers(active, new HashSet<InetAddress>()));
+        broadcastPeers.put(treeRoot, new BroadcastPeers(active, new HashSet<>()));
 
         thicket.handlePrune(new PruneMessage(sender, idGenerator.generate(), new LinkedList<InetAddress>() {{ add(treeRoot); }}, Collections.emptyList()));
         broadcastPeers = thicket.getBroadcastPeers();
