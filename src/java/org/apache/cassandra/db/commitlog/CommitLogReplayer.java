@@ -397,11 +397,6 @@ public class CommitLogReplayer
                         break;
                 }
             }
-            catch(SegmentReader.SegmentReadException e)
-            {
-                handleReplayError(!e.invalidCrc || tolerateTruncation,
-                                  e.getMessage());
-            }
             // unfortunately, AbstractIterator cannot throw a checked excpetion,
             // so check to see if a RuntimeException is wrapping an IOException
             catch (RuntimeException re)

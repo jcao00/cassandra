@@ -57,6 +57,9 @@ public class EncryptionUtils
      * deallocate current, and allocate a large enough buffer.
      * Write the two header lengths (plain text length, compressed length) to the beginning of the buffer as we want those
      * values encapsulated in the encrypted block, as well.
+     *
+     * @return the byte buffer that was actaully written to; it may be the {@code outputBuffer} if it had enough capacity,
+     * or it may be a new, larger instance. Callers should capture the return buffer (if calling multiple times).
      */
     public static ByteBuffer compress(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, ICompressor compressor) throws IOException
     {
@@ -80,7 +83,7 @@ public class EncryptionUtils
      * buffers can be the same buffer (and writing the headers to a shared buffer will corrupt any input data). Hence,
      * we write out the headers directly to the channel, and then the cipher text (once encrypted).
      */
-    public static ByteBuffer encrypt(ByteBuffer inputBuffer, WritableByteChannel channel, boolean allowBufferResize, Cipher cipher) throws IOException
+    public static ByteBuffer encryptAndWrite(ByteBuffer inputBuffer, WritableByteChannel channel, boolean allowBufferResize, Cipher cipher) throws IOException
     {
         final int plainTextLength = inputBuffer.remaining();
         final int encryptLength = cipher.getOutputSize(plainTextLength);
@@ -113,12 +116,15 @@ public class EncryptionUtils
     public static ByteBuffer encrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, Cipher cipher) throws IOException
     {
         Preconditions.checkNotNull(outputBuffer, "output buffer may not be null");
-        return encrypt(inputBuffer, new ChannelAdapter(outputBuffer), allowBufferResize, cipher);
+        return encryptAndWrite(inputBuffer, new ChannelAdapter(outputBuffer), allowBufferResize, cipher);
     }
 
     /**
      * Decrypt the input data, as well as manage sizing of the {@code outputBuffer}; if the buffer is not big enough,
      * deallocate current, and allocate a large enough buffer.
+     *
+     * @return the byte buffer that was actaully written to; it may be the {@code outputBuffer} if it had enough capacity,
+     * or it may be a new, larger instance. Callers should capture the return buffer (if calling multiple times).
      */
     public static ByteBuffer decrypt(ReadableByteChannel channel, ByteBuffer outputBuffer, boolean allowBufferResize, Cipher cipher) throws IOException
     {
@@ -166,6 +172,9 @@ public class EncryptionUtils
     /**
      * Uncompress the input data, as well as manage sizing of the {@code outputBuffer}; if the buffer is not big enough,
      * deallocate current, and allocate a large enough buffer.
+     *
+     * @return the byte buffer that was actaully written to; it may be the {@code outputBuffer} if it had enough capacity,
+     * or it may be a new, larger instance. Callers should capture the return buffer (if calling multiple times).
      */
     public static ByteBuffer uncompress(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize, ICompressor compressor) throws IOException
     {

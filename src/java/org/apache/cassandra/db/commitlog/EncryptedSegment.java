@@ -124,11 +124,10 @@ public class EncryptedSegment extends FileDirectSegment
                 buffer = EncryptionUtils.compress(slice, buffer, true, compressor);
 
                 // reuse the same buffer for the input and output of the encryption operation
-                ByteBuffer encryptedBuffer = EncryptionUtils.encrypt(buffer, channel, true, cipher);
+                buffer = EncryptionUtils.encryptAndWrite(buffer, channel, true, cipher);
 
                 contentStart += nextBlockSize;
-                commitLog.allocator.addSize(encryptedBuffer.limit() + ENCRYPTED_BLOCK_HEADER_SIZE);
-                buffer = maybeSwap(buffer, encryptedBuffer);
+                commitLog.allocator.addSize(buffer.limit() + ENCRYPTED_BLOCK_HEADER_SIZE);
             }
 
             lastWrittenPos = channel.position();
@@ -145,20 +144,14 @@ public class EncryptedSegment extends FileDirectSegment
             channel.write(buffer);
 
             SyncUtil.force(channel, true);
+
+            if (reusableBufferHolder.get().capacity() < buffer.capacity())
+                reusableBufferHolder.set(buffer);
         }
         catch (Exception e)
         {
             throw new FSWriteError(e, getPath());
         }
-    }
-
-    private ByteBuffer maybeSwap(ByteBuffer originalBuffer, ByteBuffer resultBuffer)
-    {
-        if (originalBuffer.capacity() >= resultBuffer.capacity())
-            return originalBuffer;
-
-        reusableBufferHolder.set(resultBuffer);
-        return resultBuffer;
     }
 
     public long onDiskSize()

@@ -98,11 +98,22 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
 
                     return segmenter.nextSegment(currentStart + SYNC_MARKER_SIZE, end);
                 }
+                catch(SegmentReader.SegmentReadException e)
+                {
+                    try
+                    {
+                        CommitLogReplayer.handleReplayError(!e.invalidCrc || tolerateErrors, e.getMessage());
+                    }
+                    catch (IOException ioe)
+                    {
+                        throw new RuntimeException(ioe);
+                    }
+                }
                 catch (IOException e)
                 {
                     try
                     {
-                        boolean tolerateErrorsInSection = tolerateErrors & (end >= reader.length() || end < 0);
+                        boolean tolerateErrorsInSection = tolerateErrors & segmenter.tolerateSegmentErrors(end, reader.length());
                         // if no exception is thrown, the while loop will continue
                         CommitLogReplayer.handleReplayError(tolerateErrorsInSection, e.getMessage());
                     }
@@ -195,6 +206,11 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
          * @throws IOException
          */
         SyncSegment nextSegment(int startPosition, int nextSectionStartPosition) throws IOException;
+
+        default boolean tolerateSegmentErrors(int end, long length)
+        {
+            return end >= length || end < 0;
+        }
     }
 
     static class NoOpSegmenter implements Segmenter
@@ -210,6 +226,11 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
         {
             reader.seek(startPosition);
             return new SyncSegment(reader, startPosition, nextSectionStartPosition, nextSectionStartPosition);
+        }
+
+        public boolean tolerateSegmentErrors(int end, long length)
+        {
+            return true;
         }
     }
 
