@@ -53,6 +53,7 @@ import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.metrics.RestorableMeter;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.*;
+import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.service.paxos.Commit;
 import org.apache.cassandra.service.paxos.PaxosState;
@@ -118,7 +119,14 @@ public final class SystemKeyspace
                 + "PRIMARY KEY ((id)))")
                 .copy(new LocalPartitioner(TimeUUIDType.instance))
                 .compaction(CompactionParams.scts(singletonMap("min_threshold", "2")))
+                .compression(possiblyEncrypt())
                 .gcGraceSeconds(0);
+
+    private static CompressionParams possiblyEncrypt()
+    {
+        EncryptionContext encryptionContext = DatabaseDescriptor.getEncryptionContext();
+        return encryptionContext.isEnabled() ? CompressionParams.encrypt(encryptionContext) : CompressionParams.noCompression();
+    }
 
     private static final CFMetaData Paxos =
         compile(PAXOS,

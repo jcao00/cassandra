@@ -37,6 +37,7 @@ import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.compress.*;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.security.EncryptionContext;
 
 import static java.lang.String.format;
 
@@ -140,6 +141,13 @@ public final class CompressionParams
     public static CompressionParams lz4(Integer chunkLength)
     {
         return new CompressionParams(LZ4Compressor.instance, chunkLength, Collections.emptyMap());
+    }
+
+    public static CompressionParams encrypt(EncryptionContext encryptionContext)
+    {
+        int chunkLength = encryptionContext.getTransparentDataEncryptionOptions().chunk_length_kb;
+        Map<String, String> options = encryptionContext.toHeaderParameters();
+        return new CompressionParams(new EncryptingCompressor(options, encryptionContext), chunkLength, options);
     }
 
     public CompressionParams(String sstableCompressorClass, Integer chunkLength, Map<String, String> otherOptions) throws ConfigurationException
