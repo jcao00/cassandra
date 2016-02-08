@@ -2106,6 +2106,11 @@ public class DatabaseDescriptor
         return conf.otc_coalescing_strategy;
     }
 
+    public static void setOtcCoalescingStrategy(String strategy)
+    {
+        conf.otc_coalescing_strategy = strategy;
+    }
+
     public static int getOtcCoalescingWindow()
     {
         return conf.otc_coalescing_window_us;
