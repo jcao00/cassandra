@@ -35,6 +35,8 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.dht.Murmur3Partitioner;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.dht.OrderPreservingPartitioner.StringToken;
 import org.apache.cassandra.dht.Token;
@@ -165,5 +167,49 @@ public class NetworkTopologyStrategyTest
         Token token1 = new StringToken(token);
         InetAddress add1 = InetAddress.getByAddress(bytes);
         metadata.updateNormalToken(token1, add1);
+    }
+
+    @Test
+    public void calculateNaturalEndpoints_WithoutFilter() throws UnknownHostException
+    {
+        TokenMetadata metadata = new TokenMetadata();
+        int dcCount = 3;
+        int replicationFactor = 3;
+        NetworkTopologyStrategy strategy = buildCluster(metadata, dcCount, replicationFactor);
+        List<InetAddress> addrs = strategy.calculateNaturalEndpoints(new Murmur3Partitioner.LongToken(0), metadata);
+        Assert.assertEquals(dcCount * replicationFactor, addrs.size());
+    }
+
+    private NetworkTopologyStrategy buildCluster(TokenMetadata metadata, int dcCount, int replicationFactor) throws UnknownHostException
+    {
+        IEndpointSnitch snitch = new RackInferringSnitch();
+        DatabaseDescriptor.setEndpointSnitch(snitch);
+        Map<String, String> configOptions = new HashMap<String, String>();
+
+        // set up the cluster
+        int nodesPerDc = 4;
+        for (int dc = 0; dc < dcCount; dc++)
+        {
+            configOptions.put(Integer.toString(dc), Integer.toString(replicationFactor));
+
+            for (int j = 0; j < nodesPerDc; j++)
+            {
+                InetAddress addr = InetAddress.getByName("127." + dc + ".0." + j);
+                metadata.updateNormalToken(new Murmur3Partitioner.LongToken((dc * 100) + (j * 10)), addr);
+            }
+        }
+        return new NetworkTopologyStrategy(keyspaceName, metadata, snitch, configOptions);
+
+    }
+
+    @Test
+    public void calculateNaturalEndpoints_WithFilter() throws UnknownHostException
+    {
+        TokenMetadata metadata = new TokenMetadata();
+        int dcCount = 3;
+        int replicationFactor = 3;
+        NetworkTopologyStrategy strategy = buildCluster(metadata, dcCount, replicationFactor);
+        List<InetAddress> addrs = strategy.calculateNaturalEndpoints(new Murmur3Partitioner.LongToken(0), metadata, "1");
+        Assert.assertEquals(replicationFactor, addrs.size());
     }
 }

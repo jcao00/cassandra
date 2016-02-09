@@ -128,6 +128,14 @@ public abstract class AbstractReplicationStrategy
      */
     public abstract List<InetAddress> calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata);
 
+    /**
+     * @param datacenterFilter allows filtering for nodes only in the datacenter indicated; may be null, in which case no filtering is applied.
+     */
+    public List<InetAddress> calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata, String datacenterFilter)
+    {
+        return calculateNaturalEndpoints(searchToken, tokenMetadata);
+    }
+
     public <T> AbstractWriteResponseHandler<T> getWriteResponseHandler(Collection<InetAddress> naturalEndpoints,
                                                                 Collection<InetAddress> pendingEndpoints,
                                                                 ConsistencyLevel consistency_level,

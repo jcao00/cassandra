@@ -2329,12 +2329,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     private void restoreReplicaCount(InetAddress endpoint, final InetAddress notifyEndpoint)
     {
         Multimap<String, Map.Entry<InetAddress, Collection<Range<Token>>>> rangesToFetch = HashMultimap.create();
+        String removedNodeDatacenter = DatabaseDescriptor.getEndpointSnitch().getDatacenter(endpoint);
 
         InetAddress myAddress = FBUtilities.getBroadcastAddress();
 
         for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
         {
-            Multimap<Range<Token>, InetAddress> changedRanges = getChangedRangesForLeaving(keyspaceName, endpoint);
+            Multimap<Range<Token>, InetAddress> changedRanges = getChangedRangesForLeaving(keyspaceName, endpoint, removedNodeDatacenter);
             Set<Range<Token>> myNewRanges = new HashSet<>();
             for (Map.Entry<Range<Token>, InetAddress> entry : changedRanges.entries())
             {
@@ -2379,7 +2380,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     }
 
     // needs to be modified to accept either a keyspace or ARS.
-    private Multimap<Range<Token>, InetAddress> getChangedRangesForLeaving(String keyspaceName, InetAddress endpoint)
+
+    /**
+     * @param datacenterFilter allows filtering for nodes only in the datacenter indicated; may be null, in which case no filtering is applied.
+     */
+    private Multimap<Range<Token>, InetAddress> getChangedRangesForLeaving(String keyspaceName, InetAddress endpoint, String datacenterFilter)
     {
         // First get all ranges the leaving endpoint is responsible for
         Collection<Range<Token>> ranges = getRangesForEndpoint(keyspaceName, endpoint);
@@ -2392,7 +2397,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         // Find (for each range) all nodes that store replicas for these ranges as well
         TokenMetadata metadata = tokenMetadata.cloneOnlyTokenMap(); // don't do this in the loop! #7758
         for (Range<Token> range : ranges)
-            currentReplicaEndpoints.put(range, Keyspace.open(keyspaceName).getReplicationStrategy().calculateNaturalEndpoints(range.right, metadata));
+            currentReplicaEndpoints.put(range, Keyspace.open(keyspaceName).getReplicationStrategy().calculateNaturalEndpoints(range.right, metadata, datacenterFilter));
 
         TokenMetadata temp = tokenMetadata.cloneAfterAllLeft();
 
@@ -2410,7 +2415,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         // range.
         for (Range<Token> range : ranges)
         {
-            Collection<InetAddress> newReplicaEndpoints = Keyspace.open(keyspaceName).getReplicationStrategy().calculateNaturalEndpoints(range.right, temp);
+            Collection<InetAddress> newReplicaEndpoints = Keyspace.open(keyspaceName).getReplicationStrategy().calculateNaturalEndpoints(range.right, temp, datacenterFilter);
             newReplicaEndpoints.removeAll(currentReplicaEndpoints.get(range));
             if (logger.isDebugEnabled())
                 if (newReplicaEndpoints.isEmpty())
@@ -3527,10 +3532,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     private void unbootstrap(Runnable onFinish)
     {
         Map<String, Multimap<Range<Token>, InetAddress>> rangesToStream = new HashMap<>();
+        String localDc = DatabaseDescriptor.getEndpointSnitch().getDatacenter(FBUtilities.getBroadcastAddress());
 
         for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
         {
-            Multimap<Range<Token>, InetAddress> rangesMM = getChangedRangesForLeaving(keyspaceName, FBUtilities.getBroadcastAddress());
+            Multimap<Range<Token>, InetAddress> rangesMM = getChangedRangesForLeaving(keyspaceName, FBUtilities.getBroadcastAddress(), localDc);
 
             if (logger.isDebugEnabled())
                 logger.debug("Ranges needing transfer are [{}]", StringUtils.join(rangesMM.keySet(), ","));
@@ -3904,6 +3910,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         if (!replicatingNodes.isEmpty())
             throw new UnsupportedOperationException("This node is already processing a removal. Wait for it to complete, or use 'removenode force' if this has failed.");
 
+        String endpointDc = DatabaseDescriptor.getEndpointSnitch().getDatacenter(endpoint);
         // Find the endpoints that are going to become responsible for data
         for (String keyspaceName : Schema.instance.getNonSystemKeyspaces())
         {
@@ -3913,7 +3920,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
             // get all ranges that change ownership (that is, a node needs
             // to take responsibility for new range)
-            Multimap<Range<Token>, InetAddress> changedRanges = getChangedRangesForLeaving(keyspaceName, endpoint);
+            Multimap<Range<Token>, InetAddress> changedRanges = getChangedRangesForLeaving(keyspaceName, endpoint, endpointDc);
             IFailureDetector failureDetector = FailureDetector.instance;
             for (InetAddress ep : changedRanges.values())
             {

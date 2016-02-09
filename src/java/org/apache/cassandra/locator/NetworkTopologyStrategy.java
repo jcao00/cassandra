@@ -80,6 +80,12 @@ public class NetworkTopologyStrategy extends AbstractReplicationStrategy
     @SuppressWarnings("serial")
     public List<InetAddress> calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata)
     {
+        return calculateNaturalEndpoints(searchToken, tokenMetadata, null);
+    }
+
+    @SuppressWarnings("serial")
+    public List<InetAddress> calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata, String datacenterFilter)
+    {
         // we want to preserve insertion order so that the first added endpoint becomes primary
         Set<InetAddress> replicas = new LinkedHashSet<>();
         // replicas we have found in each DC
@@ -111,6 +117,8 @@ public class NetworkTopologyStrategy extends AbstractReplicationStrategy
             Token next = tokenIter.next();
             InetAddress ep = tokenMetadata.getEndpoint(next);
             String dc = snitch.getDatacenter(ep);
+            if (datacenterFilter != null && !datacenterFilter.equals(dc))
+                continue;
             // have we already found all replicas for this dc?
             if (!datacenters.containsKey(dc) || hasSufficientReplicas(dc, dcReplicas, allEndpoints))
                 continue;
