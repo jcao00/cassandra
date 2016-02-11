@@ -378,6 +378,8 @@ public class CassandraDaemon
         // Native transport
         nativeTransportService = new NativeTransportService();
 
+        ClockCheckerService.instance.start();
+
         completeSetup();
     }
 
