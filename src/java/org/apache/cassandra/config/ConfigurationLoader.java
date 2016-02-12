@@ -28,4 +28,6 @@ public interface ConfigurationLoader
      * @throws ConfigurationException if the configuration cannot be properly loaded.
      */
     Config loadConfig() throws ConfigurationException;
+
+    void logConfig();
 }
