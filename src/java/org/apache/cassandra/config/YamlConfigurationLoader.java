@@ -101,8 +101,6 @@ public class YamlConfigurationLoader implements ConfigurationLoader
                 throw new AssertionError(e);
             }
 
-            logConfig(configBytes);
-
             org.yaml.snakeyaml.constructor.Constructor constructor = new org.yaml.snakeyaml.constructor.Constructor(Config.class);
             TypeDescription seedDesc = new TypeDescription(ParameterizedClass.class);
             seedDesc.putMapPropertyType("parameters", String.class, String.class);
@@ -121,18 +119,26 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         }
     }
 
-    private void logConfig(byte[] configBytes)
+    public void logConfig()
     {
-        Map<Object, Object> configMap = new TreeMap<>((Map<?, ?>) new Yaml().load(new ByteArrayInputStream(configBytes)));
-        // these keys contain passwords, don't log them
-        for (String sensitiveKey : new String[] { "client_encryption_options", "server_encryption_options" })
+        try (InputStream is = getStorageConfigURL().openStream())
         {
-            if (configMap.containsKey(sensitiveKey))
+            byte[] configBytes = ByteStreams.toByteArray(is);
+            Map<Object, Object> configMap = new TreeMap<>((Map<?, ?>) new Yaml().load(new ByteArrayInputStream(configBytes)));
+            // these keys contain passwords, don't log them
+            for (String sensitiveKey : new String[] { "client_encryption_options", "server_encryption_options" })
             {
-                configMap.put(sensitiveKey, "<REDACTED>");
+                if (configMap.containsKey(sensitiveKey))
+                {
+                    configMap.put(sensitiveKey, "<REDACTED>");
+                }
             }
+            logger.info("Node configuration:[" + Joiner.on("; ").join(configMap.entrySet()) + "]");
         }
-        logger.info("Node configuration:[{}]", Joiner.on("; ").join(configMap.entrySet()));
+        catch (Exception e)
+        {
+            throw new RuntimeException("failed to log configuration", e);
+        }
     }
 
     private static class MissingPropertiesChecker extends PropertyUtils
