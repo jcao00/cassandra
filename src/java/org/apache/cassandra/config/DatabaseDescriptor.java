@@ -101,6 +101,7 @@ public class DatabaseDescriptor
 
     private static String localDC;
     private static Comparator<InetAddress> localComparator;
+    private static boolean hasLoggedConfig;
 
     public static void forceStaticInitialization() {}
     static
@@ -132,7 +133,15 @@ public class DatabaseDescriptor
         ConfigurationLoader loader = loaderClass == null
                                    ? new YamlConfigurationLoader()
                                    : FBUtilities.<ConfigurationLoader>construct(loaderClass, "configuration loading");
-        return loader.loadConfig();
+        Config config = loader.loadConfig();
+
+        if (!hasLoggedConfig)
+        {
+            hasLoggedConfig = true;
+            loader.logConfig();
+        }
+
+        return config;
     }
 
     private static InetAddress getNetworkInterfaceAddress(String intf, String configName, boolean preferIPv6) throws ConfigurationException
