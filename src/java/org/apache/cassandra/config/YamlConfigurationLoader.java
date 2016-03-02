@@ -27,9 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -160,28 +158,6 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         protected Set<Object> createDefaultSet()
         {
             return Sets.newConcurrentHashSet();
-        }
-    }
-
-    public void logConfig()
-    {
-        try (InputStream is = getStorageConfigURL().openStream())
-        {
-            byte[] configBytes = ByteStreams.toByteArray(is);
-            Map<Object, Object> configMap = new TreeMap<>((Map<?, ?>) new Yaml().load(new ByteArrayInputStream(configBytes)));
-            // these keys contain passwords, don't log them
-            for (String sensitiveKey : new String[] { "client_encryption_options", "server_encryption_options" })
-            {
-                if (configMap.containsKey(sensitiveKey))
-                {
-                    configMap.put(sensitiveKey, "<REDACTED>");
-                }
-            }
-            logger.info("Node configuration:[" + Joiner.on("; ").join(configMap.entrySet()) + "]");
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException("failed to log configuration", e);
         }
     }
 

@@ -140,7 +140,7 @@ public class DatabaseDescriptor
         if (!hasLoggedConfig)
         {
             hasLoggedConfig = true;
-            loader.logConfig();
+            config.log();
         }
 
         return config;
