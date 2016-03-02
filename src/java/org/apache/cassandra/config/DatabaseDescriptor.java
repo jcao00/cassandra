@@ -53,7 +53,6 @@ import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.scheduler.NoScheduler;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.thrift.ThriftServer;
-import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.memory.*;
 
@@ -138,7 +137,7 @@ public class DatabaseDescriptor
         if (!hasLoggedConfig)
         {
             hasLoggedConfig = true;
-            loader.logConfig();
+            config.log();
         }
 
         return config;
