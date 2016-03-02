@@ -89,7 +89,7 @@ public class YamlConfigurationLoader implements ConfigurationLoader
     {
         try
         {
-            logger.info("Loading settings from {}", url);
+            logger.debug("Loading settings from {}", url);
             byte[] configBytes;
             try (InputStream is = url.openStream())
             {
@@ -116,28 +116,6 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         catch (YAMLException e)
         {
             throw new ConfigurationException("Invalid yaml: " + url, e);
-        }
-    }
-
-    public void logConfig()
-    {
-        try (InputStream is = getStorageConfigURL().openStream())
-        {
-            byte[] configBytes = ByteStreams.toByteArray(is);
-            Map<Object, Object> configMap = new TreeMap<>((Map<?, ?>) new Yaml().load(new ByteArrayInputStream(configBytes)));
-            // these keys contain passwords, don't log them
-            for (String sensitiveKey : new String[] { "client_encryption_options", "server_encryption_options" })
-            {
-                if (configMap.containsKey(sensitiveKey))
-                {
-                    configMap.put(sensitiveKey, "<REDACTED>");
-                }
-            }
-            logger.info("Node configuration:[" + Joiner.on("; ").join(configMap.entrySet()) + "]");
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException("failed to log configuration", e);
         }
     }
 

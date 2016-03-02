@@ -136,9 +136,6 @@ public class DatabaseDescriptorTest
             testConfig.cluster_name = "ConfigurationLoader Test";;
             return testConfig;
         }
-
-        public void logConfig()
-        {}
     }
 
     static NetworkInterface suitableInterface = null;
