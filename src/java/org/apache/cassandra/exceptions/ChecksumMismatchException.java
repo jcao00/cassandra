@@ -16,28 +16,19 @@
  * limitations under the License.
  */
 
-package org.apache.cassandra.net.async;
+package org.apache.cassandra.exceptions;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufInputStream;
-import org.apache.cassandra.io.util.DataInputPlus;
+import java.io.IOException;
 
-public class ByteBufDataInputPlus extends ByteBufInputStream implements DataInputPlus
+public class ChecksumMismatchException extends IOException
 {
-    /**
-     * The parent class does not expose the buffer to derived classes, so we need
-     * to stash a reference here so it can be exposed via {@link #buffer()}.
-     */
-    private final ByteBuf buf;
-
-    public ByteBufDataInputPlus(ByteBuf buffer)
+    public ChecksumMismatchException()
     {
-        super(buffer);
-        this.buf = buffer;
+        super();
     }
 
-    public ByteBuf buffer()
+    public ChecksumMismatchException(String s)
     {
-        return buf;
+        super(s);
     }
 }
