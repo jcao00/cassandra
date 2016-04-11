@@ -17,31 +17,56 @@
  */
 package org.apache.cassandra.streaming.messages;
 
-import java.nio.channels.ReadableByteChannel;
+import java.io.IOException;
+import java.util.UUID;
 
-import org.apache.cassandra.io.util.DataOutputStreamPlus;
-import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.io.IVersionedSerializer;
+import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.MessageOut;
+import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.utils.Pair;
 
 public class SessionFailedMessage extends StreamMessage
 {
-    public static Serializer<SessionFailedMessage> serializer = new Serializer<SessionFailedMessage>()
+    public static final IVersionedSerializer<SessionFailedMessage> serializer = new IVersionedSerializer<SessionFailedMessage>()
     {
-        public SessionFailedMessage deserialize(ReadableByteChannel in, int version, StreamSession session)
+        public void serialize(SessionFailedMessage msg, DataOutputPlus out, int version) throws IOException
         {
-            return new SessionFailedMessage();
+            StreamMessage.serialize(msg, out, version);
         }
 
-        public void serialize(SessionFailedMessage message, DataOutputStreamPlus out, int version, StreamSession session) {}
+        public SessionFailedMessage deserialize(DataInputPlus in, int version) throws IOException
+        {
+            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
+            return new SessionFailedMessage(header.left, header.right);
+        }
+
+        public long serializedSize(SessionFailedMessage msg, int version)
+        {
+            return StreamMessage.serializedSize(msg, version);
+        }
     };
 
-    public SessionFailedMessage()
+    public SessionFailedMessage(UUID planId, int sessionIndex)
     {
-        super(Type.SESSION_FAILED);
+        super(planId, sessionIndex);
     }
 
     @Override
-    public String toString()
+    public MessageOut<SessionFailedMessage> createMessageOut()
     {
-        return "Session Failed";
+        return new MessageOut<>(MessagingService.Verb.STREAM_FAILED, this, serializer);
+    }
+
+    public Type getType()
+    {
+        return Type.SESSION_FAILED;
+    }
+
+    @Override
+    public IVersionedSerializer<? extends StreamMessage> getSerializer()
+    {
+        return serializer;
     }
 }

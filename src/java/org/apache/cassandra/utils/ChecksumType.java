@@ -85,4 +85,13 @@ public enum ChecksumType
         checksum.update(data, off, len);
         return checksum.getValue();
     }
+
+    public long of(int... values)
+    {
+        Checksum checksum = instances.get();
+        checksum.reset();
+        for (int i : values)
+            checksum.update(i);
+        return checksum.getValue();
+    }
 }

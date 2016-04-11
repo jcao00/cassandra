@@ -2,6 +2,7 @@ package org.apache.cassandra.net.async;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.util.zip.Checksum;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
@@ -17,7 +18,6 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.ServerChannel;
-import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
@@ -26,6 +26,8 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.compression.Lz4FrameDecoder;
+import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.OpenSsl;
@@ -35,6 +37,8 @@ import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
+import net.jpountz.lz4.LZ4Factory;
+import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
@@ -52,6 +56,11 @@ import org.apache.cassandra.utils.FBUtilities;
 public final class NettyFactory
 {
     private static final Logger logger = LoggerFactory.getLogger(NettyFactory.class);
+
+    /**
+     * Default seed value for xxhash.
+     */
+    public static final int XXHASH_DEFAULT_SEED = 0x9747b28c;
 
     public enum Mode { MESSAGING, STREAMING }
 
@@ -95,11 +104,12 @@ public final class NettyFactory
     private final boolean useEpoll;
     private final EventLoopGroup acceptGroup;
 
-    // TODO:JEB chat more with Ariel about sizing the groups
     private final EventLoopGroup inboundGroup;
     private final EventLoopGroup outboundGroup;
+    final EventLoopGroup streamingInboundGroup;
+    public final EventLoopGroup streamingOutboundGroup;
 
-    private static final PooledByteBufAllocator INTERNODE_MESSAGING_ALLOCATOR = new PooledByteBufAllocator(PlatformDependent.directBufferPreferred());
+    private static final PooledByteBufAllocator INTERNODE_ALLOCATOR = new PooledByteBufAllocator(PlatformDependent.directBufferPreferred());
 
     /**
      * Constructor that allows modifying the {@link NettyFactory#useEpoll} for testing purposes. Otherwise, use the
@@ -113,6 +123,8 @@ public final class NettyFactory
                                         "MessagingService-NettyAcceptor-Threads", false);
         inboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyInbound-Threads", false);
         outboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyOutbound-Threads", true);
+        streamingInboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "Streaming-NettyInbound-Threads", false);
+        streamingOutboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "Streaming-NettyOutbound-Threads", true);
     }
 
     /**
@@ -166,7 +178,7 @@ public final class NettyFactory
         Class<? extends ServerChannel> transport = useEpoll ? EpollServerSocketChannel.class : NioServerSocketChannel.class;
         ServerBootstrap bootstrap = new ServerBootstrap().group(acceptGroup, inboundGroup)
                                                          .channel(transport)
-                                                         .option(ChannelOption.ALLOCATOR, INTERNODE_MESSAGING_ALLOCATOR)
+                                                         .option(ChannelOption.ALLOCATOR, INTERNODE_ALLOCATOR)
                                                          .option(ChannelOption.SO_BACKLOG, 500)
                                                          .childOption(ChannelOption.SO_KEEPALIVE, true)
                                                          .childOption(ChannelOption.TCP_NODELAY, true)
@@ -251,23 +263,24 @@ public final class NettyFactory
      * Create the {@link Bootstrap} for connecting to a remote peer. This method does <b>not</b> attempt to connect to the peer,
      * and thus does not block.
      */
-    Bootstrap createOutboundBootstrap(OutboundConnectionParams params)
+    @VisibleForTesting
+    public Bootstrap createOutboundBootstrap(OutboundConnectionParams params, boolean requiresHandshakeHandler)
     {
         logger.debug("creating outbound bootstrap to peer {}, encryption: {}, coalesce: {}", params.connectionId.connectionAddress(),
                     encryptionLogStatement(params.encryptionOptions),
                      params.coalescingStrategy.isPresent() ? params.coalescingStrategy.get() : CoalescingStrategies.Strategy.DISABLED);
-        Class<? extends Channel>  transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
-        Bootstrap bootstrap = new Bootstrap().group(outboundGroup)
+        Class<? extends Channel> transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
+        Bootstrap bootstrap = new Bootstrap().group(params.mode == Mode.MESSAGING ? outboundGroup : streamingOutboundGroup)
                               .channel(transport)
-                              .option(ChannelOption.ALLOCATOR, INTERNODE_MESSAGING_ALLOCATOR)
+                              .option(ChannelOption.ALLOCATOR, INTERNODE_ALLOCATOR)
                               .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000)
                               .option(ChannelOption.SO_KEEPALIVE, true)
                               .option(ChannelOption.SO_REUSEADDR, true)
                               .option(ChannelOption.SO_SNDBUF, params.sendBufferSize)
                               .option(ChannelOption.SO_RCVBUF, OUTBOUND_CHANNEL_RECEIVE_BUFFER_SIZE)
                               .option(ChannelOption.TCP_NODELAY, params.tcpNoDelay)
-                              .option(ChannelOption.WRITE_BUFFER_WATER_MARK, WriteBufferWaterMark.DEFAULT)
-                              .handler(new OutboundInitializer(params));
+                              .option(ChannelOption.WRITE_BUFFER_WATER_MARK, params.waterMark)
+                              .handler(new OutboundInitializer(params, requiresHandshakeHandler));
         bootstrap.localAddress(params.connectionId.local(), 0);
         bootstrap.remoteAddress(params.connectionId.connectionAddress());
         return bootstrap;
@@ -276,10 +289,12 @@ public final class NettyFactory
     public static class OutboundInitializer extends ChannelInitializer<SocketChannel>
     {
         private final OutboundConnectionParams params;
+        private final boolean requiresHandshakeHandler;
 
-        OutboundInitializer(OutboundConnectionParams params)
+        OutboundInitializer(OutboundConnectionParams params, boolean requiresHandshakeHandler)
         {
             this.params = params;
+            this.requiresHandshakeHandler = requiresHandshakeHandler;
         }
 
         public void initChannel(SocketChannel channel) throws Exception
@@ -298,7 +313,8 @@ public final class NettyFactory
             if (NettyFactory.WIRETRACE)
                 pipeline.addLast("logger", new LoggingHandler(LogLevel.INFO));
 
-            pipeline.addLast(HANDSHAKE_HANDLER_NAME, new OutboundHandshakeHandler(params));
+            if (requiresHandshakeHandler)
+                pipeline.addLast(HANDSHAKE_HANDLER_NAME, new OutboundHandshakeHandler(params));
         }
     }
 
@@ -307,5 +323,35 @@ public final class NettyFactory
         acceptGroup.shutdownGracefully();
         outboundGroup.shutdownGracefully();
         inboundGroup.shutdownGracefully();
+        streamingInboundGroup.shutdownGracefully();
+        streamingOutboundGroup.shutdownGracefully();
+    }
+
+    /**
+     * Determines if the {@link Channel} is using a secure communications transport (like SSL/TLS)
+     */
+    public static boolean isSecure(Channel channel)
+    {
+        return channel.pipeline().get(SslHandler.class) != null;
+    }
+
+    static Lz4FrameEncoder createLz4Encoder()
+    {
+        return new Lz4FrameEncoder(lz4Factory(), false, 1 << 14, createXXHashChecksum());
+    }
+
+    private static Checksum createXXHashChecksum()
+    {
+        return XXHashFactory.fastestInstance().newStreamingHash32(XXHASH_DEFAULT_SEED).asChecksum();
+    }
+
+    public static LZ4Factory lz4Factory()
+    {
+        return LZ4Factory.fastestInstance();
+    }
+
+    static Lz4FrameDecoder createLz4Decoder()
+    {
+        return new Lz4FrameDecoder(lz4Factory(), createXXHashChecksum());
     }
 }

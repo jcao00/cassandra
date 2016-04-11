@@ -205,7 +205,7 @@ public class NettyFactoryTest
                                                                   .connectionId(id)
                                                                   .coalescingStrategy(Optional.empty())
                                                                   .build();
-        return factory.createOutboundBootstrap(params);
+        return factory.createOutboundBootstrap(params, true);
     }
 
     @Test
@@ -255,7 +255,7 @@ public class NettyFactoryTest
                                                                   .connectionId(id)
                                                                   .encryptionOptions(encOptions())
                                                                   .build();
-        OutboundInitializer outboundInitializer = new OutboundInitializer(params);
+        OutboundInitializer outboundInitializer = new OutboundInitializer(params, true);
         NioSocketChannel channel = new NioSocketChannel();
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
         outboundInitializer.initChannel(channel);

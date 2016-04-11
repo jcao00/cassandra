@@ -295,7 +295,7 @@ public class OutboundMessagingConnection
                                                                   .tcpNoDelay(tcpNoDelay)
                                                                   .build();
 
-        return NettyFactory.instance.createOutboundBootstrap(params);
+        return NettyFactory.instance.createOutboundBootstrap(params, true);
     }
 
     static boolean isLocalDC(InetAddress localHost, InetAddress remoteHost)

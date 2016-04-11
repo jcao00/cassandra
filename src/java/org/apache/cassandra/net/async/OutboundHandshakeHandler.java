@@ -32,15 +32,11 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.ByteToMessageDecoder;
-import io.netty.handler.codec.compression.Lz4FrameEncoder;
-import net.jpountz.lz4.LZ4Factory;
-import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.HandshakeProtocol.FirstHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.SecondHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.ThirdHandshakeMessage;
-import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
  * A {@link ChannelHandler} to execute the send-side of the internode communication handshake protocol.
@@ -55,11 +51,9 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
  * This class extends {@link ByteToMessageDecoder}, which is a {@link ChannelInboundHandler}, because this handler
  * waits for the peer's handshake response (the {@link SecondHandshakeMessage} of the internode messaging handshake protocol).
  */
-class OutboundHandshakeHandler extends ByteToMessageDecoder
+public class OutboundHandshakeHandler extends ByteToMessageDecoder
 {
     private static final Logger logger = LoggerFactory.getLogger(OutboundHandshakeHandler.class);
-
-    private static final int LZ4_HASH_SEED = 0x9747b28c;
 
     private final OutboundConnectionIdentifier connectionId;
 
@@ -93,7 +87,9 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
     /**
      * {@inheritDoc}
      *
-     * Invoked when the channel is made active, and sends out the {@link FirstHandshakeMessage}
+     * Invoked when the channel is made active, and sends out the {@link FirstHandshakeMessage}.
+     * In the case of streaming, we do not require a full bi-directional handshake; the initial message,
+     * containing the streaming protocol version, is all that is required.
      */
     @Override
     public void channelActive(final ChannelHandlerContext ctx) throws Exception
@@ -173,8 +169,7 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
     {
         ChannelPipeline pipeline = channel.pipeline();
         if (params.compress)
-            pipeline.addLast(NettyFactory.OUTBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameEncoder(LZ4Factory.fastestInstance(), false, 1 << 14,
-                                                                                                XXHashFactory.fastestInstance().newStreamingHash32(LZ4_HASH_SEED).asChecksum()));
+            pipeline.addLast(NettyFactory.OUTBOUND_COMPRESSOR_HANDLER_NAME, NettyFactory.createLz4Encoder());
 
         ChannelWriter channelWriter = ChannelWriter.create(channel, params.coalescingStrategy);
         pipeline.addLast("messageOutHandler", new MessageOutHandler(connectionId, messagingVersion, channelWriter));

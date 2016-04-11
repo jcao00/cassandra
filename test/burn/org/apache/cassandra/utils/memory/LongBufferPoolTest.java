@@ -99,7 +99,7 @@ public class LongBufferPoolTest
         long prevPoolSize = BufferPool.MEMORY_USAGE_THRESHOLD;
         BufferPool.MEMORY_USAGE_THRESHOLD = poolSize;
         BufferPool.DEBUG = true;
-        // sum(1..n) = n/2 * (n + 1); we set zero to CHUNK_SIZE, so have n=threadCount-1
+        // sum(1..n) = n/2 * (n + 1); we set zero to ZERO_COPY_CHUNK_SIZE, so have n=threadCount-1
         int targetSizeQuanta = ((threadCount) * (threadCount - 1)) / 2;
         // fix targetSizeQuanta at 1/64th our poolSize, so that we only consciously exceed our pool size limit
         targetSizeQuanta = (targetSizeQuanta * poolSize) / 64;

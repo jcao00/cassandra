@@ -43,10 +43,10 @@ import org.apache.cassandra.net.MessagingService;
  * <p>
  * See below for a more precise description of each of those 3 messages.
  * <p>
- * Note that this handshake protocol doesn't fully apply to streaming. For streaming, only the first message is send,
+ * Note that this handshake protocol doesn't fully apply to streaming. For streaming, only the first message is sent,
  * after which the streaming protocol takes over (not documented here)
  */
-class HandshakeProtocol
+public class HandshakeProtocol
 {
     /**
      * The initial message sent when a node creates a new connection to a remote peer. This message contains:
@@ -77,7 +77,7 @@ class HandshakeProtocol
      * VERSION - if a streaming connection, indicates the streaming protocol version {@link org.apache.cassandra.streaming.messages.StreamMessage#CURRENT_VERSION};
      * if a messaging connection, indicates the messaging protocol version the initiator *thinks* should be used.
      */
-    static class FirstHandshakeMessage
+    public static class FirstHandshakeMessage
     {
         /** Contains the PROTOCOL_MAGIC (int) and the flags (int). */
         private static final int LENGTH = 8;
@@ -86,7 +86,7 @@ class HandshakeProtocol
         final NettyFactory.Mode mode;
         final boolean compressionEnabled;
 
-        FirstHandshakeMessage(int messagingVersion, NettyFactory.Mode mode, boolean compressionEnabled)
+        public FirstHandshakeMessage(int messagingVersion, NettyFactory.Mode mode, boolean compressionEnabled)
         {
             this.messagingVersion = messagingVersion;
             this.mode = mode;

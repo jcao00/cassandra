@@ -17,9 +17,9 @@
  */
 package org.apache.cassandra.streaming;
 
-import java.io.IOException;
 import java.net.InetAddress;
-import java.util.*;
+import java.util.Collection;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import com.google.common.util.concurrent.AbstractFuture;
@@ -27,7 +27,6 @@ import com.google.common.util.concurrent.Futures;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.net.IncomingStreamingConnection;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
@@ -73,7 +72,7 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
 
     private StreamResultFuture(UUID planId, String description, boolean keepSSTableLevels, boolean isIncremental, UUID pendingRepair)
     {
-        this(planId, description, new StreamCoordinator(0, keepSSTableLevels, isIncremental, new DefaultConnectionFactory(), false, pendingRepair));
+        this(planId, description, new StreamCoordinator(0, keepSSTableLevels, isIncremental, false, pendingRepair));
     }
 
     static StreamResultFuture init(UUID planId, String description, Collection<StreamEventHandler> listeners,
@@ -103,24 +102,22 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
                                                                     UUID planId,
                                                                     String description,
                                                                     InetAddress from,
-                                                                    IncomingStreamingConnection connection,
-                                                                    boolean isForOutgoing,
-                                                                    int version,
+                                                                    InetAddress connecting,
                                                                     boolean keepSSTableLevel,
                                                                     boolean isIncremental,
-                                                                    UUID pendingRepair) throws IOException
+                                                                    UUID pendingRepair)
     {
         StreamResultFuture future = StreamManager.instance.getReceivingStream(planId);
         if (future == null)
         {
-            logger.info("[Stream #{} ID#{}] Creating new streaming plan for {}", planId, sessionIndex, description);
+            logger.info("[Stream #{} ID#{}] Creating new streaming plan from {} for {}", planId, sessionIndex, from, description);
 
             // The main reason we create a StreamResultFuture on the receiving side is for JMX exposure.
             future = new StreamResultFuture(planId, description, keepSSTableLevel, isIncremental, pendingRepair);
             StreamManager.instance.registerReceiving(future);
         }
-        future.attachConnection(from, sessionIndex, connection, isForOutgoing, version);
-        logger.info("[Stream #{}, ID#{}] Received streaming plan for {}", planId, sessionIndex, description);
+        future.attach(from, sessionIndex, connecting);
+        logger.info("[Stream #{}, ID#{}] Received streaming plan from {} for {}", planId, sessionIndex, from, description);
         return future;
     }
 
@@ -131,11 +128,15 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
         return future;
     }
 
-    private void attachConnection(InetAddress from, int sessionIndex, IncomingStreamingConnection connection, boolean isForOutgoing, int version) throws IOException
+    public StreamCoordinator getCoordinator()
     {
-        StreamSession session = coordinator.getOrCreateSessionById(from, sessionIndex, connection.socket.getInetAddress());
+        return coordinator;
+    }
+
+    private void attach(InetAddress from, int sessionIndex, InetAddress connecting)
+    {
+        StreamSession session = coordinator.getOrCreateSessionById(from, sessionIndex, connecting);
         session.init(this);
-        session.handler.initiateOnReceivingSide(connection, isForOutgoing, version);
     }
 
     public void addEventListener(StreamEventHandler listener)
@@ -206,6 +207,7 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
 
     private synchronized void maybeComplete()
     {
+        logger.warn("[Stream #{}] maybeComplete", planId);
         if (!coordinator.hasActiveSessions())
         {
             StreamState finalState = getCurrentState();
@@ -220,5 +222,10 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
                 set(finalState);
             }
         }
+    }
+
+    StreamSession getSession(InetAddress peer, int sessionIndex)
+    {
+        return coordinator.getSessionById(peer, sessionIndex);
     }
 }

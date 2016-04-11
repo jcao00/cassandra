@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.channels.WritableByteChannel;
 import java.nio.file.StandardOpenOption;
 
 import org.apache.cassandra.io.FSReadError;
@@ -127,18 +126,6 @@ public final class ChannelProxy extends SharedCloseableImpl
         {
             // FIXME: consider wrapping in a while loop
             return channel.read(buffer, position);
-        }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
-    }
-
-    public long transferTo(long position, long count, WritableByteChannel target)
-    {
-        try
-        {
-            return channel.transferTo(position, count, target);
         }
         catch (IOException e)
         {

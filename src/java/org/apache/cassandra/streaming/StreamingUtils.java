@@ -15,16 +15,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.cassandra.streaming;
 
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.Socket;
+import java.util.Collection;
+
+import org.apache.cassandra.io.compress.CompressionMetadata;
+import org.apache.cassandra.streaming.async.StreamingInboundHandler;
+import org.apache.cassandra.utils.Pair;
 
 /**
- * Interface that creates connection used by streaming.
+ * A temporary place to put some functions whilst things are being moved around
  */
-public interface StreamConnectionFactory
+public class StreamingUtils
 {
-    Socket createConnection(InetAddress peer) throws IOException;
+    public static long totalSize(Collection<Pair<Long, Long>> sections)
+    {
+        long size = 0;
+        for (Pair<Long, Long> section : sections)
+            size += section.right - section.left;
+        return size;
+    }
+
+    public static long totalSize(CompressionMetadata.Chunk[] chunks)
+    {
+        long size = 0;
+        // calculate total length of transferring chunks
+        for (CompressionMetadata.Chunk chunk : chunks)
+            size += chunk.length + StreamingInboundHandler.CHECKSUM_LENGTH;
+        return size;
+    }
 }

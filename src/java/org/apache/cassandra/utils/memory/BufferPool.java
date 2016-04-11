@@ -215,7 +215,7 @@ public class BufferPool
      */
     static final class GlobalPool
     {
-        /** The size of a bigger chunk, 1-mbit, must be a multiple of CHUNK_SIZE */
+        /** The size of a bigger chunk, 1-mbit, must be a multiple of ZERO_COPY_CHUNK_SIZE */
         static final int MACRO_CHUNK_SIZE = 1 << 20;
 
         static

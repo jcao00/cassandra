@@ -14,11 +14,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.AdaptiveRecvByteBufAllocator;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.ByteToMessageDecoder;
-import io.netty.handler.codec.compression.Lz4FrameDecoder;
 import io.netty.handler.ssl.SslHandler;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -26,6 +26,8 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.HandshakeProtocol.FirstHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.SecondHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.ThirdHandshakeMessage;
+import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.streaming.async.StreamingInboundHandler;
 
 /**
  * 'Server'-side component that negotiates the internode handshake when establishing a new connection.
@@ -37,7 +39,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
 {
     private static final Logger logger = LoggerFactory.getLogger(NettyFactory.class);
 
-    enum State { START, AWAITING_HANDSHAKE_BEGIN, AWAIT_STREAM_START_RESPONSE, AWAIT_MESSAGING_START_RESPONSE, MESSAGING_HANDSHAKE_COMPLETE, HANDSHAKE_FAIL }
+    enum State { START, AWAITING_HANDSHAKE_BEGIN, AWAIT_MESSAGING_START_RESPONSE, HANDSHAKE_COMPLETE, HANDSHAKE_FAIL }
 
     private State state;
 
@@ -161,9 +163,16 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
 
         if (msg.mode == NettyFactory.Mode.STREAMING)
         {
-            // TODO fill in once streaming is moved to netty
-            ctx.close();
-            return State.AWAIT_STREAM_START_RESPONSE;
+            // streaming connections are per-session and have a fixed version.  we can't do anything with a wrong-version stream connection, so drop it.
+            if (version != StreamSession.CURRENT_VERSION)
+            {
+                logger.warn("Received stream using protocol version %d (my version %d). Terminating connection", version, MessagingService.current_version);
+                ctx.close();
+                return State.HANDSHAKE_FAIL;
+            }
+
+            setupStreamingPipeline(ctx, version);
+            return State.HANDSHAKE_COMPLETE;
         }
         else
         {
@@ -194,6 +203,18 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
             handshakeTimeout = ctx.executor().schedule(() -> failHandshake(ctx), timeout, TimeUnit.MILLISECONDS);
             return State.AWAIT_MESSAGING_START_RESPONSE;
         }
+    }
+
+    private void setupStreamingPipeline(ChannelHandlerContext ctx, int protocolVersion)
+    {
+        ChannelPipeline pipeline = ctx.pipeline();
+        InetSocketAddress address = (InetSocketAddress) ctx.channel().remoteAddress();
+        pipeline.addLast(NettyFactory.instance.streamingInboundGroup, "streamInbound", new StreamingInboundHandler(address, protocolVersion));
+        pipeline.remove(this);
+
+        // pass a custom recv ByteBuf allocator to the channel. the default recv ByteBuf size is 1k, but in streaming we're
+        // dealing with large bulk blocks of data, let's default to larger sizes
+        ctx.channel().config().setRecvByteBufAllocator(new AdaptiveRecvByteBufAllocator(1 << 8, 1 << 13, 1 << 16));
     }
 
     /**
@@ -228,14 +249,14 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
         logger.trace("Set version for {} to {} (will use {})", from, maxVersion, MessagingService.instance().getVersion(from));
 
         setupMessagingPipeline(ctx.pipeline(), from, compressed, version);
-        return State.MESSAGING_HANDSHAKE_COMPLETE;
+        return State.HANDSHAKE_COMPLETE;
     }
 
     @VisibleForTesting
     void setupMessagingPipeline(ChannelPipeline pipeline, InetAddress peer, boolean compressed, int messagingVersion)
     {
         if (compressed)
-            pipeline.addLast(NettyFactory.INBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameDecoder());
+            pipeline.addLast(NettyFactory.INBOUND_COMPRESSOR_HANDLER_NAME, NettyFactory.createLz4Decoder());
 
         pipeline.addLast("messageInHandler", new MessageInHandler(peer, messagingVersion));
         pipeline.remove(this);
@@ -246,7 +267,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
     {
         // we're not really racing on the handshakeTimeout as we're in the event loop,
         // but, hey, defensive programming is beautiful thing!
-        if (state == State.MESSAGING_HANDSHAKE_COMPLETE || (handshakeTimeout != null && handshakeTimeout.isCancelled()))
+        if (state == State.HANDSHAKE_COMPLETE || (handshakeTimeout != null && handshakeTimeout.isCancelled()))
             return;
 
         state = State.HANDSHAKE_FAIL;
