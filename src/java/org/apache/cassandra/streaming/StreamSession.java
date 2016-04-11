@@ -17,37 +17,56 @@
  */
 package org.apache.cassandra.streaming;
 
-import java.io.IOException;
 import java.net.InetAddress;
-import java.net.Socket;
-import java.net.SocketTimeoutException;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.*;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.concurrent.DebuggableScheduledThreadPoolExecutor;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.Keyspace;
+import org.apache.cassandra.db.PartitionPosition;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.lifecycle.SSTableIntervalTree;
 import org.apache.cassandra.db.lifecycle.SSTableSet;
 import org.apache.cassandra.db.lifecycle.View;
-import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.PartitionPosition;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
-import org.apache.cassandra.gms.*;
+import org.apache.cassandra.gms.ApplicationState;
+import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
+import org.apache.cassandra.gms.VersionedValue;
+import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.metrics.StreamingMetrics;
 import org.apache.cassandra.service.ActiveRepairService;
-import org.apache.cassandra.streaming.messages.*;
-import org.apache.cassandra.utils.CassandraVersion;
+import org.apache.cassandra.streaming.async.NettyStreamingConnectionHandler;
+import org.apache.cassandra.streaming.messages.CompleteMessage;
+import org.apache.cassandra.streaming.messages.FileMessageHeader;
+import org.apache.cassandra.streaming.messages.IncomingFileMessage;
+import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
+import org.apache.cassandra.streaming.messages.PrepareAckMessage;
+import org.apache.cassandra.streaming.messages.PrepareSynAckMessage;
+import org.apache.cassandra.streaming.messages.PrepareSynMessage;
+import org.apache.cassandra.streaming.messages.ReceivedMessage;
+import org.apache.cassandra.streaming.messages.RetryMessage;
+import org.apache.cassandra.streaming.messages.SessionFailedMessage;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.Pair;
@@ -118,17 +137,7 @@ import org.apache.cassandra.utils.concurrent.Refs;
  */
 public class StreamSession implements IEndpointStateChangeSubscriber
 {
-
-    /**
-     * Version where keep-alive support was added
-     */
-    private static final CassandraVersion STREAM_KEEP_ALIVE = new CassandraVersion("3.10");
     private static final Logger logger = LoggerFactory.getLogger(StreamSession.class);
-    private static final DebuggableScheduledThreadPoolExecutor keepAliveExecutor = new DebuggableScheduledThreadPoolExecutor("StreamKeepAliveExecutor");
-    static {
-        // Immediately remove keep-alive task when cancelled.
-        keepAliveExecutor.setRemoveOnCancelPolicy(true);
-    }
 
     /**
      * Streaming endpoint.
@@ -151,19 +160,16 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     // data receivers, filled after receiving prepare message
     private final Map<UUID, StreamReceiveTask> receivers = new ConcurrentHashMap<>();
     private final StreamingMetrics metrics;
-    /* can be null when session is created in remote */
-    private final StreamConnectionFactory factory;
 
-    public final Map<String, Set<Range<Token>>> transferredRangesPerKeyspace = new HashMap<>();
+    final Map<String, Set<Range<Token>>> transferredRangesPerKeyspace = new HashMap<>();
 
     public final ConnectionHandler handler;
 
-    private AtomicBoolean isAborted = new AtomicBoolean(false);
+    private final AtomicBoolean isAborted = new AtomicBoolean(false);
     private final boolean keepSSTableLevel;
     private final boolean isIncremental;
-    private ScheduledFuture<?> keepAliveFuture = null;
 
-    public static enum State
+    public enum State
     {
         INITIALIZED,
         PREPARING,
@@ -181,17 +187,13 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      *
      * @param peer Address of streaming peer
      * @param connecting Actual connecting address
-     * @param factory is used for establishing connection
      */
-    public StreamSession(InetAddress peer, InetAddress connecting, StreamConnectionFactory factory, int index, boolean keepSSTableLevel, boolean isIncremental)
+    public StreamSession(InetAddress peer, InetAddress connecting, int index, boolean keepSSTableLevel, boolean isIncremental)
     {
         this.peer = peer;
         this.connecting = connecting;
         this.index = index;
-        this.factory = factory;
-        this.handler = new ConnectionHandler(this, isKeepAliveSupported()?
-                                                   (int)TimeUnit.SECONDS.toMillis(2 * DatabaseDescriptor.getStreamingKeepAlivePeriod()) :
-                                                   DatabaseDescriptor.getStreamingSocketTimeout());
+        this.handler = new NettyStreamingConnectionHandler(this, connecting, StreamMessage.CURRENT_VERSION);
         this.metrics = StreamingMetrics.get(connecting);
         this.keepSSTableLevel = keepSSTableLevel;
         this.isIncremental = isIncremental;
@@ -229,12 +231,6 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         return receivers.get(cfId).getTransaction();
     }
 
-    private boolean isKeepAliveSupported()
-    {
-        CassandraVersion peerVersion = Gossiper.instance.getReleaseVersion(peer);
-        return STREAM_KEEP_ALIVE.isSupportedBy(peerVersion);
-    }
-
     /**
      * Bind this session to report to specific {@link StreamResultFuture} and
      * perform pre-streaming initialization.
@@ -245,13 +241,11 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     {
         this.streamResult = streamResult;
         StreamHook.instance.reportStreamFuture(this, streamResult);
-
-        if (isKeepAliveSupported())
-            scheduleKeepAliveTask();
-        else
-            logger.debug("Peer {} does not support keep-alive.", peer);
     }
 
+    /**
+     * invoked by the node that begins the stream session (it may be sending files, receiving files, or both)
+     */
     public void start()
     {
         if (requests.isEmpty() && transfers.isEmpty())
@@ -266,20 +260,13 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             logger.info("[Stream #{}] Starting streaming to {}{}", planId(),
                                                                    peer,
                                                                    peer.equals(connecting) ? "" : " through " + connecting);
-            handler.initiate();
-            onInitializationComplete();
+            handler.initialize();
         }
         catch (Exception e)
         {
             JVMStabilityInspector.inspectThrowable(e);
             onError(e);
         }
-    }
-
-    public Socket createConnection() throws IOException
-    {
-        assert factory != null;
-        return factory.createConnection(connecting);
     }
 
     /**
@@ -305,7 +292,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      * @param flushTables flush tables?
      * @param repairedAt the time the repair started.
      */
-    public synchronized void addTransferRanges(String keyspace, Collection<Range<Token>> ranges, Collection<String> columnFamilies, boolean flushTables, long repairedAt)
+    synchronized void addTransferRanges(String keyspace, Collection<Range<Token>> ranges, Collection<String> columnFamilies, boolean flushTables, long repairedAt)
     {
         failIfFinished();
         Collection<ColumnFamilyStore> stores = getColumnFamilyStores(keyspace, columnFamilies);
@@ -409,7 +396,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         }
     }
 
-    public synchronized void addTransferFiles(Collection<SSTableStreamingSections> sstableDetails)
+    synchronized void addTransferFiles(Collection<SSTableStreamingSections> sstableDetails)
     {
         failIfFinished();
         Iterator<SSTableStreamingSections> iter = sstableDetails.iterator();
@@ -430,7 +417,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             {
                 //guarantee atomicity
                 StreamTransferTask newTask = new StreamTransferTask(this, cfId);
-                task = transfers.putIfAbsent(cfId, newTask);
+                    task = transfers.putIfAbsent(cfId, newTask);
                 if (task == null)
                     task = newTask;
             }
@@ -465,13 +452,6 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             {
                 for (StreamTask task : Iterables.concat(receivers.values(), transfers.values()))
                     task.abort();
-            }
-
-            if (keepAliveFuture != null)
-            {
-                logger.debug("[Stream #{}] Finishing keep-alive task.", planId());
-                keepAliveFuture.cancel(false);
-                keepAliveFuture = null;
             }
 
             // Note that we shouldn't block on this close because this method is called on the handler
@@ -510,31 +490,37 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         return state == State.COMPLETE;
     }
 
-    public void messageReceived(StreamMessage message)
+    public void receive(StreamMessage message)
     {
-        switch (message.type)
+        logger.debug("**** received stream message: {}", message);
+
+        switch (message.getType())
         {
-            case PREPARE:
-                PrepareMessage msg = (PrepareMessage) message;
-                prepare(msg.requests, msg.summaries);
+            case STREAM_INIT_ACK:
+                onInitializationComplete();
                 break;
-
+            case PREPARE_SYN:
+                receive((PrepareSynMessage)message);
+                break;
+            case PREPARE_SYNACK:
+                receive((PrepareSynAckMessage)message);
+                break;
+            case PREPARE_ACK:
+                receive((PrepareAckMessage)message);
+                break;
             case FILE:
-                receive((IncomingFileMessage) message);
                 break;
-
-            case RECEIVED:
-                ReceivedMessage received = (ReceivedMessage) message;
-                received(received.cfId, received.sequenceNumber);
-                break;
-
             case COMPLETE:
-                complete();
+                receive((CompleteMessage) message);
                 break;
-
+            case RECEIVED:
+                receive((ReceivedMessage) message);
+                break;
             case SESSION_FAILED:
-                sessionFailed();
+                receive((SessionFailedMessage) message);
                 break;
+            default:
+                throw new AssertionError("unhandled StreamMessage type: " + message.getClass().getName());
         }
     }
 
@@ -545,15 +531,11 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     {
         // send prepare message
         state(State.PREPARING);
-        PrepareMessage prepare = new PrepareMessage();
+        PrepareSynMessage prepare = new PrepareSynMessage(planId(), index);
         prepare.requests.addAll(requests);
         for (StreamTransferTask task : transfers.values())
             prepare.summaries.add(task.getSummary());
         handler.sendMessage(prepare);
-
-        // if we don't need to prepare for receiving stream, start sending files immediately
-        if (requests.isEmpty())
-            startStreamingFiles();
     }
 
     /**l
@@ -563,64 +545,54 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      */
     public void onError(Throwable e)
     {
-        logError(e);
+        logger.error("[Stream #{}] Streaming error occurred on session with peer {}{}", planId(),
+                     peer.getHostAddress(),
+                     peer.equals(connecting) ? "" : " through " + connecting.getHostAddress(),
+                     e);
         // send session failure message
-        if (handler.isOutgoingConnected())
-            handler.sendMessage(new SessionFailedMessage());
+        if (handler.connected())
+            handler.sendMessage(new SessionFailedMessage(planId(), index));
         // fail session
         closeSession(State.FAILED);
-    }
-
-    private void logError(Throwable e)
-    {
-        if (e instanceof SocketTimeoutException)
-        {
-            if (isKeepAliveSupported())
-                logger.error("[Stream #{}] Did not receive response from peer {}{} for {} secs. Is peer down? " +
-                             "If not, maybe try increasing streaming_keep_alive_period_in_secs.", planId(),
-                             peer.getHostAddress(),
-                             peer.equals(connecting) ? "" : " through " + connecting.getHostAddress(),
-                             2 * DatabaseDescriptor.getStreamingKeepAlivePeriod(),
-                             e);
-            else
-                logger.error("[Stream #{}] Streaming socket timed out. This means the session peer stopped responding or " +
-                             "is still processing received data. If there is no sign of failure in the other end or a very " +
-                             "dense table is being transferred you may want to increase streaming_socket_timeout_in_ms " +
-                             "property. Current value is {}ms.", planId(), DatabaseDescriptor.getStreamingSocketTimeout(), e);
-        }
-        else
-        {
-            logger.error("[Stream #{}] Streaming error occurred on session with peer {}{}", planId(),
-                                                                                            peer.getHostAddress(),
-                                                                                            peer.equals(connecting) ? "" : " through " + connecting.getHostAddress(),
-                                                                                            e);
-        }
     }
 
     /**
      * Prepare this session for sending/receiving files.
      */
-    public void prepare(Collection<StreamRequest> requests, Collection<StreamSummary> summaries)
+    public void receive(PrepareSynMessage msg)
     {
         // prepare tasks
         state(State.PREPARING);
-        for (StreamRequest request : requests)
+        for (StreamRequest request : msg.requests)
             addTransferRanges(request.keyspace, request.ranges, request.columnFamilies, true, request.repairedAt); // always flush on stream request
-        for (StreamSummary summary : summaries)
+        for (StreamSummary summary : msg.summaries)
             prepareReceiving(summary);
 
-        // send back prepare message if prepare message contains stream request
-        if (!requests.isEmpty())
-        {
-            PrepareMessage prepare = new PrepareMessage();
+        PrepareSynAckMessage prepareSynAck = new PrepareSynAckMessage(planId(), index);
+        // TODO:JEB this is a hack to help out the unit tests
+        if (!peer.equals(FBUtilities.getBroadcastAddress()))
             for (StreamTransferTask task : transfers.values())
-                prepare.summaries.add(task.getSummary());
-            handler.sendMessage(prepare);
+                prepareSynAck.summaries.add(task.getSummary());
+        handler.sendMessage(prepareSynAck);
+    }
+
+    public void receive(PrepareSynAckMessage msg)
+    {
+        if (!msg.summaries.isEmpty())
+        {
+            for (StreamSummary summary : msg.summaries)
+                prepareReceiving(summary);
+
+            // only send the (final) ACK if we are expecting the peer to send this node (the initiator) some files
+            handler.sendMessage(new PrepareAckMessage(planId(), index));
         }
 
-        // if there are files to stream
-        if (!maybeCompleted())
-            startStreamingFiles();
+        startStreamingFiles();
+    }
+
+    public void receive(PrepareAckMessage msg)
+    {
+        startStreamingFiles();
     }
 
     /**
@@ -628,6 +600,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      *
      * @param header sent header
      */
+    // TODO:JEB should this be called?????
     public void fileSent(FileMessageHeader header)
     {
         long headerSize = header.size();
@@ -652,7 +625,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         StreamingMetrics.totalIncomingBytes.inc(headerSize);
         metrics.incomingBytes.inc(headerSize);
         // send back file received message
-        handler.sendMessage(new ReceivedMessage(message.header.cfId, message.header.sequenceNumber));
+        handler.sendMessage(new ReceivedMessage(planId(), index, message.header.cfId, message.header.sequenceNumber));
         receivers.get(message.header.cfId).received(message.sstable);
     }
 
@@ -662,21 +635,30 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         streamResult.handleProgress(progress);
     }
 
-    public void received(UUID cfId, int sequenceNumber)
+    public void receive(ReceivedMessage msg)
     {
-        transfers.get(cfId).complete(sequenceNumber);
+        transfers.get(msg.cfId).complete(msg.sequenceNumber);
+    }
+
+    /**
+     * Call back on receiving {@code StreamMessage.Type.RETRY} message.
+     */
+    public void receive(RetryMessage msg)
+    {
+        OutgoingFileMessage message = transfers.get(msg.cfId).createMessageForRetry(msg.sequenceNumber);
+        handler.sendMessage(message);
     }
 
     /**
      * Check if session is completed on receiving {@code StreamMessage.Type.COMPLETE} message.
      */
-    public synchronized void complete()
+    public synchronized void receive(CompleteMessage msg)
     {
         if (state == State.WAIT_COMPLETE)
         {
             if (!completeSent)
             {
-                handler.sendMessage(new CompleteMessage());
+                handler.sendMessage(new CompleteMessage(planId(), index));
                 completeSent = true;
             }
             closeSession(State.COMPLETE);
@@ -684,24 +666,14 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         else
         {
             state(State.WAIT_COMPLETE);
-            handler.closeIncoming();
-        }
-    }
-
-    private synchronized void scheduleKeepAliveTask()
-    {
-        if (keepAliveFuture == null)
-        {
-            int keepAlivePeriod = DatabaseDescriptor.getStreamingKeepAlivePeriod();
-            logger.debug("[Stream #{}] Scheduling keep-alive task with {}s period.", planId(), keepAlivePeriod);
-            keepAliveFuture = keepAliveExecutor.scheduleAtFixedRate(new KeepAliveTask(), 0, keepAlivePeriod, TimeUnit.SECONDS);
+            handler.close();
         }
     }
 
     /**
      * Call back on receiving {@code StreamMessage.Type.SESSION_FAILED} message.
      */
-    public synchronized void sessionFailed()
+    public synchronized void receive(SessionFailedMessage msg)
     {
         logger.error("[Stream #{}] Remote peer {} failed stream session.", planId(), peer.getHostAddress());
         closeSession(State.FAILED);
@@ -760,7 +732,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             {
                 if (!completeSent)
                 {
-                    handler.sendMessage(new CompleteMessage());
+                    handler.sendMessage(new CompleteMessage(planId(), index));
                     completeSent = true;
                 }
                 closeSession(State.COMPLETE);
@@ -768,10 +740,9 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             else
             {
                 // notify peer that this session is completed
-                handler.sendMessage(new CompleteMessage());
+                handler.sendMessage(new CompleteMessage(planId(), index));
                 completeSent = true;
                 state(State.WAIT_COMPLETE);
-                handler.closeOutgoing();
             }
         }
         return completed;
@@ -804,37 +775,20 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         for (StreamTransferTask task : transfers.values())
         {
             Collection<OutgoingFileMessage> messages = task.getFileMessages();
-            if (messages.size() > 0)
-                handler.sendMessages(messages);
-            else
-                taskCompleted(task); // there is no file to send
-        }
-    }
-
-    class KeepAliveTask implements Runnable
-    {
-        private KeepAliveMessage last = null;
-
-        public void run()
-        {
-            //to avoid jamming the message queue, we only send if the last one was sent
-            if (last == null || last.wasSent())
+            if (!messages.isEmpty())
             {
-                logger.trace("[Stream #{}] Sending keep-alive to {}.", planId(), peer);
-                last = new KeepAliveMessage();
-                try
+                for (OutgoingFileMessage ofm : messages)
                 {
-                    handler.sendMessage(last);
-                }
-                catch (RuntimeException e) //connection handler is closed
-                {
-                    logger.debug("[Stream #{}] Could not send keep-alive message (perhaps stream session is finished?).", planId(), e);
+                    // TODO:JEB beware: hack to pass in the planId (which is only set at start() here, after the transfers have already been created)
+                    ofm.header.addSessionInfo(this);
+                    handler.sendMessage(ofm);
                 }
             }
             else
             {
-                logger.trace("[Stream #{}] Skip sending keep-alive to {} (previous was not yet sent).", planId(), peer);
+                taskCompleted(task); // there is are files to send
             }
         }
+        maybeCompleted();
     }
 }

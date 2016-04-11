@@ -18,17 +18,17 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
-import java.nio.channels.ReadableByteChannel;
 import java.util.List;
+import java.util.UUID;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.streaming.StreamSession;
-import org.apache.cassandra.streaming.StreamWriter;
-import org.apache.cassandra.streaming.compress.CompressedStreamWriter;
-import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.Ref;
 
@@ -37,42 +37,40 @@ import org.apache.cassandra.utils.concurrent.Ref;
  */
 public class OutgoingFileMessage extends StreamMessage
 {
-    public static Serializer<OutgoingFileMessage> serializer = new Serializer<OutgoingFileMessage>()
+    public static final IVersionedSerializer<OutgoingFileMessage> serializer = new IVersionedSerializer<OutgoingFileMessage>()
     {
-        public OutgoingFileMessage deserialize(ReadableByteChannel in, int version, StreamSession session)
+        public void serialize(OutgoingFileMessage message, DataOutputPlus out, int version) throws IOException
+        {
+            message.serialize(out, version);
+        }
+
+        public OutgoingFileMessage deserialize(DataInputPlus in, int version)
         {
             throw new UnsupportedOperationException("Not allowed to call deserialize on an outgoing file");
         }
 
-        public void serialize(OutgoingFileMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
+        public long serializedSize(OutgoingFileMessage message, int version)
         {
-            message.startTransfer();
-            try
-            {
-                message.serialize(out, version, session);
-                session.fileSent(message.header);
-            }
-            finally
-            {
-                message.finishTransfer();
-            }
+            return FileMessageHeader.serializer.serializedSize(message.header, version);
         }
     };
 
     public final FileMessageHeader header;
-    private final Ref<SSTableReader> ref;
+    public final Ref<SSTableReader> ref;
     private final String filename;
     private boolean completed = false;
     private boolean transferring = false;
 
-    public OutgoingFileMessage(Ref<SSTableReader> ref, int sequenceNumber, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt, boolean keepSSTableLevel)
+    public OutgoingFileMessage(Ref<SSTableReader> ref, StreamSession session, int sequenceNumber, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt)
     {
-        super(Type.FILE);
+        super(session.planId(), session.sessionIndex());
         this.ref = ref;
 
         SSTableReader sstable = ref.get();
         filename = sstable.getFilename();
         this.header = new FileMessageHeader(sstable.metadata.cfId,
+                                            session.planId(),
+                                            session.sessionIndex(),
                                             sequenceNumber,
                                             sstable.descriptor.version,
                                             sstable.descriptor.formatType,
@@ -80,25 +78,37 @@ public class OutgoingFileMessage extends StreamMessage
                                             sections,
                                             sstable.compression ? sstable.getCompressionMetadata() : null,
                                             repairedAt,
-                                            keepSSTableLevel ? sstable.getSSTableLevel() : 0,
+                                            session.keepSSTableLevel() ? sstable.getSSTableLevel() : 0,
                                             sstable.header == null ? null : sstable.header.toComponent());
     }
 
-    public synchronized void serialize(DataOutputStreamPlus out, int version, StreamSession session) throws IOException
+    @VisibleForTesting
+    public OutgoingFileMessage(FileMessageHeader header, Ref<SSTableReader> ref, String filename)
+    {
+        super(header.planId, header.sessionIndex);
+        this.ref = ref;
+        this.header = header;
+        this.filename = filename;
+    }
+
+    /**
+     * Constructor solely for tests
+     */
+    @VisibleForTesting
+    public OutgoingFileMessage(UUID planId, int sessionIndex)
+    {
+        super(planId, sessionIndex);
+        this.ref = null;
+        this.header = null;
+        this.filename = null;
+    }
+
+    public void serialize(DataOutputPlus out, int version) throws IOException
     {
         if (completed)
-        {
             return;
-        }
 
-        CompressionInfo compressionInfo = FileMessageHeader.serializer.serialize(header, out, version);
-
-        final SSTableReader reader = ref.get();
-        StreamWriter writer = compressionInfo == null ?
-                                      new StreamWriter(reader, header.sections, session) :
-                                      new CompressedStreamWriter(reader, header.sections,
-                                                                 compressionInfo, session);
-        writer.write(out);
+        FileMessageHeader.serializer.serialize(header, out, version);
     }
 
     @VisibleForTesting
@@ -138,6 +148,21 @@ public class OutgoingFileMessage extends StreamMessage
     public String toString()
     {
         return "File (" + header + ", file: " + filename + ")";
+    }
+
+    public MessageOut<OutgoingFileMessage> createMessageOut()
+    {
+        throw new UnsupportedOperationException("not supporting MessageOut for outbound files");
+    }
+
+    public Type getType()
+    {
+        return Type.FILE;
+    }
+
+    public IVersionedSerializer<? extends StreamMessage> getSerializer()
+    {
+        return serializer;
     }
 }
 

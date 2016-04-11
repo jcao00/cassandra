@@ -29,8 +29,6 @@ import com.google.common.collect.UnmodifiableIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.ning.compress.lzf.LZFInputStream;
-
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
@@ -48,8 +46,6 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.io.util.TrackedInputStream;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
-
-import static org.apache.cassandra.utils.Throwables.extractIOExceptionCause;
 
 /**
  * StreamReader reads from stream and writes to SSTable.
@@ -107,7 +103,9 @@ public class StreamReader
                      session.planId(), fileSeqNum, session.peer, repairedAt, totalSize, cfs.keyspace.getName(),
                      cfs.getColumnFamilyName());
 
-        TrackedInputStream in = new TrackedInputStream(new LZFInputStream(Channels.newInputStream(channel)));
+        // TODO:JEB temporarily disabling on-fly-compression 'cuz it's a pain in the ass with non-blocking IO.
+        // also the more efficient storage thanks to 8099/3.0 makes compression much less of a 'gotta have'
+        TrackedInputStream in = new TrackedInputStream(/*new LZ4BlockInputStream*/(Channels.newInputStream(channel)));
         StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata, in, inputVersion, getHeader(cfs.metadata),
                                                                  totalSize, session.planId());
         SSTableMultiWriter writer = null;
@@ -193,7 +191,7 @@ public class StreamReader
         private IOException exception;
 
         public StreamDeserializer(CFMetaData metadata, InputStream in, Version version, SerializationHeader header,
-                                  long totalSize, UUID sessionId) throws IOException
+                                  long totalSize, UUID planId) throws IOException
         {
             this.metadata = metadata;
             // streaming pre-3.0 sstables require mark/reset support from source stream
@@ -202,7 +200,7 @@ public class StreamReader
                 logger.trace("Initializing rewindable input stream for reading legacy sstable with {} bytes with following " +
                              "parameters: initial_mem_buffer_size={}, max_mem_buffer_size={}, max_spill_file_size={}.",
                              totalSize, INITIAL_MEM_BUFFER_SIZE, MAX_MEM_BUFFER_SIZE, MAX_SPILL_FILE_SIZE);
-                File bufferFile = getTempBufferFile(metadata, totalSize, sessionId);
+                File bufferFile = getTempBufferFile(metadata, totalSize, planId);
                 this.in = new RewindableDataInputStreamPlus(in, INITIAL_MEM_BUFFER_SIZE, MAX_MEM_BUFFER_SIZE, bufferFile, MAX_SPILL_FILE_SIZE);
             } else
                 this.in = new DataInputPlus.DataInputStreamPlus(in);
@@ -317,7 +315,7 @@ public class StreamReader
             }
         }
 
-        private static File getTempBufferFile(CFMetaData metadata, long totalSize, UUID sessionId) throws IOException
+        private static File getTempBufferFile(CFMetaData metadata, long totalSize, UUID planId) throws IOException
         {
             ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
             if (cfs == null)
@@ -331,7 +329,7 @@ public class StreamReader
             if (tmpDir == null)
                 throw new IOException(String.format("No sufficient disk space to stream legacy sstable from {}.{}. " +
                                                          "Required disk space: %s.", FBUtilities.prettyPrintMemory(maxSize)));
-            return new File(tmpDir, String.format("%s-%s.%s", BUFFER_FILE_PREFIX, sessionId, BUFFER_FILE_SUFFIX));
+            return new File(tmpDir, String.format("%s-%s.%s", BUFFER_FILE_PREFIX, planId, BUFFER_FILE_SUFFIX));
         }
     }
 }

@@ -17,16 +17,16 @@
  */
 package org.apache.cassandra.streaming.messages;
 
-import java.io.*;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
+import java.io.IOException;
 import java.util.UUID;
 
+import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataInputPlus.DataInputStreamPlus;
-import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.UUIDGen;
 import org.apache.cassandra.utils.UUIDSerializer;
 
 /**
@@ -35,28 +35,36 @@ import org.apache.cassandra.utils.UUIDSerializer;
 @Deprecated
 public class RetryMessage extends StreamMessage
 {
-    public static Serializer<RetryMessage> serializer = new Serializer<RetryMessage>()
+    public static final IVersionedSerializer<RetryMessage> serializer = new IVersionedSerializer<RetryMessage>()
     {
-        @SuppressWarnings("resource") // Not closing constructed DataInputPlus's as the channel needs to remain open.
-        public RetryMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
+        public void serialize(RetryMessage msg, DataOutputPlus out, int version) throws IOException
         {
-            DataInputPlus input = new DataInputStreamPlus(Channels.newInputStream(in));
-            return new RetryMessage(UUIDSerializer.serializer.deserialize(input, MessagingService.current_version), input.readInt());
+            StreamMessage.serialize(msg, out, version);
+            UUIDSerializer.serializer.serialize(msg.cfId, out, MessagingService.current_version);
+            out.writeInt(msg.sequenceNumber);
         }
 
-        public void serialize(RetryMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
+        public RetryMessage deserialize(DataInputPlus in, int version) throws IOException
         {
-            UUIDSerializer.serializer.serialize(message.cfId, out, MessagingService.current_version);
-            out.writeInt(message.sequenceNumber);
+            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
+            return new RetryMessage(header.left, header.right, UUIDSerializer.serializer.deserialize(in, MessagingService.current_version), in.readInt());
+        }
+
+        public long serializedSize(RetryMessage msg, int version)
+        {
+            long size = StreamMessage.serializedSize(msg, version);
+            size += UUIDGen.UUID_LEN;
+            size += 4;
+            return size;
         }
     };
 
     public final UUID cfId;
     public final int sequenceNumber;
 
-    public RetryMessage(UUID cfId, int sequenceNumber)
+    public RetryMessage(UUID planId, int sessionIndex, UUID cfId, int sequenceNumber)
     {
-        super(Type.RETRY);
+        super(planId, sessionIndex);
         this.cfId = cfId;
         this.sequenceNumber = sequenceNumber;
     }
@@ -67,5 +75,29 @@ public class RetryMessage extends StreamMessage
         final StringBuilder sb = new StringBuilder("Retry (");
         sb.append(cfId).append(", #").append(sequenceNumber).append(')');
         return sb.toString();
+    }
+
+    @Override
+    public MessageOut<RetryMessage> createMessageOut()
+    {
+        return new MessageOut<>(MessagingService.Verb.STREAM_RETRY, this, serializer);
+    }
+
+    public Type getType()
+    {
+        return Type.RETRY;
+    }
+
+    public IVersionedSerializer<? extends StreamMessage> getSerializer()
+    {
+        return serializer;
+    }
+
+    public boolean equals(Object o)
+    {
+        if (!super.equals(o) || !(o instanceof RetryMessage))
+            return false;
+        RetryMessage msg = (RetryMessage)o;
+        return cfId.equals(msg.cfId) && sequenceNumber == msg.sequenceNumber;
     }
 }

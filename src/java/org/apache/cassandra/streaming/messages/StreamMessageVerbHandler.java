@@ -15,16 +15,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.streaming;
+
+package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.Socket;
 
-/**
- * Interface that creates connection used by streaming.
- */
-public interface StreamConnectionFactory
+import org.apache.cassandra.net.IVerbHandler;
+import org.apache.cassandra.net.MessageIn;
+import org.apache.cassandra.streaming.StreamManager;
+
+public class StreamMessageVerbHandler implements IVerbHandler<StreamMessage>
 {
-    Socket createConnection(InetAddress peer) throws IOException;
+    public void doVerb(MessageIn<StreamMessage> message, int id) throws IOException
+    {
+        StreamManager.instance.receiveMessage(message.from, message.payload);
+    }
 }

@@ -18,7 +18,15 @@
 package org.apache.cassandra.streaming;
 
 import java.net.InetAddress;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,24 +53,16 @@ public class StreamCoordinator
 
     private Map<InetAddress, HostStreamingData> peerSessions = new HashMap<>();
     private final int connectionsPerHost;
-    private StreamConnectionFactory factory;
     private final boolean keepSSTableLevel;
     private final boolean isIncremental;
     private Iterator<StreamSession> sessionsToConnect = null;
 
-    public StreamCoordinator(int connectionsPerHost, boolean keepSSTableLevel, boolean isIncremental,
-                             StreamConnectionFactory factory, boolean connectSequentially)
+    public StreamCoordinator(int connectionsPerHost, boolean keepSSTableLevel, boolean isIncremental, boolean connectSequentially)
     {
         this.connectionsPerHost = connectionsPerHost;
-        this.factory = factory;
         this.keepSSTableLevel = keepSSTableLevel;
         this.isIncremental = isIncremental;
         this.connectSequentially = connectSequentially;
-    }
-
-    public void setConnectionFactory(StreamConnectionFactory factory)
-    {
-        this.factory = factory;
     }
 
     /**
@@ -159,6 +159,11 @@ public class StreamCoordinator
     public synchronized StreamSession getOrCreateSessionById(InetAddress peer, int id, InetAddress connecting)
     {
         return getOrCreateHostData(peer).getOrCreateSessionById(peer, id, connecting);
+    }
+
+    public StreamSession getSessionById(InetAddress peer, int id)
+    {
+        return getHostData(peer).getSessionById(id);
     }
 
     public synchronized void updateProgress(ProgressInfo info)
@@ -288,7 +293,7 @@ public class StreamCoordinator
             // create
             if (streamSessions.size() < connectionsPerHost)
             {
-                StreamSession session = new StreamSession(peer, connecting, factory, streamSessions.size(), keepSSTableLevel, isIncremental);
+                StreamSession session = new StreamSession(peer, connecting, streamSessions.size(), keepSSTableLevel, isIncremental);
                 streamSessions.put(++lastReturned, session);
                 return session;
             }
@@ -320,10 +325,15 @@ public class StreamCoordinator
             StreamSession session = streamSessions.get(id);
             if (session == null)
             {
-                session = new StreamSession(peer, connecting, factory, id, keepSSTableLevel, isIncremental);
+                session = new StreamSession(peer, connecting, id, keepSSTableLevel, isIncremental);
                 streamSessions.put(id, session);
             }
             return session;
+        }
+
+        public StreamSession getSessionById(int id)
+        {
+            return streamSessions.get(id);
         }
 
         public void updateProgress(ProgressInfo info)

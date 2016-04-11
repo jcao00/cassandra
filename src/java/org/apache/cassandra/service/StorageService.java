@@ -87,6 +87,8 @@ import org.apache.cassandra.service.paxos.CommitVerbHandler;
 import org.apache.cassandra.service.paxos.PrepareVerbHandler;
 import org.apache.cassandra.service.paxos.ProposeVerbHandler;
 import org.apache.cassandra.streaming.*;
+import org.apache.cassandra.streaming.messages.StreamInitMessageVerbHandler;
+import org.apache.cassandra.streaming.messages.StreamMessageVerbHandler;
 import org.apache.cassandra.thrift.EndpointDetails;
 import org.apache.cassandra.thrift.TokenRange;
 import org.apache.cassandra.thrift.cassandraConstants;
@@ -289,6 +291,16 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.BATCH_STORE, new BatchStoreVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.BATCH_REMOVE, new BatchRemoveVerbHandler());
+
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_COMPLETE, new StreamMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_FAILED, new StreamMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_INIT, new StreamInitMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_INIT_ACK, new StreamMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_PREPARE_SYN, new StreamMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_PREPARE_SYNACK, new StreamMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_PREPARE_ACK, new StreamMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_RECEIVED, new StreamMessageVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_RETRY, new StreamMessageVerbHandler());
     }
 
     public void registerDaemon(CassandraDaemon daemon)
@@ -1334,17 +1346,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public long getTruncateRpcTimeout()
     {
         return DatabaseDescriptor.getTruncateRpcTimeout();
-    }
-
-    public void setStreamingSocketTimeout(int value)
-    {
-        DatabaseDescriptor.setStreamingSocketTimeout(value);
-        logger.info("set streaming socket timeout to {} ms", value);
-    }
-
-    public int getStreamingSocketTimeout()
-    {
-        return DatabaseDescriptor.getStreamingSocketTimeout();
     }
 
     public void setStreamThroughputMbPerSec(int value)

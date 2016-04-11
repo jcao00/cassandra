@@ -97,14 +97,6 @@ public class Config
 
     public volatile long truncate_request_timeout_in_ms = 60000L;
 
-    /**
-     * @deprecated use {@link this#streaming_keep_alive_period_in_secs} instead
-     */
-    @Deprecated
-    public int streaming_socket_timeout_in_ms = 86400000; //24 hours
-
-    public Integer streaming_keep_alive_period_in_secs = 300; //5 minutes
-
     public boolean cross_node_timeout = false;
 
     public volatile long slow_query_log_timeout_in_ms = 500L;

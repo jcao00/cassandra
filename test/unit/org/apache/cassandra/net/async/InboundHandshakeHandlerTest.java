@@ -184,7 +184,7 @@ public class InboundHandshakeHandlerTest
         buf.writeInt(MESSAGING_VERSION);
         CompactEndpointSerializationHelper.serialize(addr.getAddress(), new ByteBufOutputStream(buf));
         State state = handler.handleMessagingStartResponse(channel.pipeline().firstContext(), buf);
-        Assert.assertEquals(State.MESSAGING_HANDSHAKE_COMPLETE, state);
+        Assert.assertEquals(State.HANDSHAKE_COMPLETE, state);
         Assert.assertTrue(channel.isOpen());
         Assert.assertTrue(channel.isActive());
     }
@@ -193,7 +193,7 @@ public class InboundHandshakeHandlerTest
     public void setupPipeline_NoCompression()
     {
         ChannelPipeline pipeline = channel.pipeline();
-        InboundHandshakeHandler.setupMessagingPipeline(pipeline, InboundHandshakeHandler.createHandlers(addr.getAddress(), false, MESSAGING_VERSION, NOP_CONSUMER));
+        InboundHandshakeHandler.setupPipeline(pipeline, InboundHandshakeHandler.createHandlers(addr.getAddress(), false, MESSAGING_VERSION, NOP_CONSUMER));
         Assert.assertNull(pipeline.get(Lz4FrameDecoder.class));
         Assert.assertNull(pipeline.get(Lz4FrameEncoder.class));
     }
@@ -202,7 +202,7 @@ public class InboundHandshakeHandlerTest
     public void setupPipeline_WithCompression()
     {
         ChannelPipeline pipeline = channel.pipeline();
-        InboundHandshakeHandler.setupMessagingPipeline(pipeline, InboundHandshakeHandler.createHandlers(addr.getAddress(), true, MESSAGING_VERSION, NOP_CONSUMER));
+        InboundHandshakeHandler.setupPipeline(pipeline, InboundHandshakeHandler.createHandlers(addr.getAddress(), true, MESSAGING_VERSION, NOP_CONSUMER));
         Assert.assertNotNull(pipeline.get(Lz4FrameDecoder.class));
         Assert.assertNull(pipeline.get(Lz4FrameEncoder.class));
     }
@@ -211,7 +211,7 @@ public class InboundHandshakeHandlerTest
     public void setupPipeline()
     {
         ChannelPipeline pipeline = channel.pipeline();
-        InboundHandshakeHandler.setupMessagingPipeline(pipeline, InboundHandshakeHandler.createHandlers(addr.getAddress(), true, MESSAGING_VERSION, NOP_CONSUMER));
+        InboundHandshakeHandler.setupPipeline(pipeline, InboundHandshakeHandler.createHandlers(addr.getAddress(), true, MESSAGING_VERSION, NOP_CONSUMER));
         Assert.assertNotNull(pipeline.get(MessageReceiveHandler.class));
     }
 }

@@ -61,6 +61,9 @@ import static org.apache.cassandra.net.async.NettyFactory.COALESCING_MESSAGE_CHA
  * Upon completion of the handshake (on success, fail or timeout), the {@link #callback} is invoked to let the listener
  * know the result of th connect/handshake.
  *
+ * For internode messaging connections, a three-way handshake is preformed. For streaming connections,
+ * only the first message of the three-way handshake is required.
+ *
  * This class extends {@link ByteToMessageDecoder}, which is a {@link ChannelInboundHandler}, because after the
  * first message is sent on becoming active in the channel, it waits for the peer's response (the second message
  * of the internode messaging handshake protocol).
@@ -130,14 +133,27 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
         this.mode = params.mode;
     }
 
-    // invoked when the channel is active, and sends out the first handshake message
+    /**
+     * Sends out the first handshake message when the channel is made active. In the case of streaming,
+     * we do not require a full bi-directional handshake; the initial message, containing the streaming
+     * protocol version, is all that is required.
+     */
     @Override
     public void channelActive(final ChannelHandlerContext ctx) throws Exception
     {
         ctx.writeAndFlush(firstHandshakeMessage(ctx.alloc().buffer(FIRST_MESSAGE_LENGTH), createHeader(messagingVersion, params.compress, mode)));
-        long timeout = TimeUnit.MILLISECONDS.toNanos(DatabaseDescriptor.getRpcTimeout());
-        timeoutFuture = ctx.executor().schedule(() -> abortHandshake(ctx), timeout, TimeUnit.MILLISECONDS);
         ctx.fireChannelActive();
+
+        if (mode == NettyFactory.Mode.MESSAGING)
+        {
+            long timeout = TimeUnit.MILLISECONDS.toNanos(DatabaseDescriptor.getRpcTimeout());
+            timeoutFuture = ctx.executor().schedule(() -> abortHandshake(ctx), timeout, TimeUnit.MILLISECONDS);
+        }
+        else
+        {
+            callback.accept(new ConnectionHandshakeResult(ctx.channel(), messagingVersion, Result.GOOD));
+            ctx.channel().pipeline().remove(this);
+        }
     }
 
     @VisibleForTesting

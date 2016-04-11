@@ -110,6 +110,7 @@ public class CompressedInputStream extends InputStream
         }
         catch (InterruptedException e)
         {
+            logger.error("about to throw EOF", e);
             throw new EOFException("No chunk available");
         }
     }

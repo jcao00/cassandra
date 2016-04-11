@@ -25,8 +25,7 @@ import java.util.Collection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.ning.compress.lzf.LZFOutputStream;
-
+import net.jpountz.lz4.LZ4BlockOutputStream;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.DataIntegrityMetadata;
@@ -42,7 +41,7 @@ import org.apache.cassandra.utils.Pair;
  */
 public class StreamWriter
 {
-    private static final int DEFAULT_CHUNK_SIZE = 64 * 1024;
+    public static final int DEFAULT_CHUNK_SIZE = 64 * 1024;
 
     private static final Logger logger = LoggerFactory.getLogger(StreamWriter.class);
 
@@ -86,7 +85,8 @@ public class StreamWriter
             transferBuffer = validator == null ? new byte[DEFAULT_CHUNK_SIZE] : new byte[validator.chunkSize];
 
             // setting up data compression stream
-            compressedOutput = new LZFOutputStream(output);
+            // TODO:JEB temporarily disabling on-fly-compression 'cuz it's a pain in the ass with non-blocking IO.
+            compressedOutput = /*new LZ4BlockOutputStream*/(output);
             long progress = 0L;
 
             // stream each of the required sections of the file
@@ -121,6 +121,11 @@ public class StreamWriter
     }
 
     protected long totalSize()
+    {
+        return totalSize(sections);
+    }
+
+    public static long totalSize(Collection<Pair<Long, Long>> sections)
     {
         long size = 0;
         for (Pair<Long, Long> section : sections)

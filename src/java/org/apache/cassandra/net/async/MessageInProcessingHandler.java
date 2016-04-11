@@ -77,7 +77,7 @@ class MessageInProcessingHandler extends SimpleChannelInboundHandler<MessageInWr
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception
     {
-        logger.info("received channel closed message for peer {} on local addr {}", ctx.channel().remoteAddress(), ctx.channel().localAddress());
+        logger.trace("received channel closed message for peer {} on local addr {}", ctx.channel().remoteAddress(), ctx.channel().localAddress());
         ctx.fireChannelInactive();
     }
 }

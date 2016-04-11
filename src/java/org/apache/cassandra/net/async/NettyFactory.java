@@ -1,6 +1,7 @@
 package org.apache.cassandra.net.async;
 
 import java.net.InetSocketAddress;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.ServerChannel;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.epoll.EpollSocketChannel;
@@ -25,6 +27,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslHandler;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
@@ -34,6 +37,7 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.NativeTransportService;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.Pair;
 
 /**
  * A central spot for building Netty {@link Channel}s. Channels here are setup with a pipeline to participate
@@ -63,6 +67,9 @@ public final class NettyFactory
     private static final EventLoopGroup ACCEPT_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors(), "MessagingService-NettyAcceptor-Threads");
     private static final EventLoopGroup INBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyInbound-Threads");
     private static final EventLoopGroup OUTBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyOutbound-Threads");
+
+    // perhaps make this configurable?
+    public static final EventLoopGroup STREAMING_CLIENT_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors(), "NettyStreaming-Threads");
 
     private static EventLoopGroup getEventLoopGroup(int threadCount, String threadNamePrefix)
     {
@@ -153,10 +160,10 @@ public final class NettyFactory
      * Create the {@link Bootstrap} for connecting to a remote peer. This method does <b>not</b> attempt to connect to the peer,
      * and thus does not block.
      */
-    static Bootstrap createOutboundBootstrap(OutboundChannelInitializer initializer, int sendBufferSize, boolean tcpNoDelay)
+    public static Bootstrap createOutboundBootstrap(OutboundChannelInitializer initializer, int sendBufferSize, boolean tcpNoDelay, Optional<Pair<Integer, Integer>> lowHighWaterMarks)
     {
         Class<? extends Channel>  transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
-        return new Bootstrap().group(OUTBOUND_GROUP)
+        Bootstrap bootstrap = new Bootstrap().group(OUTBOUND_GROUP)
                                              .channel(transport)
                                              .option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT)
                                              .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000)
@@ -165,13 +172,17 @@ public final class NettyFactory
                                              .option(ChannelOption.SO_SNDBUF, sendBufferSize)
                                              .option(ChannelOption.TCP_NODELAY, tcpNoDelay)
                                              .handler(initializer);
+
+        lowHighWaterMarks.ifPresent(p -> bootstrap.option(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(p.left, p.right)));
+
+        return bootstrap;
     }
 
-    static class OutboundChannelInitializer extends ChannelInitializer<SocketChannel>
+    public static class OutboundChannelInitializer extends ChannelInitializer<SocketChannel>
     {
         private final OutboundConnectionParams params;
 
-        OutboundChannelInitializer(OutboundConnectionParams params)
+        public OutboundChannelInitializer(OutboundConnectionParams params)
         {
             this.params = params;
         }
@@ -192,5 +203,13 @@ public final class NettyFactory
 
             pipeline.addLast(HANDSHAKE_HANDLER_CHANNEL_HANDLER_NAME, new OutboundHandshakeHandler(params));
         }
+    }
+
+    /**
+     * Determines if the {@link Channel} is using a secure communications transport (like SSL/TLS)/
+     */
+    public static boolean isSecure(Channel channel)
+    {
+        return channel.pipeline().get(SslHandler.class) != null;
     }
 }

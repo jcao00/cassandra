@@ -20,6 +20,7 @@ package org.apache.cassandra.streaming.compress;
 import java.io.IOException;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
+import java.util.concurrent.TimeUnit;
 
 import com.google.common.base.Throwables;
 import org.slf4j.Logger;
@@ -79,6 +80,7 @@ public class CompressedStreamReader extends StreamReader
         logger.debug("[Stream #{}] Start receiving file #{} from {}, repairedAt = {}, size = {}, ks = '{}', table = '{}'.",
                      session.planId(), fileSeqNum, session.peer, repairedAt, totalSize, cfs.keyspace.getName(),
                      cfs.getColumnFamilyName());
+        final long start = System.nanoTime();
 
         CompressedInputStream cis = new CompressedInputStream(Channels.newInputStream(channel), compressionInfo,
                                                               inputVersion.compressedChecksumType(), cfs::getCrcCheckChance);
@@ -109,8 +111,9 @@ public class CompressedStreamReader extends StreamReader
                     session.progress(filename, ProgressInfo.Direction.IN, cis.getTotalCompressedBytesRead(), totalSize);
                 }
             }
-            logger.debug("[Stream #{}] Finished receiving file #{} from {} readBytes = {}, totalSize = {}", session.planId(), fileSeqNum,
-                         session.peer, FBUtilities.prettyPrintMemory(cis.getTotalCompressedBytesRead()), FBUtilities.prettyPrintMemory(totalSize));
+            long time = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+            logger.debug("[Stream #{}] Finished receiving file #{} from {} readBytes = {}, totalSize = {}, time = {}", session.planId(), fileSeqNum,
+                         session.peer, FBUtilities.prettyPrintMemory(cis.getTotalCompressedBytesRead()), FBUtilities.prettyPrintMemory(totalSize), time);
             return writer;
         }
         catch (Throwable e)
@@ -118,6 +121,7 @@ public class CompressedStreamReader extends StreamReader
             if (deserializer != null)
                 logger.warn("[Stream {}] Error while reading partition {} from stream on ks='{}' and table='{}'.",
                             session.planId(), deserializer.partitionKey(), cfs.keyspace.getName(), cfs.getTableName());
+            logger.warn("^^^^ exception", e);
             if (writer != null)
             {
                 writer.abort(e);

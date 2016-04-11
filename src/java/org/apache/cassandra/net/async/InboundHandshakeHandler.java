@@ -6,6 +6,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -28,6 +29,8 @@ import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.streaming.async.StreamingReceiveHandler;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.Pair;
 
 import static org.apache.cassandra.net.async.NettyFactory.HANDSHAKE_HANDLER_CHANNEL_HANDLER_NAME;
@@ -41,7 +44,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
 {
     private static final Logger logger = LoggerFactory.getLogger(NettyFactory.class);
 
-    enum State { START, AWAITING_HANDSHAKE_BEGIN, AWAIT_STREAM_START_RESPONSE, AWAIT_MESSAGING_START_RESPONSE, MESSAGING_HANDSHAKE_COMPLETE, HANDSHAKE_FAIL }
+    enum State { START, AWAITING_HANDSHAKE_BEGIN, AWAIT_MESSAGING_START_RESPONSE, HANDSHAKE_COMPLETE, HANDSHAKE_FAIL }
 
     private State state;
 
@@ -146,9 +149,16 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
         boolean isStream = MessagingService.getBits(header, 3, 1) == 1;
         if (isStream)
         {
-            // TODO fill in once streaming is moved to netty
-            ctx.close();
-            return State.AWAIT_STREAM_START_RESPONSE;
+            // streaming connections are per-session and have a fixed version.  we can't do anything with a wrong-version stream connection, so drop it.
+            if (version != StreamMessage.CURRENT_VERSION)
+            {
+                logger.warn("Received stream using protocol version %d (my version %d). Terminating connection", version, MessagingService.current_version);
+                ctx.close();
+                return State.HANDSHAKE_FAIL;
+            }
+
+            setupPipeline(ctx.pipeline(), createStreamingPipelineHandlers(ctx, version));
+            return State.HANDSHAKE_COMPLETE;
         }
         else
         {
@@ -182,6 +192,12 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
         }
     }
 
+    private List<Pair<String, ChannelHandler>> createStreamingPipelineHandlers(ChannelHandlerContext ctx, int protocolVersion)
+    {
+        InetSocketAddress address = (InetSocketAddress) ctx.channel().remoteAddress();
+        return Collections.singletonList(Pair.create("streamRecieve", new StreamingReceiveHandler(address, protocolVersion)));
+    }
+
     /**
      * Handles the third (and last) message in the internode messaging handshake protocol. Grabs the protocol version and
      * IP addr the peer wants to use.
@@ -213,8 +229,8 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
         MessagingService.instance().setVersion(from, maxVersion);
         logger.trace("Set version for {} to {} (will use {})", from, maxVersion, MessagingService.instance().getVersion(from));
 
-        setupMessagingPipeline(ctx.pipeline(), createHandlers(from, compressed, version, MessageInProcessingHandler.MESSAGING_SERVICE_CONSUMER));
-        return State.MESSAGING_HANDSHAKE_COMPLETE;
+        setupPipeline(ctx.pipeline(), createHandlers(from, compressed, version, MessageInProcessingHandler.MESSAGING_SERVICE_CONSUMER));
+        return State.HANDSHAKE_COMPLETE;
     }
 
     /**
@@ -239,7 +255,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
      * Hence, we have to add new handlers after the current {@link InboundHandshakeHandler}.
      */
     @VisibleForTesting
-    static void setupMessagingPipeline(ChannelPipeline pipeline, List<Pair<String, ChannelHandler>> namesToHandlers)
+    static void setupPipeline(ChannelPipeline pipeline, List<Pair<String, ChannelHandler>> namesToHandlers)
     {
         for (Pair<String, ChannelHandler> pair : namesToHandlers)
         {
@@ -251,7 +267,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
 
     private void handshakeTimeout(ChannelHandlerContext ctx)
     {
-        if (state == State.MESSAGING_HANDSHAKE_COMPLETE)
+        if (state == State.HANDSHAKE_COMPLETE)
             return;
 
         state = State.HANDSHAKE_FAIL;

@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Iterator;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledExecutorService;
@@ -345,7 +346,7 @@ public class OutboundMessagingConnection
         if (DatabaseDescriptor.getInternodeSendBufferSize() > 0)
             sendBufferSize = DatabaseDescriptor.getInternodeSendBufferSize();
 
-        return NettyFactory.createOutboundBootstrap(initializer, sendBufferSize, tcpNoDelay);
+        return NettyFactory.createOutboundBootstrap(initializer, sendBufferSize, tcpNoDelay, Optional.empty());
     }
 
     /**
@@ -483,13 +484,13 @@ public class OutboundMessagingConnection
     /**
      * A simple class to hold the result of completed connection attempt.
      */
-    static class ConnectionHandshakeResult
+    public static class ConnectionHandshakeResult
     {
         /**
          * Describes the result of receiving the response back from the peer (Message 2 of the handshake)
          * and implies an action that should be taken.
          */
-        enum Result { GOOD, DISCONNECT, NEGOTIATION_FAILURE }
+        public enum Result { GOOD, DISCONNECT, NEGOTIATION_FAILURE }
 
         public final Channel channel;
         public final int negotiatedMessagingVersion;

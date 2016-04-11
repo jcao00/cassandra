@@ -41,7 +41,7 @@ import org.apache.cassandra.utils.Pair;
  */
 public class CompressedStreamWriter extends StreamWriter
 {
-    public static final int CHUNK_SIZE = 10 * 1024 * 1024;
+    public static final int CHUNK_SIZE = 20 * 1024 * 1024;
 
     private static final Logger logger = LoggerFactory.getLogger(CompressedStreamWriter.class);
 
@@ -96,15 +96,20 @@ public class CompressedStreamWriter extends StreamWriter
     @Override
     protected long totalSize()
     {
+        return totalSize(compressionInfo.chunks);
+    }
+
+    public static long totalSize(CompressionMetadata.Chunk[] chunks)
+    {
         long size = 0;
         // calculate total length of transferring chunks
-        for (CompressionMetadata.Chunk chunk : compressionInfo.chunks)
+        for (CompressionMetadata.Chunk chunk : chunks)
             size += chunk.length + 4; // 4 bytes for CRC
         return size;
     }
 
     // chunks are assumed to be sorted by offset
-    private List<Pair<Long, Long>> getTransferSections(CompressionMetadata.Chunk[] chunks)
+    public static List<Pair<Long, Long>> getTransferSections(CompressionMetadata.Chunk[] chunks)
     {
         List<Pair<Long, Long>> transferSections = new ArrayList<>();
         Pair<Long, Long> lastSection = null;

@@ -17,42 +17,50 @@
  */
 package org.apache.cassandra.streaming.messages;
 
-import java.io.*;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
+import java.io.IOException;
 import java.util.UUID;
 
+import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataInputPlus.DataInputStreamPlus;
-import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.UUIDGen;
 import org.apache.cassandra.utils.UUIDSerializer;
 
 public class ReceivedMessage extends StreamMessage
 {
-    public static Serializer<ReceivedMessage> serializer = new Serializer<ReceivedMessage>()
+    public static final IVersionedSerializer<ReceivedMessage> serializer = new IVersionedSerializer<ReceivedMessage>()
     {
-        @SuppressWarnings("resource") // Not closing constructed DataInputPlus's as the channel needs to remain open.
-        public ReceivedMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
+        public void serialize(ReceivedMessage receivedMessage, DataOutputPlus out, int version) throws IOException
         {
-            DataInputPlus input = new DataInputStreamPlus(Channels.newInputStream(in));
-            return new ReceivedMessage(UUIDSerializer.serializer.deserialize(input, MessagingService.current_version), input.readInt());
+            StreamMessage.serialize(receivedMessage, out, version);
+            UUIDSerializer.serializer.serialize(receivedMessage.cfId, out, MessagingService.current_version);
+            out.writeInt(receivedMessage.sequenceNumber);
         }
 
-        public void serialize(ReceivedMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
+        public ReceivedMessage deserialize(DataInputPlus in, int version) throws IOException
         {
-            UUIDSerializer.serializer.serialize(message.cfId, out, MessagingService.current_version);
-            out.writeInt(message.sequenceNumber);
+            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
+            return new ReceivedMessage(header.left, header.right, UUIDSerializer.serializer.deserialize(in, MessagingService.current_version), in.readInt());
+        }
+
+        public long serializedSize(ReceivedMessage receivedMessage, int version)
+        {
+            long size = StreamMessage.serializedSize(receivedMessage, version);
+            size += UUIDGen.UUID_LEN;
+            size += 4;
+            return size;
         }
     };
 
     public final UUID cfId;
     public final int sequenceNumber;
 
-    public ReceivedMessage(UUID cfId, int sequenceNumber)
+    public ReceivedMessage(UUID planId, int sessionIndex, UUID cfId, int sequenceNumber)
     {
-        super(Type.RECEIVED);
+        super(planId, sessionIndex);
         this.cfId = cfId;
         this.sequenceNumber = sequenceNumber;
     }
@@ -63,5 +71,30 @@ public class ReceivedMessage extends StreamMessage
         final StringBuilder sb = new StringBuilder("Received (");
         sb.append(cfId).append(", #").append(sequenceNumber).append(')');
         return sb.toString();
+    }
+
+    @Override
+    public MessageOut<ReceivedMessage> createMessageOut()
+    {
+        return new MessageOut<>(MessagingService.Verb.STREAM_RECEIVED, this, serializer);
+    }
+
+    public Type getType()
+    {
+        return Type.RECEIVED;
+    }
+
+    @Override
+    public IVersionedSerializer<? extends StreamMessage> getSerializer()
+    {
+        return serializer;
+    }
+
+    public boolean equals(Object o)
+    {
+        if (!super.equals(o) || !(o instanceof ReceivedMessage))
+            return false;
+        ReceivedMessage msg = (ReceivedMessage)o;
+        return cfId.equals(msg.cfId) && sequenceNumber == msg.sequenceNumber;
     }
 }

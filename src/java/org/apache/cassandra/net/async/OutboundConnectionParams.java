@@ -28,7 +28,7 @@ import org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionHand
 /**
  * A collection of data opints to be passed around for outbound connections
  */
-class OutboundConnectionParams
+public class OutboundConnectionParams
 {
     final InetSocketAddress localAddr;
     final InetSocketAddress remoteAddr;
@@ -42,9 +42,9 @@ class OutboundConnectionParams
     final AtomicLong droppedMessageCount;
     final AtomicLong completedMessageCount;
 
-    OutboundConnectionParams(InetSocketAddress localAddr, InetSocketAddress remoteAddr, int protocolVersion, int bufferSize,
-                             Consumer<ConnectionHandshakeResult> callback, ServerEncryptionOptions encryptionOptions, NettyFactory.Mode mode,
-                             boolean maybeCoalesce, boolean compress, AtomicLong droppedMessageCount, AtomicLong completedMessageCount)
+    public OutboundConnectionParams(InetSocketAddress localAddr, InetSocketAddress remoteAddr, int protocolVersion, int bufferSize,
+                                    Consumer<ConnectionHandshakeResult> callback, ServerEncryptionOptions encryptionOptions, NettyFactory.Mode mode,
+                                    boolean maybeCoalesce, boolean compress, AtomicLong droppedMessageCount, AtomicLong completedMessageCount)
     {
         this.localAddr = localAddr;
         this.remoteAddr = remoteAddr;

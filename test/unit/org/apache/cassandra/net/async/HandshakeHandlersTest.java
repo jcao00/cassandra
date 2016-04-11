@@ -43,7 +43,7 @@ import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.KeyspaceParams;
 
-import static org.apache.cassandra.net.async.InboundHandshakeHandler.State.MESSAGING_HANDSHAKE_COMPLETE;
+import static org.apache.cassandra.net.async.InboundHandshakeHandler.State.HANDSHAKE_COMPLETE;
 import static org.apache.cassandra.net.async.InboundHandshakeHandlerTest.SHH_HANDLER_NAME;
 import static org.apache.cassandra.net.async.OutboundMessagingConnection.DEFAULT_BUFFER_SIZE;
 import static org.apache.cassandra.net.async.OutboundMessagingConnection.State.READY;
@@ -108,7 +108,7 @@ public class HandshakeHandlersTest
             inboundChannel.writeInbound(o);
 
         Assert.assertEquals(READY, imc.getState());
-        Assert.assertEquals(MESSAGING_HANDSHAKE_COMPLETE, inboundHandshakeHandler.getState());
+        Assert.assertEquals(HANDSHAKE_COMPLETE, inboundHandshakeHandler.getState());
     }
 
     @Test
@@ -181,7 +181,7 @@ public class HandshakeHandlersTest
         outboundChannel.outboundMessages().clear();
 
         EmbeddedChannel inboundChannel = new EmbeddedChannel(new InboundHandshakeHandler(new TestAuthenticator(true)));
-        InboundHandshakeHandler.setupMessagingPipeline(inboundChannel.pipeline(), InboundHandshakeHandler.createHandlers(REMOTE_ADDR.getAddress(), compress, MESSAGING_VERSION, COUNTING_CONSUMER));
+        InboundHandshakeHandler.setupPipeline(inboundChannel.pipeline(), InboundHandshakeHandler.createHandlers(REMOTE_ADDR.getAddress(), compress, MESSAGING_VERSION, COUNTING_CONSUMER));
 
         return new TestChannels(outboundChannel, inboundChannel);
     }

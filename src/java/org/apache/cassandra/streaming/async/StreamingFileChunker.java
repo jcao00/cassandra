@@ -16,34 +16,15 @@
  * limitations under the License.
  */
 
-package org.apache.cassandra.streaming.messages;
+package org.apache.cassandra.streaming.async;
 
-import java.io.IOException;
-import java.nio.channels.ReadableByteChannel;
-
-import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.utils.CloseableIterator;
 
-public class KeepAliveMessage extends StreamMessage
+interface StreamingFileChunker extends Iterable<Object>, CloseableIterator<Object>
 {
-    public static Serializer<KeepAliveMessage> serializer = new Serializer<KeepAliveMessage>()
-    {
-        public KeepAliveMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
-        {
-            return new KeepAliveMessage();
-        }
+    int nextChunkSize();
+    void updateSessionProgress(StreamSession session);
 
-        public void serialize(KeepAliveMessage message, DataOutputStreamPlus out, int version, StreamSession session)
-        {}
-    };
-
-    public KeepAliveMessage()
-    {
-        super(Type.KEEP_ALIVE);
-    }
-
-    public String toString()
-    {
-        return "keep-alive";
-    }
+    long getTotalSize();
 }
