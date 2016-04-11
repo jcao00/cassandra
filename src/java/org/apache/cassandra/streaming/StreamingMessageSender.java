@@ -16,28 +16,19 @@
  * limitations under the License.
  */
 
-package org.apache.cassandra.net.async;
+package org.apache.cassandra.streaming;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufInputStream;
-import org.apache.cassandra.io.util.DataInputPlus;
+import java.io.IOException;
 
-public class ByteBufDataInputPlus extends ByteBufInputStream implements DataInputPlus
+import org.apache.cassandra.streaming.messages.StreamMessage;
+
+public interface StreamingMessageSender
 {
-    /**
-     * The parent class does not expose the buffer to derived classes, so we need
-     * to stash a reference here so it can be exposed via {@link #buffer()}.
-     */
-    private final ByteBuf buf;
+    void initialize() throws IOException;
 
-    public ByteBufDataInputPlus(ByteBuf buffer)
-    {
-        super(buffer);
-        this.buf = buffer;
-    }
+    void sendMessage(StreamMessage message) throws IOException;
 
-    public ByteBuf buffer()
-    {
-        return buf;
-    }
+    boolean connected();
+
+    void close();
 }

@@ -15,37 +15,43 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.cassandra.streaming.messages;
+
+import java.io.IOException;
 
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
 
-public class SessionFailedMessage extends StreamMessage
+public class PrepareAckMessage extends StreamMessage
 {
-    public static Serializer<SessionFailedMessage> serializer = new Serializer<SessionFailedMessage>()
+    public static Serializer<PrepareAckMessage> serializer = new Serializer<PrepareAckMessage>()
     {
-        public SessionFailedMessage deserialize(DataInputPlus in, int version, StreamSession session)
+        public void serialize(PrepareAckMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
         {
-            return new SessionFailedMessage();
+            //nop
         }
 
-        public void serialize(SessionFailedMessage message, DataOutputStreamPlus out, int version, StreamSession session) {}
+        public PrepareAckMessage deserialize(DataInputPlus in, int version, StreamSession session) throws IOException
+        {
+            return new PrepareAckMessage();
+        }
 
-        public long serializedSize(SessionFailedMessage message, int version)
+        public long serializedSize(PrepareAckMessage message, int version)
         {
             return 0;
         }
     };
 
-    public SessionFailedMessage()
+    public PrepareAckMessage()
     {
-        super(Type.SESSION_FAILED);
+        super(Type.PREPARE_ACK);
     }
 
     @Override
     public String toString()
     {
-        return "Session Failed";
+        return "Prepare ACK";
     }
 }
