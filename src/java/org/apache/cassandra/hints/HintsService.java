@@ -22,6 +22,7 @@ import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collections;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,9 +38,11 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.ParameterizedClass;
+import org.apache.cassandra.io.compress.EncryptingCompressor;
 import org.apache.cassandra.metrics.HintedHandoffMetrics;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 
@@ -107,9 +110,28 @@ public final class HintsService implements HintsServiceMBean
     {
         ImmutableMap.Builder<String, Object> builder = ImmutableMap.builder();
 
-        ParameterizedClass compressionConfig = DatabaseDescriptor.getHintsCompression();
-        if (compressionConfig != null)
+        EncryptionContext encryptionContext = DatabaseDescriptor.getEncryptionContext();
+        if (encryptionContext.isEnabled())
         {
+            ImmutableMap.Builder<String, Object> encryptionParams = ImmutableMap.builder();
+            encryptionParams.putAll(encryptionContext.toHeaderParameters());
+
+            // EncryptionContext expects the compression params (that are used with the encryption/decryption) to be
+            // in the same map using the same naming convention. thus, it;'s slightly different from the raw hints compression
+            // stuffs below.
+            if (DatabaseDescriptor.getHintsCompression() != null)
+            {
+                ParameterizedClass compressionConfig = DatabaseDescriptor.getHintsCompression();
+                encryptionParams.put(EncryptionContext.COMPRESSION_CLASS_NAME, compressionConfig.class_name);
+                for (Map.Entry<String, String> entry : compressionConfig.parameters.entrySet())
+                    encryptionParams.put(entry.getKey(), entry.getValue());
+            }
+
+            builder.put(HintsDescriptor.ENCRYPTION, encryptionParams.build());
+        }
+        else if (DatabaseDescriptor.getHintsCompression() != null)
+        {
+            ParameterizedClass compressionConfig = DatabaseDescriptor.getHintsCompression();
             ImmutableMap.Builder<String, Object> compressorParams = ImmutableMap.builder();
 
             compressorParams.put(ParameterizedClass.CLASS_NAME, compressionConfig.class_name);

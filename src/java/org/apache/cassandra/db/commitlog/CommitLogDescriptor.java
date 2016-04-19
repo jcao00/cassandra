@@ -27,7 +27,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -90,14 +89,6 @@ public class CommitLogDescriptor
 
     public static void writeHeader(ByteBuffer out, CommitLogDescriptor descriptor)
     {
-        writeHeader(out, descriptor, Collections.<String, String>emptyMap());
-    }
-
-    /**
-     * @param additionalHeaders Allow segments to pass custom header data
-     */
-    public static void writeHeader(ByteBuffer out, CommitLogDescriptor descriptor, Map<String, String> additionalHeaders)
-    {
         CRC32 crc = new CRC32();
         out.putInt(descriptor.version);
         updateChecksumInt(crc, descriptor.version);
@@ -105,7 +96,7 @@ public class CommitLogDescriptor
         updateChecksumInt(crc, (int) (descriptor.id & 0xFFFFFFFFL));
         updateChecksumInt(crc, (int) (descriptor.id >>> 32));
         if (descriptor.version >= VERSION_22) {
-            String parametersString = constructParametersString(descriptor.compression, descriptor.encryptionContext, additionalHeaders);
+            String parametersString = constructParametersString(descriptor.compression, descriptor.encryptionContext);
             byte[] parametersBytes = parametersString.getBytes(StandardCharsets.UTF_8);
             if (parametersBytes.length != (((short) parametersBytes.length) & 0xFFFF))
                 throw new ConfigurationException(String.format("Compression parameters too long, length %d cannot be above 65535.",
@@ -120,17 +111,18 @@ public class CommitLogDescriptor
     }
 
     @VisibleForTesting
-    static String constructParametersString(ParameterizedClass compression, EncryptionContext encryptionContext, Map<String, String> additionalHeaders)
+    static String constructParametersString(ParameterizedClass compression, EncryptionContext encryptionContext)
     {
         Map<String, Object> params = new TreeMap<>();
-        if (compression != null)
+        if (encryptionContext != null && encryptionContext.isEnabled())
+        {
+            params.putAll(encryptionContext.toHeaderParameters());
+        }
+        else if (compression != null)
         {
             params.put(COMPRESSION_PARAMETERS_KEY, compression.parameters);
             params.put(COMPRESSION_CLASS_KEY, compression.class_name);
         }
-        if (encryptionContext != null)
-            params.putAll(encryptionContext.toHeaderParameters());
-        params.putAll(additionalHeaders);
         return JSONValue.toJSONString(params);
     }
 

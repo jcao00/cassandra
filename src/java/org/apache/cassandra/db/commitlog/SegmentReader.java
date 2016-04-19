@@ -21,7 +21,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.zip.CRC32;
-import javax.crypto.Cipher;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.AbstractIterator;
@@ -33,7 +32,6 @@ import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileSegmentInputStream;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.schema.CompressionParams;
-import org.apache.cassandra.security.EncryptionUtils;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -262,6 +260,7 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
             nextLogicalStart = reader.getFilePointer();
         }
 
+        @SuppressWarnings("resource")
         public SyncSegment nextSegment(final int startPosition, final int nextSectionStartPosition) throws IOException
         {
             reader.seek(startPosition);
@@ -285,18 +284,11 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
     static class EncryptedSegmenter implements Segmenter
     {
         private final RandomAccessReader reader;
-        private final ICompressor compressor;
-        private final Cipher cipher;
 
         /**
          * the result of the decryption is written into this buffer.
          */
         private ByteBuffer decryptedBuffer;
-
-        /**
-         * the result of the decryption is written into this buffer.
-         */
-        private ByteBuffer uncompressedBuffer;
 
         private final ChunkProvider chunkProvider;
 
@@ -313,26 +305,15 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
         {
             this.reader = reader;
             decryptedBuffer = ByteBuffer.allocate(0);
-            compressor = encryptionContext.getCompressor();
             nextLogicalStart = reader.getFilePointer();
-
-            try
-            {
-                cipher = encryptionContext.getDecryptor();
-            }
-            catch (IOException ioe)
-            {
-                throw new FSReadError(ioe, reader.getPath());
-            }
 
             chunkProvider = () -> {
                 if (reader.getFilePointer() >= currentSegmentEndPosition)
                     return ByteBufferUtil.EMPTY_BYTE_BUFFER;
                 try
                 {
-                    decryptedBuffer = EncryptionUtils.decrypt(reader, decryptedBuffer, true, cipher);
-                    uncompressedBuffer = EncryptionUtils.uncompress(decryptedBuffer, uncompressedBuffer, true, compressor);
-                    return uncompressedBuffer;
+                    decryptedBuffer = encryptionContext.decrypt(reader, decryptedBuffer, true);
+                    return decryptedBuffer;
                 }
                 catch (IOException e)
                 {
@@ -341,6 +322,7 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
             };
         }
 
+        @SuppressWarnings("resource")
         public SyncSegment nextSegment(int startPosition, int nextSectionStartPosition) throws IOException
         {
             int totalPlainTextLength = reader.readInt();

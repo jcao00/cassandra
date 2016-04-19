@@ -100,7 +100,7 @@ public class CommitLog implements CommitLogMBean
         this.location = location;
         ICompressor compressor = compressorClass != null ? CompressionParams.createCompressor(compressorClass) : null;
         DatabaseDescriptor.createAllDirectories();
-        encryptionContext = DatabaseDescriptor.getEncryptionContext();
+        encryptionContext = EncryptionContext.create(DatabaseDescriptor.getEncryptionContext().getTransparentDataEncryptionOptions(), compressorClass);
 
         this.compressor = compressor;
         this.archiver = archiver;

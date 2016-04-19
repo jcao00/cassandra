@@ -30,6 +30,7 @@ import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.ParameterizedClass;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -71,6 +72,7 @@ public final class CompressionParams
     private final Integer chunkLength;
     private final ImmutableMap<String, String> otherOptions; // Unrecognized options, can be used by the compressor
 
+    private boolean encrypted;
     private volatile double crcCheckChance = 1.0;
 
     public static CompressionParams fromMap(Map<String, String> opts)
@@ -168,13 +170,26 @@ public final class CompressionParams
         return sstableCompressor != null;
     }
 
+    public void setEncrypted(boolean encrypted)
+    {
+        this.encrypted = encrypted;
+    }
+
+    boolean isEncrypted()
+    {
+        return encrypted;
+    }
+
     /**
      * Returns the SSTable compressor.
      * @return the SSTable compressor or {@code null} if compression is disabled.
      */
     public ICompressor getSstableCompressor()
     {
-        return sstableCompressor;
+        if (!encrypted)
+            return sstableCompressor;
+
+        return new EncryptingCompressor(this, DatabaseDescriptor.getEncryptionContext());
     }
 
     public ImmutableMap<String, String> getOtherOptions()
@@ -484,6 +499,7 @@ public final class CompressionParams
             .append(sstableCompressor, cp.sstableCompressor)
             .append(chunkLength(), cp.chunkLength())
             .append(otherOptions, cp.otherOptions)
+            .append(encrypted, cp.encrypted)
             .isEquals();
     }
 
@@ -494,6 +510,7 @@ public final class CompressionParams
             .append(sstableCompressor)
             .append(chunkLength())
             .append(otherOptions)
+            .append(encrypted)
             .toHashCode();
     }
 
@@ -509,6 +526,7 @@ public final class CompressionParams
                 out.writeUTF(entry.getValue());
             }
             out.writeInt(parameters.chunkLength());
+            out.writeBoolean(parameters.encrypted);
         }
 
         public CompressionParams deserialize(DataInputPlus in, int version) throws IOException
@@ -527,6 +545,7 @@ public final class CompressionParams
             try
             {
                 parameters = new CompressionParams(compressorName, chunkLength, options);
+                parameters.setEncrypted(in.readBoolean());
             }
             catch (ConfigurationException e)
             {
@@ -545,6 +564,7 @@ public final class CompressionParams
                 size += TypeSizes.sizeof(entry.getValue());
             }
             size += TypeSizes.sizeof(parameters.chunkLength());
+            size += TypeSizes.sizeof(parameters.encrypted);
             return size;
         }
     }

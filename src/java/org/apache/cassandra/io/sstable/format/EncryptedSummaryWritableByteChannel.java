@@ -15,46 +15,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.hints;
 
-import java.io.File;
+package org.apache.cassandra.io.sstable.format;
+
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.zip.CRC32;
-import javax.crypto.Cipher;
-
-import com.google.common.annotations.VisibleForTesting;
+import java.nio.channels.WritableByteChannel;
+import java.util.Map;
 
 import org.apache.cassandra.security.EncryptionContext;
-import org.apache.cassandra.io.compress.ICompressor;
 
-import static org.apache.cassandra.utils.FBUtilities.updateChecksum;
-
-class EncryptedHintsWriter extends HintsWriter
+/**
+ * Writes out an encrypted version of the summary file data.
+ * As the encryption algorithm (cipher) and key_alias is inherited from the owing sstable, we just encrypt and write out
+ * each block as it is passed in.
+ */
+class EncryptedSummaryWritableByteChannel implements WritableByteChannel, AutoCloseable
 {
+    private final FileChannel channel;
     private final EncryptionContext encryptionContext;
 
-    EncryptedHintsWriter(File directory, HintsDescriptor descriptor, File file, FileChannel channel, int fd, CRC32 globalCRC)
+    EncryptedSummaryWritableByteChannel(FileOutputStream fos, Map<String, String> compressionParamsMap, EncryptionContext baseEncryptionContext)
     {
-        super(directory, descriptor, file, channel, fd, globalCRC);
-        encryptionContext = descriptor.getEncryptionContext();
+        encryptionContext = EncryptionContext.createFromMap(compressionParamsMap, baseEncryptionContext);
+        channel = fos.getChannel();
     }
 
-    protected void writeBuffer(ByteBuffer input) throws IOException
+    public int write(ByteBuffer src) throws IOException
     {
-        encryptionContext.encryptAndWrite(input, channel, true, (outBuffer) -> updateChecksum(globalCRC, outBuffer));
+        return encryptionContext.encryptAndWrite(src, channel, true);
     }
 
-    @VisibleForTesting
-    Cipher getCipher() throws IOException
+    public boolean isOpen()
     {
-        return encryptionContext.getEncryptor(false);
+        return channel.isOpen();
     }
 
-    @VisibleForTesting
-    ICompressor getCompressor()
+    public void close() throws IOException
     {
-        return encryptionContext.getCompressor();
+        channel.close();
     }
 }

@@ -20,11 +20,16 @@
  */
 package org.apache.cassandra.security;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.cassandra.config.ParameterizedClass;
 import org.apache.cassandra.config.TransparentDataEncryptionOptions;
+import org.apache.cassandra.io.compress.ICompressor;
+import org.apache.cassandra.io.compress.LZ4Compressor;
+import org.apache.cassandra.schema.CompressionParams;
+import org.apache.cassandra.utils.Pair;
 
 public class EncryptionContextGenerator
 {
@@ -33,12 +38,8 @@ public class EncryptionContextGenerator
 
     public static EncryptionContext createContext(boolean init)
     {
-        return createContext(null, init);
-    }
-
-    public static EncryptionContext createContext(byte[] iv, boolean init)
-    {
-        return new EncryptionContext(createEncryptionOptions(), iv, init);
+        Pair<ParameterizedClass, ICompressor> compressor = EncryptionContext.defaultCompressor();
+        return new EncryptionContext(createEncryptionOptions(), compressor.left, compressor.right, init);
     }
 
     public static TransparentDataEncryptionOptions createEncryptionOptions()

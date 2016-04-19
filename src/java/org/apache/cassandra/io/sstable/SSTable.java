@@ -65,6 +65,10 @@ public abstract class SSTable
     public final CFMetaData metadata;
     public final boolean compression;
 
+    // the only reason an index would be 'compressed' is if it is encrypted
+    // as index encryption piggy-backs off compression
+    public final boolean indexCompression;
+
     public DecoratedKey first;
     public DecoratedKey last;
 
@@ -84,6 +88,7 @@ public abstract class SSTable
         this.descriptor = descriptor;
         Set<Component> dataComponents = new HashSet<>(components);
         this.compression = dataComponents.contains(Component.COMPRESSION_INFO);
+        this.indexCompression = components.contains(Component.INDEX_COMPRESSION_INFO);
         this.components = new CopyOnWriteArraySet<>(dataComponents);
         this.metadata = metadata;
     }

@@ -107,6 +107,7 @@ public final class SchemaKeyspace
                 + "crc_check_chance double,"
                 + "dclocal_read_repair_chance double,"
                 + "default_time_to_live int,"
+                + "encrypted boolean,"
                 + "extensions frozen<map<text, blob>>,"
                 + "flags frozen<set<text>>," // SUPER, COUNTER, DENSE, COMPOUND
                 + "gc_grace_seconds int,"
@@ -170,6 +171,7 @@ public final class SchemaKeyspace
                 + "crc_check_chance double,"
                 + "dclocal_read_repair_chance double,"
                 + "default_time_to_live int,"
+                + "encrypted boolean,"
                 + "extensions frozen<map<text, blob>>,"
                 + "gc_grace_seconds int,"
                 + "id uuid,"
@@ -505,6 +507,7 @@ public final class SchemaKeyspace
              .add("read_repair_chance", params.readRepairChance)
              .add("speculative_retry", params.speculativeRetry.toString())
              .add("crc_check_chance", params.crcCheckChance)
+             .add("encrypted", params.encrypted)
              .frozenMap("caching", params.caching.asMap())
              .frozenMap("compaction", params.compaction.asMap())
              .frozenMap("compression", params.compression.asMap())
@@ -978,6 +981,7 @@ public final class SchemaKeyspace
                           .compression(CompressionParams.fromMap(row.getFrozenTextMap("compression")))
                           .dcLocalReadRepairChance(row.getDouble("dclocal_read_repair_chance"))
                           .defaultTimeToLive(row.getInt("default_time_to_live"))
+                          .encryption(row.getBoolean("encrypted"))
                           .extensions(row.getFrozenMap("extensions", UTF8Type.instance, BytesType.instance))
                           .gcGraceSeconds(row.getInt("gc_grace_seconds"))
                           .maxIndexInterval(row.getInt("max_index_interval"))

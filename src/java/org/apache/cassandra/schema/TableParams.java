@@ -40,6 +40,7 @@ public final class TableParams
         COMPRESSION,
         DCLOCAL_READ_REPAIR_CHANCE,
         DEFAULT_TIME_TO_LIVE,
+        ENCRYPTION,
         EXTENSIONS,
         GC_GRACE_SECONDS,
         MAX_INDEX_INTERVAL,
@@ -81,6 +82,7 @@ public final class TableParams
     public final CompactionParams compaction;
     public final CompressionParams compression;
     public final ImmutableMap<String, ByteBuffer> extensions;
+    public boolean encrypted;
 
     private TableParams(Builder builder)
     {
@@ -100,6 +102,8 @@ public final class TableParams
         caching = builder.caching;
         compaction = builder.compaction;
         compression = builder.compression;
+        encrypted = builder.encrypted;
+        compression.setEncrypted(builder.encrypted);
         extensions = builder.extensions;
     }
 
@@ -118,6 +122,7 @@ public final class TableParams
                             .dcLocalReadRepairChance(params.dcLocalReadRepairChance)
                             .crcCheckChance(params.crcCheckChance)
                             .defaultTimeToLive(params.defaultTimeToLive)
+                            .encryption(params.encrypted)
                             .gcGraceSeconds(params.gcGraceSeconds)
                             .maxIndexInterval(params.maxIndexInterval)
                             .memtableFlushPeriodInMs(params.memtableFlushPeriodInMs)
@@ -212,6 +217,7 @@ public final class TableParams
             && caching.equals(p.caching)
             && compaction.equals(p.compaction)
             && compression.equals(p.compression)
+            && encrypted == p.encrypted
             && extensions.equals(p.extensions);
     }
 
@@ -232,6 +238,7 @@ public final class TableParams
                                 caching,
                                 compaction,
                                 compression,
+                                encrypted,
                                 extensions);
     }
 
@@ -253,6 +260,7 @@ public final class TableParams
                           .add(Option.CACHING.toString(), caching)
                           .add(Option.COMPACTION.toString(), compaction)
                           .add(Option.COMPRESSION.toString(), compression)
+                          .add(Option.ENCRYPTION.toString(), encrypted)
                           .add(Option.EXTENSIONS.toString(), extensions)
                           .toString();
     }
@@ -274,6 +282,7 @@ public final class TableParams
         private CompactionParams compaction = CompactionParams.DEFAULT;
         private CompressionParams compression = CompressionParams.DEFAULT;
         private ImmutableMap<String, ByteBuffer> extensions = ImmutableMap.of();
+        private boolean encrypted = false;
 
         public Builder()
         {
@@ -365,6 +374,12 @@ public final class TableParams
         public Builder compression(CompressionParams val)
         {
             compression = val;
+            return this;
+        }
+
+        public Builder encryption(boolean enabled)
+        {
+            encrypted = enabled;
             return this;
         }
 

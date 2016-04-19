@@ -347,17 +347,8 @@ public class CommitLogTest
                                                            DatabaseDescriptor.getCommitLogCompression(),
                                                            encryptionContext);
 
-        // if we're testing encryption, we need to write out a cipher IV to the descriptor headers
-        Map<String, String> additionalHeaders = new HashMap<>();
-        if (encryptionContext.isEnabled())
-        {
-            byte[] buf = new byte[16];
-            new Random().nextBytes(buf);
-            additionalHeaders.put(EncryptionContext.ENCRYPTION_IV, Hex.bytesToHex(buf));
-        }
-
         ByteBuffer buf = ByteBuffer.allocate(1024);
-        CommitLogDescriptor.writeHeader(buf, desc, additionalHeaders);
+        CommitLogDescriptor.writeHeader(buf, desc);
         buf.flip();
         int positionAfterHeader = buf.limit() + 1;
 

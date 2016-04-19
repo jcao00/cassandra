@@ -40,8 +40,6 @@ import org.apache.cassandra.security.EncryptionContextGenerator;
 
 public class CommitLogDescriptorTest
 {
-    private static final byte[] iv = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-
     ParameterizedClass compression;
     TransparentDataEncryptionOptions enabledTdeOptions;
 
@@ -62,7 +60,7 @@ public class CommitLogDescriptorTest
         compression = new ParameterizedClass(LZ4Compressor.class.getName(), params);
 
         enabledTdeOptions = EncryptionContextGenerator.createEncryptionOptions();
-        enabledEncryption = new EncryptionContext(enabledTdeOptions, iv, false);
+        enabledEncryption = EncryptionContextGenerator.createContext(false);
         
         neverEnabledEncryption = EncryptionContextGenerator.createDisabledContext();
         TransparentDataEncryptionOptions disaabledTdeOptions = new TransparentDataEncryptionOptions(false, enabledTdeOptions.cipher, enabledTdeOptions.key_alias, enabledTdeOptions.key_provider);
@@ -137,11 +135,11 @@ public class CommitLogDescriptorTest
     @Test
     public void constructParametersString_NoCompressionOrEncryption()
     {
-        String json = CommitLogDescriptor.constructParametersString(null, null, Collections.emptyMap());
+        String json = CommitLogDescriptor.constructParametersString(null, null);
         Assert.assertFalse(json.contains(CommitLogDescriptor.COMPRESSION_CLASS_KEY));
         Assert.assertFalse(json.contains(EncryptionContext.ENCRYPTION_CIPHER));
 
-        json = CommitLogDescriptor.constructParametersString(null, neverEnabledEncryption, Collections.emptyMap());
+        json = CommitLogDescriptor.constructParametersString(null, neverEnabledEncryption);
         Assert.assertFalse(json.contains(CommitLogDescriptor.COMPRESSION_CLASS_KEY));
         Assert.assertFalse(json.contains(EncryptionContext.ENCRYPTION_CIPHER));
     }
@@ -149,9 +147,17 @@ public class CommitLogDescriptorTest
     @Test
     public void constructParametersString_WithCompressionAndEncryption()
     {
-        String json = CommitLogDescriptor.constructParametersString(compression, enabledEncryption, Collections.emptyMap());
-        Assert.assertTrue(json.contains(CommitLogDescriptor.COMPRESSION_CLASS_KEY));
+        String json = CommitLogDescriptor.constructParametersString(compression, enabledEncryption);
+        Assert.assertFalse(json.contains(CommitLogDescriptor.COMPRESSION_CLASS_KEY));
         Assert.assertTrue(json.contains(EncryptionContext.ENCRYPTION_CIPHER));
+    }
+
+    @Test
+    public void constructParametersString_WithCompressionNoEncryption()
+    {
+        String json = CommitLogDescriptor.constructParametersString(compression, neverEnabledEncryption);
+        Assert.assertTrue(json.contains(CommitLogDescriptor.COMPRESSION_CLASS_KEY));
+        Assert.assertFalse(json.contains(EncryptionContext.ENCRYPTION_CIPHER));
     }
 
     @Test
@@ -194,7 +200,6 @@ public class CommitLogDescriptorTest
         Assert.assertNotNull(result);
         Assert.assertNull(result.compression);
         Assert.assertTrue(result.getEncryptionContext().isEnabled());
-        Assert.assertArrayEquals(iv, result.getEncryptionContext().getIV());
     }
 
     /**
@@ -212,13 +217,8 @@ public class CommitLogDescriptorTest
         Assert.assertNotNull(result);
         Assert.assertNull(result.compression);
         Assert.assertTrue(result.getEncryptionContext().isEnabled());
-        Assert.assertArrayEquals(iv, result.getEncryptionContext().getIV());
     }
 
-    /**
-     * Shouldn't happen in the real world (should only have either compression or enabledTdeOptions), but the header
-     * functionality should be correct
-     */
     @Test
     public void writeAndReadHeader_WithCompressionAndEncryption() throws IOException
     {
@@ -229,10 +229,10 @@ public class CommitLogDescriptorTest
         FileSegmentInputStream dataInput = new FileSegmentInputStream(buffer, null, 0);
         CommitLogDescriptor result = CommitLogDescriptor.readHeader(dataInput, enabledEncryption);
         Assert.assertNotNull(result);
-        Assert.assertEquals(compression, result.compression);
+        Assert.assertNull(result.compression);
         Assert.assertTrue(result.getEncryptionContext().isEnabled());
+        Assert.assertNotNull(result.getEncryptionContext().getCompressor());
         Assert.assertEquals(enabledEncryption, result.getEncryptionContext());
-        Assert.assertArrayEquals(iv, result.getEncryptionContext().getIV());
     }
 
     @Test
