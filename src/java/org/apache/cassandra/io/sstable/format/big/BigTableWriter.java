@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,7 @@ import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.util.*;
+import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.utils.*;
 import org.apache.cassandra.utils.concurrent.Transactional;
 
@@ -78,14 +80,14 @@ public class BigTableWriter extends SSTableWriter
                                              descriptor.filenameFor(Component.COMPRESSION_INFO),
                                              metadata.params.compression,
                                              metadataCollector);
-            dbuilder = SegmentedFile.getCompressedBuilder((CompressedSequentialWriter) dataFile);
+            dbuilder = new CompressedSegmentedFile.Builder(((CompressedSequentialWriter) dataFile), false);
         }
         else
         {
             dataFile = SequentialWriter.open(new File(getFilename()), new File(descriptor.filenameFor(Component.CRC)));
-            dbuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), false);
+            dbuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), false, false);
         }
-        iwriter = new IndexWriter(keyCount, dataFile);
+        iwriter = new IndexWriter(keyCount, dataFile, metadata);
 
         columnIndexWriter = new ColumnIndex(this.header, dataFile, descriptor.version, this.observers, getRowIndexEntrySerializer().indexInfoSerializer());
     }
@@ -408,12 +410,26 @@ public class BigTableWriter extends SSTableWriter
         public final SegmentedFile.Builder builder;
         public final IndexSummaryBuilder summary;
         public final IFilter bf;
+        private final CompressionParams compressionParams;
         private DataPosition mark;
 
-        IndexWriter(long keyCount, final SequentialWriter dataFile)
+        IndexWriter(long keyCount, final SequentialWriter dataFile, final CFMetaData metadata)
         {
-            indexFile = SequentialWriter.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
-            builder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode(), false);
+            compressionParams = metadata.params.compression;
+            String indexFileName = descriptor.filenameFor(Component.PRIMARY_INDEX);
+
+            if (compressionParams.getSstableCompressor() != null && compressionParams.getSstableCompressor().isEncrypting())
+            {
+                indexFile = SequentialWriter.open(indexFileName, descriptor.filenameFor(Component.INDEX_COMPRESSION_INFO),
+                                                  compressionParams, new MetadataCollector(metadata.comparator));
+                builder = new CompressedSegmentedFile.Builder(((CompressedSequentialWriter) indexFile), true);
+            }
+            else
+            {
+                indexFile = SequentialWriter.open(new File(indexFileName));
+                builder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode(), false, true);
+            }
+
             summary = new IndexSummaryBuilder(keyCount, metadata.params.minIndexInterval, Downsampling.BASE_SAMPLING_LEVEL);
             bf = FilterFactory.getFilter(keyCount, metadata.params.bloomFilterFpChance, true, descriptor.version.hasOldBfHashOrder());
             // register listeners to be alerted when the data files are flushed
@@ -501,15 +517,17 @@ public class BigTableWriter extends SSTableWriter
             flushBf();
 
             // truncate index file
-            long position = iwriter.indexFile.position();
-            iwriter.indexFile.setDescriptor(descriptor).prepareToCommit();
-            FileUtils.truncate(iwriter.indexFile.getPath(), position);
+            indexFile.setDescriptor(descriptor).prepareToCommit();
+            FileUtils.truncate(indexFile.getPath(), indexFile.finalLength());
 
             // save summary
             summary.prepareToCommit();
-            try (IndexSummary summary = iwriter.summary.build(getPartitioner()))
+            try (IndexSummary indexSummary = summary.build(getPartitioner()))
             {
-                SSTableReader.saveSummary(descriptor, first, last, iwriter.builder, dbuilder, summary);
+                Optional<CompressionParams> compParams = compressionParams.getSstableCompressor() != null && compressionParams.getSstableCompressor().isEncrypting() ?
+                                                                    Optional.of(compressionParams) :
+                                                                    Optional.empty();
+                SSTableReader.saveSummary(descriptor, first, last, builder, dbuilder, indexSummary, compParams);
             }
         }
 

@@ -164,9 +164,9 @@ public class CommitLogUpgradeTest
     }
 
     @Test
-    public void test34_encrypted() throws Exception
+    public void test38_encrypted() throws Exception
     {
-        testRestore(DATA_DIR + "3.4-encrypted");
+        testRestore(DATA_DIR + "3.8-encrypted");
     }
 
     @BeforeClass

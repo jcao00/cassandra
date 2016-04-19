@@ -58,7 +58,6 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.security.EncryptionContextGenerator;
-import org.apache.cassandra.utils.Hex;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.KillerForTests;
 import org.apache.cassandra.utils.Pair;
@@ -366,9 +365,8 @@ public class CommitLogTest
                                                            DatabaseDescriptor.getCommitLogCompression(),
                                                            encryptionContext);
 
-
         ByteBuffer buf = ByteBuffer.allocate(1024);
-        CommitLogDescriptor.writeHeader(buf, desc, getAdditionalHeaders(encryptionContext));
+        CommitLogDescriptor.writeHeader(buf, desc);
         buf.flip();
         int positionAfterHeader = buf.limit() + 1;
 
@@ -380,17 +378,6 @@ public class CommitLogTest
         }
 
         return Pair.create(logFile, positionAfterHeader);
-    }
-
-    private Map<String, String> getAdditionalHeaders(EncryptionContext encryptionContext)
-    {
-        if (!encryptionContext.isEnabled())
-            return Collections.emptyMap();
-
-        // if we're testing encryption, we need to write out a cipher IV to the descriptor headers
-        byte[] buf = new byte[16];
-        new Random().nextBytes(buf);
-        return Collections.singletonMap(EncryptionContext.ENCRYPTION_IV, Hex.bytesToHex(buf));
     }
 
     protected File tmpFile(int version) throws IOException
@@ -419,7 +406,7 @@ public class CommitLogTest
         // Change id to match file.
         desc = new CommitLogDescriptor(desc.version, fromFile.id, desc.compression, desc.getEncryptionContext());
         ByteBuffer buf = ByteBuffer.allocate(1024);
-        CommitLogDescriptor.writeHeader(buf, desc, getAdditionalHeaders(desc.getEncryptionContext()));
+        CommitLogDescriptor.writeHeader(buf, desc);
         try (OutputStream lout = new FileOutputStream(logFile))
         {
             lout.write(buf.array(), 0, buf.position());

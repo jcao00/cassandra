@@ -25,7 +25,11 @@ import com.google.common.collect.ImmutableSet;
 
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
-import org.apache.cassandra.schema.*;
+import org.apache.cassandra.schema.CachingParams;
+import org.apache.cassandra.schema.CompactionParams;
+import org.apache.cassandra.schema.CompressionParams;
+import org.apache.cassandra.schema.SpeculativeRetryParam;
+import org.apache.cassandra.schema.TableParams;
 import org.apache.cassandra.schema.TableParams.Option;
 
 import static java.lang.String.format;
@@ -103,6 +107,9 @@ public final class TableAttributes extends PropertyDefinitions
             }
             builder.compression(CompressionParams.fromMap(getMap(Option.COMPRESSION)));
         }
+
+        if (hasOption(Option.ENCRYPTION))
+            builder.encryption(getBoolean(Option.ENCRYPTION.toString(), Boolean.TRUE));
 
         if (hasOption(Option.DCLOCAL_READ_REPAIR_CHANCE))
             builder.dcLocalReadRepairChance(getDouble(Option.DCLOCAL_READ_REPAIR_CHANCE));

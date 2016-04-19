@@ -46,8 +46,10 @@ public class Component
         PRIMARY_INDEX("Index.db"),
         // serialized bloom filter for the row keys in the sstable
         FILTER("Filter.db"),
-        // file to hold information about uncompressed data length, chunk offsets etc.
+        // file to hold information about uncompressed data length, chunk offsets, etc, for the DATA file
         COMPRESSION_INFO("CompressionInfo.db"),
+        // file to hold information about uncompressed data length, chunk offsets, etc, for the PRIMARY_INDEX file
+        INDEX_COMPRESSION_INFO("IndexCompressionInfo.db"),
         // statistical metadata about the content of the sstable
         STATS("Statistics.db"),
         // holds adler32 checksum of the data file
@@ -92,6 +94,7 @@ public class Component
     public final static Component PRIMARY_INDEX = new Component(Type.PRIMARY_INDEX);
     public final static Component FILTER = new Component(Type.FILTER);
     public final static Component COMPRESSION_INFO = new Component(Type.COMPRESSION_INFO);
+    public final static Component INDEX_COMPRESSION_INFO = new Component(Type.INDEX_COMPRESSION_INFO);
     public final static Component STATS = new Component(Type.STATS);
     private static final String digestCrc32 = "Digest.crc32";
     private static final String digestAdler32 = "Digest.adler32";
@@ -159,24 +162,25 @@ public class Component
         Component component;
         switch(type)
         {
-            case DATA:              component = Component.DATA;                         break;
-            case PRIMARY_INDEX:     component = Component.PRIMARY_INDEX;                break;
-            case FILTER:            component = Component.FILTER;                       break;
-            case COMPRESSION_INFO:  component = Component.COMPRESSION_INFO;             break;
-            case STATS:             component = Component.STATS;                        break;
-            case DIGEST:            switch (path.right)
-                                    {
-                                        case digestCrc32:   component = Component.DIGEST_CRC32;     break;
-                                        case digestAdler32: component = Component.DIGEST_ADLER32;   break;
-                                        case digestSha1:    component = Component.DIGEST_SHA1;      break;
-                                        default:            throw new IllegalArgumentException("Invalid digest component " + path.right);
-                                    }
-                                    break;
-            case CRC:               component = Component.CRC;                          break;
-            case SUMMARY:           component = Component.SUMMARY;                      break;
-            case TOC:               component = Component.TOC;                          break;
-            case SECONDARY_INDEX:   component = new Component(Type.SECONDARY_INDEX, path.right); break;
-            case CUSTOM:            component = new Component(Type.CUSTOM, path.right); break;
+            case DATA:                    component = Component.DATA;                         break;
+            case PRIMARY_INDEX:           component = Component.PRIMARY_INDEX;                break;
+            case FILTER:                  component = Component.FILTER;                       break;
+            case COMPRESSION_INFO:        component = Component.COMPRESSION_INFO;             break;
+            case INDEX_COMPRESSION_INFO:  component = Component.INDEX_COMPRESSION_INFO;       break;
+            case STATS:                   component = Component.STATS;                        break;
+            case DIGEST:                  switch (path.right)
+                                          {
+                                              case digestCrc32:   component = Component.DIGEST_CRC32;     break;
+                                              case digestAdler32: component = Component.DIGEST_ADLER32;   break;
+                                              case digestSha1:    component = Component.DIGEST_SHA1;      break;
+                                              default:            throw new IllegalArgumentException("Invalid digest component " + path.right);
+                                          }
+                                          break;
+            case CRC:                     component = Component.CRC;                          break;
+            case SUMMARY:                 component = Component.SUMMARY;                      break;
+            case TOC:                     component = Component.TOC;                          break;
+            case SECONDARY_INDEX:         component = new Component(Type.SECONDARY_INDEX, path.right); break;
+            case CUSTOM:                  component = new Component(Type.CUSTOM, path.right); break;
             default:
                  throw new IllegalStateException();
         }

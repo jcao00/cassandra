@@ -103,6 +103,13 @@ public class CompressedSequentialWriter extends SequentialWriter
         return chunkOffset;
     }
 
+    // TODO:JEB is this still needed?
+    public long finalLength()
+    {
+        assert !fchannel.isOpen();
+        return chunkOffset;
+    }
+
     @Override
     public void flush()
     {

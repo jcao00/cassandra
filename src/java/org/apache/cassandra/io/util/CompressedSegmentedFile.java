@@ -30,19 +30,22 @@ import org.apache.cassandra.config.Config.DiskAccessMode;
 import org.apache.cassandra.io.compress.*;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.io.compress.CompressedSequentialWriter;
+import org.apache.cassandra.io.compress.CompressionMetadata;
+import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.utils.concurrent.Ref;
 
 public class CompressedSegmentedFile extends SegmentedFile implements ICompressedFile
 {
     public final CompressionMetadata metadata;
 
-    public CompressedSegmentedFile(ChannelProxy channel, CompressionMetadata metadata, Config.DiskAccessMode mode)
+    public CompressedSegmentedFile(ChannelProxy channel, CompressionMetadata metadata, Config.DiskAccessMode mode, boolean forIndexes)
     {
         this(channel,
              metadata,
-             mode == DiskAccessMode.mmap
-             ? MmappedRegions.map(channel, metadata)
-             : null);
+             mode == DiskAccessMode.mmap || (forIndexes && mode == DiskAccessMode.mmap_index_only)
+                ? MmappedRegions.map(channel, metadata)
+                : null);
     }
 
     public CompressedSegmentedFile(ChannelProxy channel, CompressionMetadata metadata, MmappedRegions regions)
@@ -115,24 +118,26 @@ public class CompressedSegmentedFile extends SegmentedFile implements ICompresse
     {
         final CompressedSequentialWriter writer;
         final Config.DiskAccessMode mode;
+        final boolean forIndexes;
 
-        public Builder(CompressedSequentialWriter writer)
+        public Builder(CompressedSequentialWriter writer, boolean forIndexes)
         {
             this.writer = writer;
             this.mode = DatabaseDescriptor.getDiskAccessMode();
+            this.forIndexes = forIndexes;
         }
 
         protected CompressionMetadata metadata(String path, long overrideLength)
         {
             if (writer == null)
-                return CompressionMetadata.create(path);
+                return CompressionMetadata.create(path, forIndexes ? Component.INDEX_COMPRESSION_INFO : Component.COMPRESSION_INFO);
 
             return writer.open(overrideLength);
         }
 
         public SegmentedFile complete(ChannelProxy channel, int bufferSize, long overrideLength)
         {
-            return new CompressedSegmentedFile(channel, metadata(channel.filePath(), overrideLength), mode);
+            return new CompressedSegmentedFile(channel, metadata(channel.filePath(), overrideLength), mode, forIndexes);
         }
     }
 

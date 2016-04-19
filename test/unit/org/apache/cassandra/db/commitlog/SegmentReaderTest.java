@@ -26,7 +26,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Collections;
 import java.util.Random;
-import javax.crypto.Cipher;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -40,8 +39,6 @@ import org.apache.cassandra.io.compress.LZ4Compressor;
 import org.apache.cassandra.io.compress.SnappyCompressor;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.RandomAccessReader;
-import org.apache.cassandra.security.CipherFactory;
-import org.apache.cassandra.security.EncryptionUtils;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.security.EncryptionContextGenerator;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -116,26 +113,23 @@ public class SegmentReaderTest
     @Test
     public void encryptedSegmenter() throws IOException
     {
-        EncryptionContext context = EncryptionContextGenerator.createContext(true);
-        CipherFactory cipherFactory = new CipherFactory(context.getTransparentDataEncryptionOptions());
+        EncryptionContext encryptionContext = EncryptionContextGenerator.createContext(true);
 
         int plainTextLength = (1 << 13) - 137;
         ByteBuffer plainTextBuffer = ByteBuffer.allocate(plainTextLength);
         random.nextBytes(plainTextBuffer.array());
 
-        ByteBuffer compressedBuffer = EncryptionUtils.compress(plainTextBuffer, null, true, context.getCompressor());
-        Cipher cipher = cipherFactory.getEncryptor(context.getTransparentDataEncryptionOptions().cipher, context.getTransparentDataEncryptionOptions().key_alias);
         File encryptedFile = File.createTempFile("encrypted-segment-", ".log");
         encryptedFile.deleteOnExit();
         FileChannel channel = new RandomAccessFile(encryptedFile, "rw").getChannel();
         channel.write(ByteBufferUtil.bytes(plainTextLength));
-        EncryptionUtils.encryptAndWrite(compressedBuffer, channel, true, cipher);
+        encryptionContext.encryptAndWrite(plainTextBuffer, channel, true);
         channel.close();
 
         try (RandomAccessReader reader = RandomAccessReader.open(encryptedFile))
         {
-            context = EncryptionContextGenerator.createContext(cipher.getIV(), true);
-            EncryptedSegmenter segmenter = new EncryptedSegmenter(reader, context);
+            encryptionContext = EncryptionContextGenerator.createContext(true);
+            EncryptedSegmenter segmenter = new EncryptedSegmenter(reader, encryptionContext);
             SyncSegment syncSegment = segmenter.nextSegment(0, (int) reader.length());
 
             // EncryptedSegmenter includes the Sync header length in the syncSegment.endPosition (value)

@@ -55,7 +55,7 @@ public class CommitLogUpgradeTestMaker
     public static int numCells = 1;
     public static int cellSize = 256;
     public static int rateLimit = 0;
-    public static int runTimeMs = 1000;
+    public static int runTimeMs = 100;
 
     public static void main(String[] args) throws Exception
     {

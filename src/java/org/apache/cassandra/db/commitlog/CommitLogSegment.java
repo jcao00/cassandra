@@ -178,19 +178,11 @@ public abstract class CommitLogSegment
      */
     void writeLogHeader()
     {
-        CommitLogDescriptor.writeHeader(buffer, descriptor, additionalHeaderParameters());
+        CommitLogDescriptor.writeHeader(buffer, descriptor);
         endOfBuffer = buffer.capacity();
         lastSyncedOffset = buffer.position();
         allocatePosition.set(lastSyncedOffset + SYNC_MARKER_SIZE);
         headerWritten = true;
-    }
-
-    /**
-     * Provide any additional header data that should be stored in the {@link CommitLogDescriptor}.
-     */
-    protected Map<String, String> additionalHeaderParameters()
-    {
-        return Collections.<String, String>emptyMap();
     }
 
     abstract ByteBuffer createBuffer(CommitLog commitLog);

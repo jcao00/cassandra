@@ -517,11 +517,11 @@ public class CommitLog implements CommitLogMBean
          */
         private EncryptionContext encryptionContext;
 
-        public Configuration(ParameterizedClass compressorClass, EncryptionContext encryptionContext)
+        public Configuration(ParameterizedClass compressorClass, EncryptionContext baseEncryptionContext)
         {
             this.compressorClass = compressorClass;
             this.compressor = compressorClass != null ? CompressionParams.createCompressor(compressorClass) : null;
-            this.encryptionContext = encryptionContext;
+            encryptionContext = EncryptionContext.create(baseEncryptionContext.getTransparentDataEncryptionOptions(), compressorClass);
         }
 
         /**

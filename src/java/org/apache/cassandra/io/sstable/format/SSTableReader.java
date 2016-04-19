@@ -17,11 +17,33 @@
  */
 package org.apache.cassandra.io.sstable.format;
 
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -44,7 +66,15 @@ import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
-import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.ClusteringComparator;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DataRange;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.PartitionPosition;
+import org.apache.cassandra.db.RowIndexEntry;
+import org.apache.cassandra.db.SerializationHeader;
+import org.apache.cassandra.db.Slices;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.rows.EncodingStats;
@@ -55,16 +85,44 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.index.internal.CassandraIndex;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.compress.CompressionMetadata;
-import org.apache.cassandra.io.sstable.*;
-import org.apache.cassandra.io.sstable.metadata.*;
-import org.apache.cassandra.io.util.*;
+import org.apache.cassandra.io.sstable.BloomFilterTracker;
+import org.apache.cassandra.io.sstable.Component;
+import org.apache.cassandra.io.sstable.CorruptSSTableException;
+import org.apache.cassandra.io.sstable.Descriptor;
+import org.apache.cassandra.io.sstable.Downsampling;
+import org.apache.cassandra.io.sstable.ISSTableScanner;
+import org.apache.cassandra.io.sstable.IndexSummary;
+import org.apache.cassandra.io.sstable.IndexSummaryBuilder;
+import org.apache.cassandra.io.sstable.SSTable;
+import org.apache.cassandra.io.sstable.metadata.CompactionMetadata;
+import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
+import org.apache.cassandra.io.sstable.metadata.MetadataType;
+import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
+import org.apache.cassandra.io.sstable.metadata.ValidationMetadata;
+import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
+import org.apache.cassandra.io.util.BufferedSegmentedFile;
+import org.apache.cassandra.io.util.ChannelProxy;
+import org.apache.cassandra.io.util.CompressedSegmentedFile;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.io.util.FileDataInput;
+import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.io.util.ICompressedFile;
+import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.io.util.SegmentedFile;
 import org.apache.cassandra.metrics.RestorableMeter;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.schema.CachingParams;
+import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.schema.IndexMetadata;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.service.CacheService;
-import org.apache.cassandra.utils.*;
+import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.CLibrary;
+import org.apache.cassandra.utils.EstimatedHistogram;
+import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.FilterFactory;
+import org.apache.cassandra.utils.IFilter;
+import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 import org.apache.cassandra.utils.concurrent.Ref;
 import org.apache.cassandra.utils.concurrent.SelfRefCounted;
@@ -432,9 +490,12 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                                              header == null? null : header.toHeader(metadata));
 
         // special implementation of load to use non-pooled SegmentedFile builders
-        try(SegmentedFile.Builder ibuilder = new BufferedSegmentedFile.Builder();
+        ;
+        try(SegmentedFile.Builder ibuilder = sstable.indexCompression
+                ? new CompressedSegmentedFile.Builder(null, true)
+                : new BufferedSegmentedFile.Builder();
             SegmentedFile.Builder dbuilder = sstable.compression
-                ? new CompressedSegmentedFile.Builder(null)
+                ? new CompressedSegmentedFile.Builder(null, false)
                 : new BufferedSegmentedFile.Builder())
         {
             if (!sstable.loadSummary(ibuilder, dbuilder))
@@ -731,8 +792,8 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
      */
     private void load(boolean recreateBloomFilter, boolean saveSummaryIfCreated) throws IOException
     {
-        try(SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode(), false);
-            SegmentedFile.Builder dbuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), compression))
+        try(SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode(), indexCompression, true);
+            SegmentedFile.Builder dbuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), compression, false))
         {
             boolean summaryLoaded = loadSummary(ibuilder, dbuilder);
             boolean builtSummary = false;
@@ -850,7 +911,13 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         DataInputStream iStream = null;
         try
         {
-            iStream = new DataInputStream(new FileInputStream(summariesFile));
+            if (indexCompression)
+            {
+                CompressionMetadata cmd = new CompressionMetadata(descriptor.filenameFor(Component.COMPRESSION_INFO), summariesFile.length(), descriptor.version.compressedChecksumType());
+                iStream = new DataInputStream(new EncryptedSummaryInputStream(new FileInputStream(summariesFile), cmd.parameters.asMap(), DatabaseDescriptor.getEncryptionContext()));
+            }
+            else
+                iStream = new DataInputStream(new FileInputStream(summariesFile));
             indexSummary = IndexSummary.serializer.deserialize(
                     iStream, getPartitioner(), descriptor.version.hasSamplingLevel(),
                     metadata.params.minIndexInterval, metadata.params.maxIndexInterval);
@@ -887,24 +954,29 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
 
     public void saveSummary(SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder)
     {
-        saveSummary(this.descriptor, this.first, this.last, ibuilder, dbuilder, indexSummary);
+        saveSummary(this.descriptor, this.first, this.last, ibuilder, dbuilder, indexSummary,
+                    indexCompression ? Optional.of(((ICompressedFile)dfile).getMetadata().parameters) : Optional.empty());
     }
 
     private void saveSummary(SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, IndexSummary newSummary)
     {
-        saveSummary(this.descriptor, this.first, this.last, ibuilder, dbuilder, newSummary);
+        saveSummary(this.descriptor, this.first, this.last, ibuilder, dbuilder, newSummary,
+                    indexCompression ? Optional.of(((ICompressedFile)dfile).getMetadata().parameters) : Optional.empty());
     }
     /**
      * Save index summary to Summary.db file.
      */
-    public static void saveSummary(Descriptor descriptor, DecoratedKey first, DecoratedKey last,
-                                   SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, IndexSummary summary)
+    public static void saveSummary(Descriptor descriptor, DecoratedKey first, DecoratedKey last, SegmentedFile.Builder ibuilder,
+                                   SegmentedFile.Builder dbuilder, IndexSummary summary, Optional<CompressionParams> compressionParams)
     {
         File summariesFile = new File(descriptor.filenameFor(Component.SUMMARY));
         if (summariesFile.exists())
             FileUtils.deleteWithConfirm(summariesFile);
 
-        try (DataOutputStreamPlus oStream = new BufferedDataOutputStreamPlus(new FileOutputStream(summariesFile));)
+        try (DataOutputStreamPlus oStream = compressionParams.isPresent() ?
+                                            new BufferedDataOutputStreamPlus(new EncryptedSummaryWritableByteChannel(
+                                                                                 new FileOutputStream(summariesFile), compressionParams.get().asMap(), DatabaseDescriptor.getEncryptionContext())) :
+                                            new BufferedDataOutputStreamPlus(new FileOutputStream(summariesFile)))
         {
             IndexSummary.serializer.serialize(summary, oStream, descriptor.version.hasSamplingLevel());
             ByteBufferUtil.writeWithLength(first.getKey(), oStream);
@@ -1115,8 +1187,8 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             }
 
             //Always save the resampled index
-            try(SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode(), false);
-                SegmentedFile.Builder dbuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), compression))
+            try(SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode(), indexCompression, true);
+                SegmentedFile.Builder dbuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), compression, false))
             {
                 saveSummary(ibuilder, dbuilder, newSummary);
             }

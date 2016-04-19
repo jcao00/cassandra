@@ -145,18 +145,14 @@ public abstract class SegmentedFile extends SharedCloseableImpl
     }
 
     /**
+     * @param forIndexes only applicable if {@code compressed} is true.
      * @return A SegmentedFile.Builder.
      */
-    public static Builder getBuilder(Config.DiskAccessMode mode, boolean compressed)
+    public static Builder getBuilder(Config.DiskAccessMode mode, boolean compressed, boolean forIndexes)
     {
-        return compressed ? new CompressedSegmentedFile.Builder(null)
+        return compressed ? new CompressedSegmentedFile.Builder(null, forIndexes)
                           : mode == Config.DiskAccessMode.mmap ? new MmappedSegmentedFile.Builder()
                                                                : new BufferedSegmentedFile.Builder();
-    }
-
-    public static Builder getCompressedBuilder(CompressedSequentialWriter writer)
-    {
-        return new CompressedSegmentedFile.Builder(writer);
     }
 
     /**
