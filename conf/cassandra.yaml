@@ -988,8 +988,8 @@ windows_timer_interval: 1
 # Unlimited Strength Jurisdiction Policy Files for your version of the JDK.
 # (current link: http://www.oracle.com/technetwork/java/javase/downloads/jce8-download-2133166.html)
 #
-# Currently, only the following file types are supported for transparent data encryption, although
-# more are coming in future cassandra releases: commitlog, hints
+# Currently, the following file types are supported for transparent data encryption:
+# ssatbles (data, primary index, summary), commitlog, and hints.
 transparent_data_encryption_options:
     enabled: false
     chunk_length_kb: 64
