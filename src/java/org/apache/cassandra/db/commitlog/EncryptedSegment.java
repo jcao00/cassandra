@@ -25,11 +25,11 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.security.EncryptionContext;
-import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.SyncUtil;
+import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
- * Writes encrypted segments to disk. Data is compressed before encrypting to (hopefully) reduce the size of the data into
+ * Writes encrypted commit log segments to disk. Data is compressed before encrypting to (hopefully) reduce the size of the data into
  * the encryption algorithms.
  *
  * The format of the encrypted commit log is as follows:
@@ -37,16 +37,7 @@ import org.apache.cassandra.utils.SyncUtil;
  * - a series of 'sync segments' that are written every time the commit log is sync()'ed
  * -- a sync section header, see {@link CommitLogSegment#writeSyncMarker(ByteBuffer, int, int, int)}
  * -- total plain text length for this section
- * -- a series of encrypted data blocks, each of which contains:
- * --- the length of the encrypted block (cipher text)
- * --- the length of the unencrypted data (compressed text)
- * --- the encrypted block, which contains:
- * ---- the length of the plain text (raw) data
- * ---- block of compressed data
- *
- * Notes:
- * - "length of the unencrypted data" is different from the length of resulting decrypted buffer as encryption adds padding
- * to the output buffer, and we need to ignore that padding when processing.
+ * -- a series of encrypted data blocks, the format of each is described in {@link EncryptionContext}.
  */
 public class EncryptedSegment extends FileDirectSegment
 {
@@ -78,9 +69,11 @@ public class EncryptedSegment extends FileDirectSegment
         assert length > 0 || length == 0 && !isStillAllocating();
 
         final int blockSize = encryptionContext.getChunkLength();
+        ByteBuffer writeBuffer = null;
         try
         {
             ByteBuffer inputBuffer = buffer.duplicate();
+            inputBuffer.clear();
             inputBuffer.limit(contentStart + length).position(contentStart);
 
             // save space for the sync marker at the beginning of this section
@@ -94,34 +87,52 @@ public class EncryptedSegment extends FileDirectSegment
                 ByteBuffer slice = inputBuffer.duplicate();
                 slice.limit(contentStart + nextBlockSize).position(contentStart);
 
-                // reuse the same buffer for the input and output of the encryption operation
-                int writeCount = encryptionContext.encryptAndWrite(buffer, channel, true);
+                int encryptedBlockSize = encryptionContext.encryptedBufferLength(nextBlockSize);
+                writeBuffer = getProperlySizedBuffer(writeBuffer, encryptedBlockSize);
+
+                int writeCount = encryptionContext.encryptAndWrite(writeBuffer, channel, false);
                 contentStart += nextBlockSize;
                 commitLog.allocator.addSize(writeCount);
             }
 
             lastWrittenPos = channel.position();
 
-            // rewind to the beginning of the section and write out the sync marker,
-            // reusing the one of the existing buffers
-            buffer = ByteBufferUtil.ensureCapacity(buffer, ENCRYPTED_SECTION_HEADER_SIZE, true);
-            writeSyncMarker(buffer, 0, (int) syncMarkerPosition, (int) lastWrittenPos);
-            buffer.putInt(SYNC_MARKER_SIZE, length);
-            buffer.position(0).limit(ENCRYPTED_SECTION_HEADER_SIZE);
-            commitLog.allocator.addSize(buffer.limit());
-
+            // rewind to the beginning of the section and write out the sync marker
+            writeBuffer = getProperlySizedBuffer(writeBuffer, ENCRYPTED_SECTION_HEADER_SIZE);
+            writeSyncMarker(writeBuffer, 0, (int) syncMarkerPosition, (int) lastWrittenPos);
+            writeBuffer.putInt(SYNC_MARKER_SIZE, length);
+            writeBuffer.position(0).limit(ENCRYPTED_SECTION_HEADER_SIZE);
             channel.position(syncMarkerPosition);
-            channel.write(buffer);
+            channel.write(writeBuffer);
 
+            commitLog.allocator.addSize(buffer.limit());
             SyncUtil.force(channel, true);
-
-            if (reusableBufferHolder.get().capacity() < buffer.capacity())
-                reusableBufferHolder.set(buffer);
         }
         catch (Exception e)
         {
             throw new FSWriteError(e, getPath());
         }
+        finally
+        {
+            if (writeBuffer != null)
+                BufferPool.put(writeBuffer);
+        }
+    }
+
+    private static ByteBuffer getProperlySizedBuffer(ByteBuffer writeBuffer, int encryptedBlockSize)
+    {
+        if (writeBuffer == null)
+            return BufferPool.get(encryptedBlockSize, BufferType.ON_HEAP);
+
+        if (writeBuffer.capacity() >= encryptedBlockSize)
+        {
+            writeBuffer.clear();
+            return writeBuffer;
+        }
+
+        // writeBuffer.capacity() < encryptedBlockSize
+        BufferPool.put(writeBuffer);
+        return BufferPool.get(encryptedBlockSize, BufferType.ON_HEAP);
     }
 
     public long onDiskSize()

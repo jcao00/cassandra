@@ -46,7 +46,7 @@ import org.apache.cassandra.config.TransparentDataEncryptionOptions;
  * A factory for loading encryption keys from {@link KeyProvider} instances.
  * Maintains a cache of loaded keys to avoid invoking the key provider on every call.
  */
-public class CipherFactory
+class CipherFactory
 {
     private static final Logger logger = LoggerFactory.getLogger(CipherFactory.class);
 
@@ -103,7 +103,7 @@ public class CipherFactory
     private final KeyProvider keyProvider;
 
     @VisibleForTesting
-    public CipherFactory(TransparentDataEncryptionOptions options)
+    CipherFactory(TransparentDataEncryptionOptions options)
     {
         logger.info("initializing CipherFactory");
         ivLength = options.iv_length;
@@ -165,11 +165,11 @@ public class CipherFactory
         CachedCipher cachedCipher = cachedCiphers.get();
         if (cachedCipher != null)
         {
-            boolean hasSameMode = cachedCipher.cipherMode != Cipher.ENCRYPT_MODE;
-            if (logger.isDebugEnabled() && !hasSameMode)
+            boolean differingCipherModes = cachedCipher.cipherMode != Cipher.ENCRYPT_MODE;
+            if (logger.isDebugEnabled() && differingCipherModes)
                 logger.debug("cached cipher is set for decryption, but we're on the encrypt path");
 
-            if (reinitialize || !hasSameMode)
+            if (reinitialize || differingCipherModes)
                 reinitEncryptor(cachedCipher.cipher, keyAlias);
             return cachedCipher.cipher;
         }
@@ -194,8 +194,8 @@ public class CipherFactory
         CachedCipher cachedCipher = cachedCiphers.get();
         if (cachedCipher != null)
         {
-            boolean hasSameMode = cachedCipher.cipherMode != Cipher.DECRYPT_MODE;
-            if (logger.isDebugEnabled() && !hasSameMode)
+            boolean differingCipherModes = cachedCipher.cipherMode != Cipher.DECRYPT_MODE;
+            if (logger.isDebugEnabled() && differingCipherModes)
                 logger.debug("cached cipher is set for encryption, but we're on the decrypt path");
 
             reinitDecryptor(cachedCipher.cipher, keyAlias, iv);
@@ -260,7 +260,7 @@ public class CipherFactory
      * Reinitialize an existing encrypting {@link Cipher} with a new initialization vector. This is more efficient than creating
      * a new instance (via {@link #getEncryptor(String, String, boolean)}.
      */
-    void reinitEncryptor(Cipher cipher, String keyAlias) throws IOException
+    private void reinitEncryptor(Cipher cipher, String keyAlias) throws IOException
     {
         reinit(cipher, Cipher.ENCRYPT_MODE, keyAlias, null);
     }
@@ -291,7 +291,7 @@ public class CipherFactory
      * Reinitialize an existing decrypting {@link Cipher} with a new initialization vector. This is more efficient than creating
      * a new instance (via {@link #getDecryptor(String, String, byte[])}.
      */
-    void reinitDecryptor(Cipher cipher, String keyAlias, byte[] iv) throws IOException
+    private void reinitDecryptor(Cipher cipher, String keyAlias, byte[] iv) throws IOException
     {
         Preconditions.checkNotNull(iv, "initialization vector must not be null");
         reinit(cipher, Cipher.DECRYPT_MODE, keyAlias, iv);

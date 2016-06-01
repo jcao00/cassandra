@@ -24,6 +24,7 @@ import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.SyncUtil;
+import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * Compressed commit log segment. Provides an in-memory buffer for the mutation threads. On sync compresses the written
@@ -68,18 +69,10 @@ public class CompressedSegment extends FileDirectSegment
         // The length may be 0 when the segment is being closed.
         assert length > 0 || length == 0 && !isStillAllocating();
 
+        int neededBufferSize = compressor.initialCompressedBufferLength(length) + COMPRESSED_MARKER_SIZE;
+        ByteBuffer compressedBuffer = BufferPool.get(neededBufferSize, compressor.preferredBufferType());
         try
         {
-            int neededBufferSize = compressor.initialCompressedBufferLength(length) + COMPRESSED_MARKER_SIZE;
-            ByteBuffer compressedBuffer = reusableBufferHolder.get();
-            if (compressor.preferredBufferType() != BufferType.typeOf(compressedBuffer) ||
-                compressedBuffer.capacity() < neededBufferSize)
-            {
-                FileUtils.clean(compressedBuffer);
-                compressedBuffer = allocate(neededBufferSize);
-                reusableBufferHolder.set(compressedBuffer);
-            }
-
             ByteBuffer inputBuffer = buffer.duplicate();
             inputBuffer.limit(contentStart + length).position(contentStart);
             compressedBuffer.limit(compressedBuffer.capacity()).position(COMPRESSED_MARKER_SIZE);
@@ -100,6 +93,10 @@ public class CompressedSegment extends FileDirectSegment
         catch (Exception e)
         {
             throw new FSWriteError(e, getPath());
+        }
+        finally
+        {
+            BufferPool.put(compressedBuffer);
         }
     }
 
