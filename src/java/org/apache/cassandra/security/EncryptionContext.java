@@ -48,7 +48,17 @@ import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
- * A wrapper for file-level encryption settings.
+ * A wrapper for file-level encryption settings, and contains methods for encrypting and decrypting data.
+ * Always uses compression with encryption to reduce the size of the cipher text blocks.
+ *
+ * The format for encrypted blocks is:
+ * - int - length of the encrypted block (cipher text)
+ * - int - length of the unencrypted data (compressed text)
+ * - byte - length of IV for encryption alg for this encrypted block (if IV is used)
+ * - variable - IV for the encryption alg for this encryption block (if IV is used)
+ * - encrypted block, which contains:
+ * -- the length of the plain text (raw) data
+ * -- block of compressed data
  */
 public class EncryptionContext
 {
@@ -449,23 +459,6 @@ public class EncryptionContext
         {
             return decrypt(rbc, outputBuffer, allowBufferResize);
         }
-    }
-
-    /**
-     * Uncompress the input data, as well as manage sizing of the {@code outputBuffer}; if the buffer is not big enough,
-     * deallocate current, and allocate a large enough buffer.
-     *
-     * @return the byte buffer that was actaully written to; it may be the {@code outputBuffer} if it had enough capacity,
-     * or it may be a new, larger instance. Callers should capture the return buffer (if calling multiple times).
-     */
-    ByteBuffer uncompress(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize) throws IOException
-    {
-        int outputLength = inputBuffer.getInt();
-        outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, outputLength, allowBufferResize);
-        compressor.uncompress(inputBuffer, outputBuffer);
-        outputBuffer.position(0).limit(outputLength);
-
-        return outputBuffer;
     }
 
     /**
