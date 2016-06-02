@@ -43,7 +43,7 @@ class EncryptedHintsWriter extends HintsWriter
 
     protected void writeBuffer(ByteBuffer input) throws IOException
     {
-        encryptionContext.encryptAndWrite(input, channel, true, (outBuffer) -> updateChecksum(globalCRC, outBuffer));
+        encryptionContext.encryptAndWrite(input, channel, (outBuffer) -> updateChecksum(globalCRC, outBuffer));
     }
 
     @VisibleForTesting

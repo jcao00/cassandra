@@ -59,6 +59,7 @@ class EncryptedSummaryInputStream extends InputStream implements AutoCloseable
 
     public void close() throws IOException
     {
+        workingBuffer = null;
         channel.close();
     }
 }

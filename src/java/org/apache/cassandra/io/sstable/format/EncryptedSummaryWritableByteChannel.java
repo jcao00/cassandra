@@ -45,7 +45,7 @@ class EncryptedSummaryWritableByteChannel implements WritableByteChannel, AutoCl
 
     public int write(ByteBuffer src) throws IOException
     {
-        return encryptionContext.encryptAndWrite(src, channel, true);
+        return encryptionContext.encryptAndWrite(src, channel);
     }
 
     public boolean isOpen()

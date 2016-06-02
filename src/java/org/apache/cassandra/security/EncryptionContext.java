@@ -274,17 +274,20 @@ public class EncryptionContext
      *
      * @return the buffer that encrypted data was written to (which may have been the input buffer), and the number of bytes written.
      */
-    public int encryptAndWrite(ByteBuffer inputBuffer, WritableByteChannel channel, boolean allowBufferResize) throws IOException
+    public int encryptAndWrite(ByteBuffer inputBuffer, WritableByteChannel channel) throws IOException
     {
-        return encryptAndWrite(inputBuffer, channel, allowBufferResize, null);
+        return encryptAndWrite(inputBuffer, channel, null);
     }
 
-    public int encryptAndWrite(ByteBuffer inputBuffer, WritableByteChannel channel, boolean allowBufferResize, Consumer<ByteBuffer> outBufferFunction) throws IOException
+    public int encryptAndWrite(ByteBuffer inputBuffer, WritableByteChannel channel, Consumer<ByteBuffer> outBufferFunction) throws IOException
     {
         int inputLength = inputBuffer.remaining();
         final int compressedLength = compressor.initialCompressedBufferLength(inputLength);
-        final int compressedBufferSize = compressedLength + COMPRESSED_BLOCK_HEADER_SIZE;
+        final int compressedBufferSize = (int)(compressedLength * 1.2) + COMPRESSED_BLOCK_HEADER_SIZE;
+
         ByteBuffer compressedBuffer = BufferPool.get(compressedBufferSize, BufferType.typeOf(inputBuffer));
+        boolean reallocatedOutputBuffer = false;
+        ByteBuffer outputBuffer = null;
         try
         {
             compressedBuffer.putInt(inputLength);
@@ -294,29 +297,30 @@ public class EncryptionContext
             final Cipher cipher = getEncryptor(true);
             final int plainTextLength = compressedBuffer.remaining();
             final int encryptLength = cipher.getOutputSize(plainTextLength);
-            ByteBuffer outputBuffer = compressedBuffer.duplicate();
-            outputBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, encryptLength, allowBufferResize);
 
             int serializedIvLen = ivLength(cipher);
             final int headerSize = ENCRYPTED_BLOCK_HEADER_SIZE + serializedIvLen;
             // it's unfortunate that we need to grab a small buffer here just for the header, but if we reuse the #inputBuffer
             // for the output, then we would overwrite the first n bytes of the real data with the header data.
-            ByteBuffer headerBuffer = BufferPool.get(headerSize);
-            try
-            {
-                headerBuffer.putInt(encryptLength);
-                headerBuffer.putInt(plainTextLength);
-                headerBuffer.put((byte) serializedIvLen);
-                if (serializedIvLen > 0)
-                    headerBuffer.put(cipher.getIV());
-                headerBuffer.flip();
-                channel.write(headerBuffer);
-            }
-            finally
-            {
-                BufferPool.put(headerBuffer);
-            }
+            ByteBuffer headerBuffer = ByteBuffer.allocate(headerSize);
+            headerBuffer.putInt(encryptLength);
+            headerBuffer.putInt(plainTextLength);
+            headerBuffer.put((byte) serializedIvLen);
+            if (serializedIvLen > 0)
+                headerBuffer.put(cipher.getIV());
+            headerBuffer.flip();
+            channel.write(headerBuffer);
 
+            outputBuffer = compressedBuffer.duplicate();
+            if (outputBuffer.capacity() < encryptLength)
+            {
+                outputBuffer = BufferPool.get(encryptLength, BufferType.typeOf(compressedBuffer));
+                reallocatedOutputBuffer = true;
+            }
+            else
+            {
+                outputBuffer.position(0).limit(encryptLength);
+            }
             try
             {
                 cipher.doFinal(compressedBuffer, outputBuffer);
@@ -328,16 +332,20 @@ public class EncryptionContext
 
             outputBuffer.position(0).limit(encryptLength);
             channel.write(outputBuffer);
-            outputBuffer.position(0).limit(encryptLength);
 
             if (outBufferFunction != null)
+            {
+                outputBuffer.position(0).limit(encryptLength);
                 outBufferFunction.accept(outputBuffer.duplicate());
+            }
 
             return headerSize + encryptLength;
         }
         finally
         {
             BufferPool.put(compressedBuffer);
+            if (reallocatedOutputBuffer)
+                BufferPool.put(outputBuffer);
         }
     }
 
@@ -352,12 +360,12 @@ public class EncryptionContext
         return 0;
     }
 
-    public int encrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer, boolean allowBufferResize) throws IOException
+    public int encrypt(ByteBuffer inputBuffer, ByteBuffer outputBuffer) throws IOException
     {
         Preconditions.checkNotNull(outputBuffer, "output buffer may not be null");
         try (WritableByteChannel wbc = new ChannelAdapter(outputBuffer))
         {
-            return encryptAndWrite(inputBuffer, wbc, allowBufferResize);
+            return encryptAndWrite(inputBuffer, wbc);
         }
     }
 

@@ -123,7 +123,7 @@ public class SegmentReaderTest
         encryptedFile.deleteOnExit();
         FileChannel channel = new RandomAccessFile(encryptedFile, "rw").getChannel();
         channel.write(ByteBufferUtil.bytes(plainTextLength));
-        encryptionContext.encryptAndWrite(plainTextBuffer, channel, true);
+        encryptionContext.encryptAndWrite(plainTextBuffer, channel);
         channel.close();
 
         try (RandomAccessReader reader = RandomAccessReader.open(encryptedFile))
