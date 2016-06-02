@@ -77,7 +77,7 @@ public class EncryptingCompressor implements ICompressor
 
     public void compress(ByteBuffer input, ByteBuffer output) throws IOException
     {
-        encryptionContext.encrypt(input, output, false);
+        encryptionContext.encrypt(input, output);
     }
 
     public void uncompress(ByteBuffer input, ByteBuffer output) throws IOException

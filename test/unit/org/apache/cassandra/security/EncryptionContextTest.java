@@ -54,7 +54,7 @@ public class EncryptionContextTest
         File f = File.createTempFile("commitlog-enc-utils-", ".tmp");
         f.deleteOnExit();
         FileChannel channel = new RandomAccessFile(f, "rw").getChannel();
-        encryptionContext.encryptAndWrite(ByteBuffer.wrap(buf), channel, true);
+        encryptionContext.encryptAndWrite(ByteBuffer.wrap(buf), channel);
 
         // decrypt
         ByteBuffer decryptedBuffer = encryptionContext.decrypt(RandomAccessReader.open(f), ByteBuffer.allocate(0), true);
