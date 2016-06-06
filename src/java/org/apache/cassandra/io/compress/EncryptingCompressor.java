@@ -60,9 +60,9 @@ public class EncryptingCompressor implements ICompressor
         encryptionContext = EncryptionContext.createFromMap(options, baseEncryptionContext);
     }
 
-    public EncryptingCompressor(CompressionParams params, EncryptionContext baseEncryptionContext)
+    public EncryptingCompressor(CompressionParams params, ICompressor compressor, EncryptionContext baseEncryptionContext)
     {
-        encryptionContext = EncryptionContext.create(baseEncryptionContext.getTransparentDataEncryptionOptions(), params);
+        encryptionContext = EncryptionContext.create(baseEncryptionContext.getTransparentDataEncryptionOptions(), params, compressor);
     }
 
     public static EncryptingCompressor create(Map<String, String> compressionOptions)

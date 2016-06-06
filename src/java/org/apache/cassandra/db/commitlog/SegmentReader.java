@@ -313,6 +313,7 @@ public class SegmentReader implements Iterable<SegmentReader.SyncSegment>
                 try
                 {
                     decryptedBuffer = encryptionContext.decrypt(reader, decryptedBuffer, true);
+                    decryptedBuffer.flip();
                     return decryptedBuffer;
                 }
                 catch (IOException e)

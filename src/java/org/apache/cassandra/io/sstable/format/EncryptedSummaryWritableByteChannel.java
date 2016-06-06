@@ -25,6 +25,7 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.WritableByteChannel;
 import java.util.Map;
 
+import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.security.EncryptionContext;
 
 /**
@@ -37,9 +38,10 @@ class EncryptedSummaryWritableByteChannel implements WritableByteChannel, AutoCl
     private final FileChannel channel;
     private final EncryptionContext encryptionContext;
 
-    EncryptedSummaryWritableByteChannel(FileOutputStream fos, Map<String, String> compressionParamsMap, EncryptionContext baseEncryptionContext)
+    EncryptedSummaryWritableByteChannel(FileOutputStream fos, CompressionParams params, EncryptionContext baseEncryptionContext)
     {
-        encryptionContext = EncryptionContext.createFromMap(compressionParamsMap, baseEncryptionContext);
+        encryptionContext = EncryptionContext.create(baseEncryptionContext.getTransparentDataEncryptionOptions(),
+                                                     params, params.getSstableCompressor());
         channel = fos.getChannel();
     }
 

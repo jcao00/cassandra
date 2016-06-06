@@ -58,6 +58,7 @@ public class EncryptionContextTest
 
         // decrypt
         ByteBuffer decryptedBuffer = encryptionContext.decrypt(RandomAccessReader.open(f), ByteBuffer.allocate(0), true);
+        decryptedBuffer.flip();
         Assert.assertEquals(buf.length, decryptedBuffer.remaining());
         byte[] ret = new byte[decryptedBuffer.remaining()];
         decryptedBuffer.get(ret);

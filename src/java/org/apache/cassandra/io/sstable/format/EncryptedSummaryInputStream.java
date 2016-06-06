@@ -23,8 +23,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.Map;
 
+import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -34,10 +34,10 @@ class EncryptedSummaryInputStream extends InputStream implements AutoCloseable
     private final EncryptionContext encryptionContext;
     private ByteBuffer workingBuffer;
 
-    EncryptedSummaryInputStream(FileInputStream file, Map<String, String> compressionParamsMap, EncryptionContext baseEncryptionContext)
+    EncryptedSummaryInputStream(FileInputStream file, CompressionParams compressionParams, EncryptionContext baseEncryptionContext)
     {
         channel = file.getChannel();
-        encryptionContext = EncryptionContext.createFromMap(compressionParamsMap, baseEncryptionContext);
+        encryptionContext = EncryptionContext.create(baseEncryptionContext.getTransparentDataEncryptionOptions(), compressionParams, compressionParams.getSstableCompressor());
         workingBuffer = ByteBufferUtil.EMPTY_BYTE_BUFFER;
     }
 
@@ -55,6 +55,7 @@ class EncryptedSummaryInputStream extends InputStream implements AutoCloseable
     private void rebuffer() throws IOException
     {
         workingBuffer = encryptionContext.decrypt(channel, workingBuffer, true);
+        workingBuffer.flip();
     }
 
     public void close() throws IOException

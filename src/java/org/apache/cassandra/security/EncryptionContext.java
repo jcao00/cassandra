@@ -95,6 +95,7 @@ public class EncryptionContext
     @VisibleForTesting
     EncryptionContext(TransparentDataEncryptionOptions tdeOptions, ParameterizedClass compressorClass, ICompressor compressor, boolean init)
     {
+        assert tdeOptions != null;
         this.tdeOptions = tdeOptions;
         this.compressorClass = compressorClass;
         this.compressor = compressor;
@@ -186,10 +187,10 @@ public class EncryptionContext
         return map;
     }
 
-    public static EncryptionContext create(TransparentDataEncryptionOptions tdeOptions, CompressionParams compressionParams)
+    public static EncryptionContext create(TransparentDataEncryptionOptions tdeOptions, CompressionParams compressionParams, ICompressor compressor)
     {
-        ParameterizedClass compressorClass = new ParameterizedClass(compressionParams.getSstableCompressor().getClass().getName(), compressionParams.getOtherOptions());
-        return new EncryptionContext(tdeOptions, compressorClass, compressionParams.getSstableCompressor(), true);
+        ParameterizedClass compressorClass = new ParameterizedClass(compressor.getClass().getName(), compressionParams.getOtherOptions());
+        return new EncryptionContext(tdeOptions, compressorClass, compressor, true);
     }
 
     /**
@@ -380,42 +381,34 @@ public class EncryptionContext
     {
         // a best-guess as to the max size of IV
         final int maxIvLength = 32;
-        ByteBuffer metadataBuffer = BufferPool.get(maxIvLength, BufferType.ON_HEAP);
-        final int encryptedLength, compressedLength;
+        ByteBuffer metadataBuffer = ByteBuffer.allocate(maxIvLength);
+        metadataBuffer.limit(ENCRYPTED_BLOCK_HEADER_SIZE);
+        int readCount = channel.read(metadataBuffer);
+        if (readCount < ENCRYPTED_BLOCK_HEADER_SIZE)
+            throw new IOException("could not read encrypted blocked metadata header");
+        metadataBuffer.flip();
+        final int encryptedLength = metadataBuffer.getInt();
+        final int compressedLength = metadataBuffer.getInt();
+
+        byte ivLen = metadataBuffer.get();
+        if (ivLen < 0 || ivLen > maxIvLength)
+            throw new IllegalArgumentException("IV length out of normal/expected bounds: " + ivLen);
+
         Cipher cipher;
-        try
+        if (ivLen > 0)
         {
-            metadataBuffer.limit(ENCRYPTED_BLOCK_HEADER_SIZE);
-            int readCount = channel.read(metadataBuffer);
-            if (readCount < ENCRYPTED_BLOCK_HEADER_SIZE)
-                throw new IOException("could not read encrypted blocked metadata header");
+            byte[] iv = new byte[ivLen];
+            metadataBuffer.position(0).limit(ivLen);
+            readCount = channel.read(metadataBuffer);
+            if (readCount < ivLen)
+                throw new IOException("could not read encrypted blocked's IV");
             metadataBuffer.flip();
-            encryptedLength = metadataBuffer.getInt();
-            compressedLength = metadataBuffer.getInt();
-
-            byte ivLen = metadataBuffer.get();
-            if (ivLen < 0 || ivLen > maxIvLength)
-                throw new IllegalArgumentException("IV length out of normal/expected bounds: " + ivLen);
-
-            if (ivLen > 0)
-            {
-                byte[] iv = new byte[ivLen];
-                metadataBuffer.position(0).limit(ivLen);
-                readCount = channel.read(metadataBuffer);
-                if (readCount < ivLen)
-                    throw new IOException("could not read encrypted blocked's IV");
-                metadataBuffer.flip();
-                metadataBuffer.get(iv);
-                cipher = getDecryptor(iv);
-            }
-            else
-            {
-                cipher = getDecryptor(null);
-            }
+            metadataBuffer.get(iv);
+            cipher = getDecryptor(iv);
         }
-        finally
+        else
         {
-            BufferPool.put(metadataBuffer);
+            cipher = getDecryptor(null);
         }
 
         ByteBuffer decryptBuffer = BufferPool.get(Math.max(compressedLength, encryptedLength), BufferType.typeOf(outputBuffer));
@@ -442,7 +435,6 @@ public class EncryptionContext
             int outputLength = dupe.getInt();
             ByteBuffer plainTextBuffer = ByteBufferUtil.ensureCapacity(outputBuffer, outputLength, allowBufferResize);
             compressor.uncompress(dupe, plainTextBuffer);
-            plainTextBuffer.position(0).limit(outputLength);
             return plainTextBuffer;
         }
         finally

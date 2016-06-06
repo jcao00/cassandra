@@ -73,6 +73,7 @@ public final class CompressionParams
     private final ImmutableMap<String, String> otherOptions; // Unrecognized options, can be used by the compressor
 
     private boolean encrypted;
+    private ICompressor encryptedCompressor;
     private volatile double crcCheckChance = 1.0;
 
     public static CompressionParams fromMap(Map<String, String> opts)
@@ -175,7 +176,7 @@ public final class CompressionParams
         this.encrypted = encrypted;
     }
 
-    boolean isEncrypted()
+    public boolean isEncrypted()
     {
         return encrypted;
     }
@@ -186,10 +187,13 @@ public final class CompressionParams
      */
     public ICompressor getSstableCompressor()
     {
+        if (sstableCompressor == null)
+            return null;
         if (!encrypted)
             return sstableCompressor;
-
-        return new EncryptingCompressor(this, DatabaseDescriptor.getEncryptionContext());
+        if (encryptedCompressor == null)
+            encryptedCompressor = new EncryptingCompressor(this, sstableCompressor, DatabaseDescriptor.getEncryptionContext());
+        return encryptedCompressor;
     }
 
     public ImmutableMap<String, String> getOtherOptions()

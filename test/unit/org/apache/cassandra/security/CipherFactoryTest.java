@@ -66,13 +66,13 @@ public class CipherFactoryTest
         Assert.assertFalse(c1 == c2);
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test(expected = Exception.class)
     public void getDecryptor_NullIv() throws IOException
     {
         cipherFactory.getDecryptor(encryptionOptions.cipher, encryptionOptions.key_alias, null);
     }
 
-    @Test(expected = IOException.class)
+    @Test(expected = Exception.class)
     public void getDecryptor_EmptyIv() throws IOException
     {
         cipherFactory.getDecryptor(encryptionOptions.cipher, encryptionOptions.key_alias, new byte[0]);

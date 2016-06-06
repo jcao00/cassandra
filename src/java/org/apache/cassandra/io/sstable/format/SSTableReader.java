@@ -914,7 +914,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             if (indexCompression)
             {
                 CompressionMetadata cmd = new CompressionMetadata(descriptor.filenameFor(Component.COMPRESSION_INFO), summariesFile.length(), descriptor.version.compressedChecksumType());
-                iStream = new DataInputStream(new EncryptedSummaryInputStream(new FileInputStream(summariesFile), cmd.parameters.asMap(), DatabaseDescriptor.getEncryptionContext()));
+                iStream = new DataInputStream(new EncryptedSummaryInputStream(new FileInputStream(summariesFile), cmd.parameters, DatabaseDescriptor.getEncryptionContext()));
             }
             else
                 iStream = new DataInputStream(new FileInputStream(summariesFile));
@@ -975,7 +975,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
 
         try (DataOutputStreamPlus oStream = compressionParams.isPresent() ?
                                             new BufferedDataOutputStreamPlus(new EncryptedSummaryWritableByteChannel(
-                                                                                 new FileOutputStream(summariesFile), compressionParams.get().asMap(), DatabaseDescriptor.getEncryptionContext())) :
+                                                                                 new FileOutputStream(summariesFile), compressionParams.get(), DatabaseDescriptor.getEncryptionContext())) :
                                             new BufferedDataOutputStreamPlus(new FileOutputStream(summariesFile)))
         {
             IndexSummary.serializer.serialize(summary, oStream, descriptor.version.hasSamplingLevel());

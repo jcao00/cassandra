@@ -63,6 +63,7 @@ public class EncryptingCompressorTest
 
         ByteBuffer decrypted = ByteBuffer.allocate(1024);
         decryptingCompressor.uncompress(encrypted, decrypted);
+        decrypted.flip();
         String retVal = ByteBufferUtil.string(decrypted, Charset.forName("UTF-8"));
         Assert.assertEquals(FINNEGANS_WAKE, retVal);
     }

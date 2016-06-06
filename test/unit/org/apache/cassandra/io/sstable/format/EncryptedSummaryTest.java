@@ -33,11 +33,11 @@ import org.junit.Test;
 
 import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.security.CipherFactoryTest;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.security.EncryptionContextGenerator;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.tools.ant.taskdefs.Sync;
 
 public class EncryptedSummaryTest
 {
@@ -45,16 +45,14 @@ public class EncryptedSummaryTest
     public void roundTrip() throws IOException
     {
         File f = File.createTempFile("enc-summary-" + UUID.randomUUID(), ".db");
-        Map<String, String> options = new HashMap<>();
 
-        EncryptionContext context = EncryptionContextGenerator.createContext(false);
-        options.put(EncryptionContext.ENCRYPTION_KEY_ALIAS, context.getTransparentDataEncryptionOptions().key_alias);
-        options.put(EncryptionContext.ENCRYPTION_CIPHER, context.getTransparentDataEncryptionOptions().cipher);
+        EncryptionContext context = EncryptionContextGenerator.createContext(true);
+        CompressionParams params = CompressionParams.DEFAULT;
 
         ByteBuffer buf = ByteBufferUtil.bytes(CipherFactoryTest.ULYSSEUS);
         try (DataOutputStreamPlus outputStream = new BufferedDataOutputStreamPlus(
                                                      new EncryptedSummaryWritableByteChannel(
-                                                         new FileOutputStream(f), options, context)))
+                                                         new FileOutputStream(f), params, context)))
         {
             ByteBufferUtil.bytes(CipherFactoryTest.ULYSSEUS);
             outputStream.write(buf);
@@ -63,7 +61,7 @@ public class EncryptedSummaryTest
         ByteBuffer readBuf = ByteBuffer.allocate(buf.capacity());
         try (DataInputStream inputStream = new DataInputStream(
                                               new EncryptedSummaryInputStream(
-                                                  new FileInputStream(f), options, context)))
+                                                  new FileInputStream(f), params, context)))
         {
             inputStream.read(readBuf.array());
             Assert.assertEquals(buf, readBuf);

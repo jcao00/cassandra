@@ -59,6 +59,7 @@ class EncryptedChecksummedDataInput extends ChecksummedDataInput
         try
         {
             buffer = encryptionContext.decrypt(readChannel, buffer, true);
+            buffer.flip();
         }
         catch (IOException ioe)
         {
