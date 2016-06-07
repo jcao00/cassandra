@@ -33,10 +33,10 @@ public class EncryptionContextGenerator
     public static final String KEY_ALIAS_1 = "testing:1";
     public static final String KEY_ALIAS_2 = "testing:2";
 
-    public static EncryptionContext createContext(boolean init)
+        public static EncryptionContext createContext()
     {
         Pair<ParameterizedClass, ICompressor> compressor = EncryptionContext.defaultCompressor();
-        return new EncryptionContext(createEncryptionOptions(), compressor.left, compressor.right, init);
+        return new EncryptionContext(createEncryptionOptions(), compressor.left, compressor.right);
     }
 
     public static TransparentDataEncryptionOptions createEncryptionOptions()

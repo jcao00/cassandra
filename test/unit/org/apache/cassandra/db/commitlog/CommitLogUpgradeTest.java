@@ -176,7 +176,7 @@ public class CommitLogUpgradeTest
         SchemaLoader.createKeyspace(KEYSPACE,
                                     KeyspaceParams.simple(1),
                                     metadata);
-        DatabaseDescriptor.setEncryptionContext(EncryptionContextGenerator.createContext(true));
+        DatabaseDescriptor.setEncryptionContext(EncryptionContextGenerator.createContext());
     }
 
     public void testRestore(String location) throws IOException, InterruptedException

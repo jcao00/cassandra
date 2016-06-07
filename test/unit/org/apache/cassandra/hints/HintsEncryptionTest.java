@@ -34,7 +34,7 @@ public class HintsEncryptionTest extends AlteredHints
     @Before
     public void setup()
     {
-        encryptionContext = EncryptionContextGenerator.createContext(true);
+        encryptionContext = EncryptionContextGenerator.createContext();
         DatabaseDescriptor.setEncryptionContext(encryptionContext);
     }
 

@@ -50,7 +50,7 @@ public class EncryptingCompressorTest
         map.put(EncryptionContext.ENCRYPTION_KEY_ALIAS, tdeOptions.key_alias);
         map.put(EncryptionContext.ENCRYPTION_CIPHER, tdeOptions.cipher);
 
-        EncryptionContext encryptionContext = EncryptionContextGenerator.createContext(false);
+        EncryptionContext encryptionContext = EncryptionContextGenerator.createContext();
         encryptingCompressor = new EncryptingCompressor(map, encryptionContext);
 
         decryptingCompressor = new EncryptingCompressor(map, encryptionContext);

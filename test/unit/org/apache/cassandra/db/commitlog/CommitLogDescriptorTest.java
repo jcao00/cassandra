@@ -61,7 +61,7 @@ public class CommitLogDescriptorTest
         compression = new ParameterizedClass(LZ4Compressor.class.getName(), params);
 
         enabledTdeOptions = EncryptionContextGenerator.createEncryptionOptions();
-        enabledEncryption = EncryptionContextGenerator.createContext(false);
+        enabledEncryption = EncryptionContextGenerator.createContext();
         
         neverEnabledEncryption = EncryptionContextGenerator.createDisabledContext();
         TransparentDataEncryptionOptions disaabledTdeOptions = new TransparentDataEncryptionOptions(false, enabledTdeOptions.cipher, enabledTdeOptions.key_alias, enabledTdeOptions.key_provider);

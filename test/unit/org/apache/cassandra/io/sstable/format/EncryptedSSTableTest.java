@@ -74,7 +74,7 @@ public class EncryptedSSTableTest extends SSTableWriterTestBase
         {
             hasSetEncryption = true;
             StorageService.instance.initServer();
-            DatabaseDescriptor.setEncryptionContext(EncryptionContextGenerator.createContext(true));
+            DatabaseDescriptor.setEncryptionContext(EncryptionContextGenerator.createContext());
 
             TableParams tableParams = TableParams.builder().encryption(true).build();
             cfs.metadata.params(tableParams);

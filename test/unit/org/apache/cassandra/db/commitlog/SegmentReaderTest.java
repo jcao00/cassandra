@@ -113,7 +113,7 @@ public class SegmentReaderTest
     @Test
     public void encryptedSegmenter() throws IOException
     {
-        EncryptionContext encryptionContext = EncryptionContextGenerator.createContext(true);
+        EncryptionContext encryptionContext = EncryptionContextGenerator.createContext();
 
         int plainTextLength = (1 << 13) - 137;
         ByteBuffer plainTextBuffer = ByteBuffer.allocate(plainTextLength);
@@ -128,7 +128,7 @@ public class SegmentReaderTest
 
         try (RandomAccessReader reader = RandomAccessReader.open(encryptedFile))
         {
-            encryptionContext = EncryptionContextGenerator.createContext(true);
+            encryptionContext = EncryptionContextGenerator.createContext();
             EncryptedSegmenter segmenter = new EncryptedSegmenter(reader, encryptionContext);
             SyncSegment syncSegment = segmenter.nextSegment(0, (int) reader.length());
 

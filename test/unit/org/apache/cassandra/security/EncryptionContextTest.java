@@ -41,7 +41,7 @@ public class EncryptionContextTest
     @Before
     public void setup()
     {
-        encryptionContext = EncryptionContextGenerator.createContext(true);
+        encryptionContext = EncryptionContextGenerator.createContext();
     }
 
     @Test

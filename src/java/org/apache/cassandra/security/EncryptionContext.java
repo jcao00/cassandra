@@ -88,12 +88,11 @@ public class EncryptionContext
     {
         this(tdeOptions,
              new ParameterizedClass(CompressionParams.DEFAULT.getSstableCompressor().getClass().getName(), CompressionParams.DEFAULT.getOtherOptions()),
-             CompressionParams.DEFAULT.getSstableCompressor(),
-             true);
+             CompressionParams.DEFAULT.getSstableCompressor());
     }
 
     @VisibleForTesting
-    EncryptionContext(TransparentDataEncryptionOptions tdeOptions, ParameterizedClass compressorClass, ICompressor compressor, boolean init)
+    EncryptionContext(TransparentDataEncryptionOptions tdeOptions, ParameterizedClass compressorClass, ICompressor compressor)
     {
         assert tdeOptions != null;
         this.tdeOptions = tdeOptions;
@@ -102,11 +101,8 @@ public class EncryptionContext
 
         chunkLength = tdeOptions.chunk_length_kb * 1024;
 
-        // always attempt to load the cipher factory, as we could be in the situation where the user has disabled encryption,
-        // but has existing commitlogs and sstables on disk that are still encrypted (and still need to be read)
         CipherFactory factory = null;
-
-        if (tdeOptions.enabled && init)
+        if (tdeOptions.enabled)
         {
             try
             {
@@ -190,7 +186,7 @@ public class EncryptionContext
     public static EncryptionContext create(TransparentDataEncryptionOptions tdeOptions, CompressionParams compressionParams, ICompressor compressor)
     {
         ParameterizedClass compressorClass = new ParameterizedClass(compressor.getClass().getName(), compressionParams.getOtherOptions());
-        return new EncryptionContext(tdeOptions, compressorClass, compressor, true);
+        return new EncryptionContext(tdeOptions, compressorClass, compressor);
     }
 
     /**
@@ -211,7 +207,7 @@ public class EncryptionContext
             compressor = compressorPair.right;
         }
 
-        return new EncryptionContext(tdeOptions, compressionClass, compressor, true);
+        return new EncryptionContext(tdeOptions, compressionClass, compressor);
     }
 
     /**

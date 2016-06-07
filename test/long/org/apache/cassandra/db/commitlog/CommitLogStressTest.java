@@ -210,7 +210,7 @@ public class CommitLogStressTest
         testLog(new ParameterizedClass("DeflateCompressor", null), EncryptionContextGenerator.createDisabledContext());
 
         // test the encrypted commit log
-        testLog(null, EncryptionContextGenerator.createContext(true));
+        testLog(null, EncryptionContextGenerator.createContext());
     }
 
     public void testLog(ParameterizedClass compression, EncryptionContext encryptionContext) throws IOException, InterruptedException

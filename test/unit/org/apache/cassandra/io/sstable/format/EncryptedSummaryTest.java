@@ -46,7 +46,7 @@ public class EncryptedSummaryTest
     {
         File f = File.createTempFile("enc-summary-" + UUID.randomUUID(), ".db");
 
-        EncryptionContext context = EncryptionContextGenerator.createContext(true);
+        EncryptionContext context = EncryptionContextGenerator.createContext();
         CompressionParams params = CompressionParams.DEFAULT;
 
         ByteBuffer buf = ByteBufferUtil.bytes(CipherFactoryTest.ULYSSEUS);
