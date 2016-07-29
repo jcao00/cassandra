@@ -49,7 +49,7 @@ public class EndpointState
     private volatile long updateTimestamp;
     private volatile boolean isAlive;
 
-    EndpointState(HeartBeatState initialHbState)
+    public EndpointState(HeartBeatState initialHbState)
     {
         this(initialHbState, new EnumMap<ApplicationState, VersionedValue>(ApplicationState.class));
     }
@@ -62,7 +62,7 @@ public class EndpointState
         isAlive = true;
     }
 
-    HeartBeatState getHeartBeatState()
+    public HeartBeatState getHeartBeatState()
     {
         return hbState;
     }
@@ -156,7 +156,12 @@ public class EndpointState
 
     public String toString()
     {
-        return "EndpointState: HeartBeatState = " + hbState + ", AppStateMap = " + applicationState.get();
+        return "EndpointState: HeartBeatState = " + hbState + ", AppStateMap = " + applicationState;
+    }
+
+    public HeartBeatState getHeartbeatSnapshot()
+    {
+        return new HeartBeatState(hbState.getGeneration(), getHeartBeatState().getHeartBeatVersion());
     }
 }
 

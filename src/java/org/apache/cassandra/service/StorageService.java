@@ -299,6 +299,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_NEIGHBOR_REQUEST, new HyParViewVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_NEIGHBOR_RESPONSE, new HyParViewVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.HYPARVIEW_DISCONNECT, new HyParViewVerbHandler());
+
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_DATA, new ThicketVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_SUMMARY, new ThicketVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_GRAFT, new ThicketVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.THICKET_PRUNE, new ThicketVerbHandler());
     }
 
     public void registerDaemon(CassandraDaemon daemon)
