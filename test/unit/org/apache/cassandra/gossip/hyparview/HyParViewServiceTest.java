@@ -85,14 +85,9 @@ public class HyParViewServiceTest
     }
 
     @After
-    public void removeMessageSink()
-    {
-        MessagingService.instance().clearMessageSinks();
-    }
-
-    @After
     public void tearDown()
     {
+        MessagingService.instance().clearMessageSinks();
         executorService.shutdownNow();
         scheduler.shutdownNow();
     }

@@ -37,7 +37,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Interner;
 import com.google.common.collect.Multimap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,9 +44,9 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.gossip.BroadcastService;
 import org.apache.cassandra.gossip.BroadcastServiceClient;
 import org.apache.cassandra.gossip.GossipMessageId;
-import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
+import org.apache.cassandra.net.MessagingService;
 
 
 //TODO:JEB add more top-level documentation!!!!!!
@@ -108,9 +107,6 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      * The braodcast address of the local node. We memoize it here to avoid a hard dependency on FBUtilities.
      */
     private final InetAddress localAddress;
-
-    @VisibleForTesting
-    final MessageSender<ThicketMessage> messageSender;
 
     private PeerSamplingService peerSamplingService;
 
@@ -184,17 +180,16 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
      */
     private final AtomicInteger broadcastedMessages = new AtomicInteger();
 
-    public ThicketService(InetAddress localAddress, MessageSender<ThicketMessage> messageSender, ExecutorService executor, ScheduledExecutorService scheduledTasks)
+    public ThicketService(InetAddress localAddress, ExecutorService executor, ScheduledExecutorService scheduledTasks)
     {
-        this(localAddress, messageSender, executor, scheduledTasks, SUMMARY_RETENTION_TIME);
+        this(localAddress, executor, scheduledTasks, SUMMARY_RETENTION_TIME);
     }
 
     @VisibleForTesting
-    public ThicketService(InetAddress localAddress, MessageSender<ThicketMessage> messageSender, ExecutorService executor,
+    public ThicketService(InetAddress localAddress, ExecutorService executor,
                           ScheduledExecutorService scheduledTasks, long summaryRetentionNanos)
     {
         this.localAddress = localAddress;
-        this.messageSender = messageSender;
         this.executor = executor;
         this.scheduledTasks = scheduledTasks;
         this.summaryRetentionNanos = summaryRetentionNanos;
@@ -299,7 +294,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
 
         DataMessage msg = new DataMessage(localAddress, messageId, localAddress, payload, client.getClientName(), localLoadEstimate(broadcastPeers, localAddress));
         for (InetAddress peer : peers.active)
-            messageSender.send(peer, msg);
+            MessagingService.instance().sendOneWay(msg.getMessageOut(), peer);
         broadcastedMessages.incrementAndGet();
     }
 
@@ -418,7 +413,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         else
         {
             logger.info(String.format("%s sending PRUNE to %s due to duplicate message in tree", localAddress, message.sender, message.treeRoot));
-            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), Collections.singletonList(message.treeRoot), localLoadEstimate(broadcastPeers, localAddress)));
+            PruneMessage msg = new PruneMessage(localAddress, idGenerator.generate(), Collections.singletonList(message.treeRoot), localLoadEstimate(broadcastPeers, localAddress));
+            MessagingService.instance().sendOneWay(msg.getMessageOut(), message.sender);
         }
     }
 
@@ -471,7 +467,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         }
 
         DataMessage msg = new DataMessage(localAddress, localLoadEstimate(broadcastPeers, localAddress), message);
-        peers.stream().filter(peer -> !peer.equals(message.sender) && !peer.equals(message.treeRoot)).forEach(peer -> messageSender.send(peer, msg));
+        peers.stream().filter(peer -> !peer.equals(message.sender) && !peer.equals(message.treeRoot)).forEach(peer -> MessagingService.instance().sendOneWay(msg.getMessageOut(), peer));
     }
 
     /**
@@ -529,7 +525,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         for (Map.Entry<InetAddress, Multimap<InetAddress, GossipMessageId>> entry : targetedSummaries.entrySet())
         {
             SummaryMessage message = new SummaryMessage(localAddress, idGenerator.generate(), entry.getValue(), loadEstimates);
-            messageSender.send(entry.getKey(), message);
+            MessagingService.instance().sendOneWay(message.getMessageOut(), entry.getKey());
         }
 
         pruneMessageLedger(messagesLedger);
@@ -757,8 +753,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
             if (target.isPresent())
             {
                 logger.info(String.format("checkMissingMessages(): %s - sending GRAFT req to %s", localAddress, target));
-                messageSender.send(target.get(), new GraftMessage(localAddress, idGenerator.generate(),
-                                                                  Collections.singletonList(entry.getKey()), localLoadEstimate(broadcastPeers, localAddress)));
+                GraftMessage msg =  new GraftMessage(localAddress, idGenerator.generate(), Collections.singletonList(entry.getKey()), localLoadEstimate(broadcastPeers, localAddress));
+                MessagingService.instance().sendOneWay(msg.getMessageOut(), target.get());
                 treeRootGrafts.put(entry.getKey(), target.get());
             }
             else
@@ -909,7 +905,8 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
         else
         {
             logger.info(String.format("%s sending PRUNE to %s due to denied GRAFT", localAddress, message.sender));
-            messageSender.send(message.sender, new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, loadEstimates));
+            PruneMessage msg = new PruneMessage(localAddress, idGenerator.generate(), message.treeRoots, loadEstimates);
+            MessagingService.instance().sendOneWay(msg.getMessageOut(), message.sender);
         }
     }
 
@@ -933,6 +930,7 @@ public class ThicketService implements BroadcastService, PeerSamplingServiceList
     public void register(BroadcastServiceClient client)
     {
         clients.put(client.getClientName(), client);
+        DataMessage.clients.put(client.getClientName(), client);
     }
 
     public void neighborUp(InetAddress peer)

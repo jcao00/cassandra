@@ -39,21 +39,23 @@ import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.net.MessagingService;
 
-public class ThicketMessageSenderTest
+public class ThicketMessageSerializerTest
 {
-    static final int VERSION = MessagingService.current_version;
-    static final int SEED = 89123471;
-    static BroadcastServiceClient client;
+    private static final int VERSION = MessagingService.current_version;
+    private static final int SEED = 89123471;
+    private static BroadcastServiceClient client;
 
-    Random random;
-    static InetAddress sender;
+    private Random random;
+    private static InetAddress sender;
 
     @BeforeClass
     public static void before() throws UnknownHostException
     {
-        sender = InetAddress.getByName("127.0.0.1");
         client = new SimpleClient();
-        ThicketMessageSender.addSerializer(client);
+        DataMessage.clients.clear();
+        DataMessage.clients.put(client.getClientName(), client);
+        sender = InetAddress.getByName("127.0.0.1");
+//        ThicketMessageSender.addSerializer(client);
     }
 
     @Before
@@ -93,7 +95,7 @@ public class ThicketMessageSenderTest
     {
         DataMessage msg = new DataMessage(sender, generateMessageId(), InetAddress.getByName("127.0.0.12"), "ThisIaAPayload",
                                           client.getClientName(), buildEstimates(1));
-        roundTripSerialization(msg, ThicketMessageSender.DATA_SERIALIZER);
+        roundTripSerialization(msg, DataMessage.serializer);
     }
 
     @Test
@@ -109,7 +111,7 @@ public class ThicketMessageSenderTest
         }
 
         SummaryMessage msg = new SummaryMessage(sender, generateMessageId(), receivedMessages, buildEstimates(2));
-        roundTripSerialization(msg, ThicketMessageSender.SUMMARY_SERIALIZER);
+        roundTripSerialization(msg, SummaryMessage.serializer);
     }
 
     @Test
@@ -120,7 +122,7 @@ public class ThicketMessageSenderTest
             treeRoots.add(InetAddress.getByName("127.0.1." + i));
 
         GraftMessage msg = new GraftMessage(sender, generateMessageId(), treeRoots, buildEstimates(3));
-        roundTripSerialization(msg, ThicketMessageSender.GRAFT_SERIALIZER);
+        roundTripSerialization(msg, GraftMessage.serializer);
     }
 
     @Test
@@ -131,6 +133,6 @@ public class ThicketMessageSenderTest
             treeRoots.add(InetAddress.getByName("127.0.1." + i));
 
         PruneMessage msg = new PruneMessage(sender, generateMessageId(), treeRoots, buildEstimates(4));
-        roundTripSerialization(msg, ThicketMessageSender.PRUNE_SERIALIZER);
+        roundTripSerialization(msg, PruneMessage.serializer);
     }
 }

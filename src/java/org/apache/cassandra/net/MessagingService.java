@@ -64,6 +64,10 @@ import org.apache.cassandra.gossip.hyparview.JoinMessage;
 import org.apache.cassandra.gossip.hyparview.JoinResponseMessage;
 import org.apache.cassandra.gossip.hyparview.NeighborRequestMessage;
 import org.apache.cassandra.gossip.hyparview.NeighborResponseMessage;
+import org.apache.cassandra.gossip.thicket.DataMessage;
+import org.apache.cassandra.gossip.thicket.GraftMessage;
+import org.apache.cassandra.gossip.thicket.PruneMessage;
+import org.apache.cassandra.gossip.thicket.SummaryMessage;
 import org.apache.cassandra.hints.HintMessage;
 import org.apache.cassandra.hints.HintResponse;
 import org.apache.cassandra.io.IVersionedSerializer;
@@ -272,10 +276,10 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.HYPARVIEW_NEIGHBOR_REQUEST, NeighborRequestMessage.serializer);
         put(Verb.HYPARVIEW_NEIGHBOR_RESPONSE, NeighborResponseMessage.serializer);
         put(Verb.HYPARVIEW_DISCONNECT, DisconnectMessage.serializer);
-        put(Verb.THICKET_DATA, ThicketMessageSender.DATA_SERIALIZER);
-        put(Verb.THICKET_SUMMARY, ThicketMessageSender.SUMMARY_SERIALIZER);
-        put(Verb.THICKET_GRAFT, ThicketMessageSender.GRAFT_SERIALIZER);
-        put(Verb.THICKET_PRUNE, ThicketMessageSender.PRUNE_SERIALIZER);
+        put(Verb.THICKET_DATA, DataMessage.serializer);
+        put(Verb.THICKET_SUMMARY, SummaryMessage.serializer);
+        put(Verb.THICKET_GRAFT, GraftMessage.serializer);
+        put(Verb.THICKET_PRUNE, PruneMessage.serializer);
     }};
 
     /**

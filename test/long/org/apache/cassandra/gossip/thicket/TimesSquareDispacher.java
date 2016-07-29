@@ -35,20 +35,17 @@ import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gms.HeartBeatState;
 import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms.VersionedValue.VersionedValueFactory;
-import org.apache.cassandra.gossip.BroadcastServiceClient;
 import org.apache.cassandra.gossip.GossipStateChangeListener;
 import org.apache.cassandra.gossip.GossipStateChangeListener.GossipProvider;
 import org.apache.cassandra.gossip.hyparview.PennStationDispatcher;
-import org.apache.cassandra.gossip.hyparview.SimulationMessageSender;
 import org.apache.cassandra.locator.SeedProvider;
-import org.apache.cassandra.utils.Pair;
 
 // If keeping with famous NYC transportation hubs for naming the gossip simualtors,
 // I can't bring myself to name this class after the NYC Port Authority.
 public class TimesSquareDispacher extends PennStationDispatcher
 {
     private static final Logger logger = LoggerFactory.getLogger(TimesSquareDispacher.class);
-    List<NodeContext> contexts;
+    private List<NodeContext> contexts;
 
     public TimesSquareDispacher(boolean verbose)
     {
@@ -57,18 +54,17 @@ public class TimesSquareDispacher extends PennStationDispatcher
 
     public void addPeer(InetAddress addr, String datacenter)
     {
-        SimulationMessageSender messageSender = new SimulationMessageSender(this);
-        peers.put(addr, new BroadcastNodeContext(addr, datacenter, seedProvider, messageSender));
+        peers.put(addr, new BroadcastNodeContext(addr, datacenter, seedProvider));
     }
 
-    public void sendMessage(InetAddress destination, ThicketMessage message)
-    {
-        if (!containsNode(destination))
-            return;
-
-        totalMessagesSent.incrementAndGet();
-        ((BroadcastNodeContext)peers.get(destination)).send(message, 0);
-    }
+//    public void sendMessage(InetAddress destination, ThicketMessage message)
+//    {
+//        if (!containsNode(destination))
+//            return;
+//
+//        totalMessagesSent.incrementAndGet();
+//        ((BroadcastNodeContext)peers.get(destination)).send(message, 0);
+//    }
 
     public BroadcastNodeContext selectRandom()
     {
@@ -92,15 +88,13 @@ public class TimesSquareDispacher extends PennStationDispatcher
         final GossipStateChangeListener client;
         private final VersionedValueFactory valueFactory;
 
-
-        BroadcastNodeContext(InetAddress addr, String datacenter, SeedProvider seedProvider, SimulationMessageSender messageSender)
+        BroadcastNodeContext(InetAddress addr, String datacenter, SeedProvider seedProvider)
         {
-            super(addr, datacenter, seedProvider, messageSender);
+            super(addr, datacenter, seedProvider);
             valueFactory = new VersionedValueFactory(Murmur3Partitioner.instance);
-            BroadcastMessageSender broadcastMessageSender = new BroadcastMessageSender(TimesSquareDispacher.this);
             // reuse the schedule from the parent class, assuming hyparview and thicket execute in the thread (for each node)
             long summaryRetentionNanos = TimeUnit.NANOSECONDS.convert(10, TimeUnit.MILLISECONDS);
-            thicketService = new ThicketService(addr, broadcastMessageSender, scheduler, scheduler, summaryRetentionNanos);
+            thicketService = new ThicketService(addr, scheduler, scheduler, summaryRetentionNanos);
             hpvService.register(thicketService);
             int epoch = Math.abs(random.nextInt());
             thicketService.start(hpvService, epoch, 0, 5, 10, 100);

@@ -17,15 +17,31 @@
  */
 package org.apache.cassandra.gossip.thicket;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.gossip.BroadcastServiceClient;
 import org.apache.cassandra.gossip.GossipMessageId;
+import org.apache.cassandra.io.IVersionedSerializer;
+import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.CompactEndpointSerializationHelper;
+import org.apache.cassandra.net.MessageOut;
+import org.apache.cassandra.net.MessagingService;
 
-public class DataMessage extends ThicketMessage
+public class DataMessage<T> extends ThicketMessage
 {
+    public static final IVersionedSerializer<DataMessage> serializer = new Serializer();
+
+    // TODO:JEB this is super lame-o, but sorta works for now
+    static final ConcurrentHashMap<String, BroadcastServiceClient<?>> clients = new ConcurrentHashMap<>();
+
     public final InetAddress treeRoot;
-    public final Object payload;
+    public final T payload;
     public final String client;
 
     /**
@@ -34,7 +50,7 @@ public class DataMessage extends ThicketMessage
      */
     public final int hopCount;
 
-    public DataMessage(InetAddress sender, GossipMessageId messageId, InetAddress treeRoot, Object payload, String client, Collection<LoadEstimate> estimates)
+    public DataMessage(InetAddress sender, GossipMessageId messageId, InetAddress treeRoot, T payload, String client, Collection<LoadEstimate> estimates)
     {
         super(sender, messageId, estimates);
         this.treeRoot = treeRoot;
@@ -43,7 +59,7 @@ public class DataMessage extends ThicketMessage
         hopCount = 1;
     }
 
-    public DataMessage(InetAddress sender, Collection<LoadEstimate> estimates, DataMessage message)
+    public DataMessage(InetAddress sender, Collection<LoadEstimate> estimates, DataMessage<T> message)
     {
         super(sender, message.messageId, estimates);
         treeRoot = message.treeRoot;
@@ -52,11 +68,19 @@ public class DataMessage extends ThicketMessage
         hopCount = message.hopCount + 1;
     }
 
+    @Override
     public ThicketMessageType getMessageType()
     {
         return ThicketMessageType.DATA;
     }
 
+    @Override
+    public MessageOut<DataMessage> getMessageOut()
+    {
+        return new MessageOut<>(MessagingService.Verb.THICKET_DATA, this, serializer);
+    }
+
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder(256);
@@ -67,6 +91,7 @@ public class DataMessage extends ThicketMessage
         return sb.toString();
     }
 
+    @Override
     public boolean equals(Object o)
     {
         if (o == null || !(o instanceof DataMessage))
@@ -76,5 +101,46 @@ public class DataMessage extends ThicketMessage
                treeRoot.equals(msg.treeRoot) &&
                client.equals(msg.client) &&
                payload.equals(msg.payload);
+    }
+
+    private static class Serializer implements IVersionedSerializer<DataMessage>
+    {
+        @Override
+        public void serialize(DataMessage dataMessage, DataOutputPlus out, int version) throws IOException
+        {
+            serializeBaseFields(dataMessage, out, version);
+            CompactEndpointSerializationHelper.serialize(dataMessage.treeRoot, out);
+            out.writeUTF(dataMessage.client);
+            getClientSerializer(dataMessage.client).serialize(dataMessage.payload, out, version);
+        }
+
+        private static IVersionedSerializer getClientSerializer(String client)
+        {
+            BroadcastServiceClient bcastClient = clients.get(client);
+            if (bcastClient != null)
+                return bcastClient.getSerializer();
+            throw new IllegalStateException(String.format("no serializer for client %s is defined", client));
+        }
+
+        @Override
+        public long serializedSize(DataMessage dataMessage, int version)
+        {
+            long size = serializedSizeBaseFields(dataMessage, version);
+            size += CompactEndpointSerializationHelper.serializedSize(dataMessage.treeRoot);
+            size += TypeSizes.sizeof(dataMessage.client);
+            size += getClientSerializer(dataMessage.client).serializedSize(dataMessage.payload, version);
+            return size;
+        }
+
+        @Override
+        public DataMessage deserialize(DataInputPlus in, int version) throws IOException
+        {
+            BaseMessageFields fields = deserializeBaseFields(in, version);
+            InetAddress treeRoot = CompactEndpointSerializationHelper.deserialize(in);
+            String client = in.readUTF();
+            Object payload = getClientSerializer(client).deserialize(in, version);
+
+            return new DataMessage(fields.sender, fields.messgeId, treeRoot, payload, client, fields.estimates);
+        }
     }
 }

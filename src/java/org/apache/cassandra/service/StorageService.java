@@ -84,6 +84,7 @@ import org.apache.cassandra.gms.TokenSerializer;
 import org.apache.cassandra.gms.VersionedValue;
 import org.apache.cassandra.gossip.GossipContext;
 import org.apache.cassandra.gossip.hyparview.HyParViewVerbHandler;
+import org.apache.cassandra.gossip.thicket.ThicketVerbHandler;
 import org.apache.cassandra.hints.HintVerbHandler;
 import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.io.sstable.SSTableLoader;

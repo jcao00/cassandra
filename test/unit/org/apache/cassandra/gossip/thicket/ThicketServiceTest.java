@@ -27,7 +27,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -40,27 +39,30 @@ import java.util.concurrent.TimeoutException;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import org.apache.cassandra.gossip.GossipMessageId;
-import org.apache.cassandra.gossip.MessageSender;
 import org.apache.cassandra.gossip.PeerSamplingService;
 import org.apache.cassandra.gossip.PeerSamplingServiceListener;
 import org.apache.cassandra.gossip.thicket.ThicketService.BroadcastPeers;
 import org.apache.cassandra.gossip.thicket.ThicketService.MissingMessges;
 import org.apache.cassandra.gossip.thicket.ThicketService.MissingSummary;
+import org.apache.cassandra.net.IMessageSink;
+import org.apache.cassandra.net.MessageIn;
+import org.apache.cassandra.net.MessageOut;
+import org.apache.cassandra.net.MessagingService;
 
 public class ThicketServiceTest
 {
-    static final int SEED = 92342784;
     private static InetAddress localNodeAddr;
-    static GossipMessageId.IdGenerator idGenerator = new GossipMessageId.IdGenerator(42);
-    ExecutorService executorService;
-    ScheduledExecutorService scheduler;
-    Random random;
+    private static final GossipMessageId.IdGenerator idGenerator = new GossipMessageId.IdGenerator(42);
+    private ExecutorService executorService;
+    private ScheduledExecutorService scheduler;
+    private TestMessageSink messageSink;
 
     @BeforeClass
     public static void before() throws UnknownHostException
@@ -73,12 +75,19 @@ public class ThicketServiceTest
     {
         executorService = new NopExecutorService();
         scheduler = new NopExecutorService();
-        random = new Random(SEED);
+        messageSink = new TestMessageSink();
+        MessagingService.instance().addMessageSink(messageSink);
+    }
+
+    @After
+    public void tearDown()
+    {
+        MessagingService.instance().clearMessageSinks();
     }
 
     private ThicketService createService(int peersCount)
     {
-        ThicketService thicket = new ThicketService(localNodeAddr, new TestMessageSender(), executorService, scheduler);
+        ThicketService thicket = new ThicketService(localNodeAddr, executorService, scheduler);
         thicket.start(new SimplePeerSamplingService(peersCount), 42);
         return thicket;
     }
@@ -139,9 +148,7 @@ public class ThicketServiceTest
         // might be the first (and only) node in the cluster (think standalone testing)
         ThicketService thicket = createService(0);
         thicket.performBroadcast("testing..1..2..3", new SimpleClient());
-
-        TestMessageSender messageSender = (TestMessageSender) thicket.messageSender;
-        Assert.assertTrue(messageSender.messages.isEmpty());
+        Assert.assertTrue(messageSink.messages.isEmpty());
     }
 
     @Test
@@ -150,9 +157,7 @@ public class ThicketServiceTest
         int peersSize = 3;
         ThicketService thicket = createService(peersSize);
         thicket.performBroadcast("testing..1..2..3", new SimpleClient());
-
-        TestMessageSender messageSender = (TestMessageSender) thicket.messageSender;
-        Assert.assertFalse(messageSender.messages.isEmpty());
+        Assert.assertFalse(messageSink.messages.isEmpty());
     }
 
     @Test
@@ -202,8 +207,7 @@ public class ThicketServiceTest
         InetAddress sender = InetAddress.getByName("127.123.234.1");
         DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client", Collections.emptyList());
         thicket.relayMessage(msg);
-        TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
-        Assert.assertTrue(messageSender.messages.isEmpty());
+        Assert.assertTrue(messageSink.messages.isEmpty());
     }
 
     @Test
@@ -225,8 +229,7 @@ public class ThicketServiceTest
         InetAddress sender = InetAddress.getByName("127.123.234.1");
         DataMessage msg = new DataMessage(sender, idGenerator.generate(), sender, "ThisIsThePayload", "client", Collections.emptyList());
         thicket.relayMessage(msg);
-        TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
-        Assert.assertTrue(messageSender.messages.isEmpty());
+        Assert.assertTrue(messageSink.messages.isEmpty());
     }
 
     @Test
@@ -247,8 +250,7 @@ public class ThicketServiceTest
 
         DataMessage msg = new DataMessage(treeRoot, idGenerator.generate(), treeRoot, "ThisIsThePayload", "client", Collections.emptyList());
         thicket.relayMessage(msg);
-        TestMessageSender messageSender = (TestMessageSender)thicket.messageSender;
-        Assert.assertFalse(messageSender.messages.isEmpty());
+        Assert.assertFalse(messageSink.messages.isEmpty());
     }
 
     @Test
@@ -549,7 +551,7 @@ public class ThicketServiceTest
         Assert.assertNotNull(bcastPeers);
         Assert.assertTrue(bcastPeers.active.contains(sender));
 
-        Assert.assertTrue(((TestMessageSender) thicket.messageSender).messages.isEmpty());
+        Assert.assertTrue(messageSink.messages.isEmpty());
     }
 
     @Test
@@ -586,7 +588,7 @@ public class ThicketServiceTest
         Assert.assertNotNull(bcastPeers);
         Assert.assertFalse(bcastPeers.active.contains(sender));
 
-        Assert.assertFalse(((TestMessageSender) thicket.messageSender).messages.isEmpty());
+        Assert.assertFalse(messageSink.messages.isEmpty());
     }
 
     @Test
@@ -662,16 +664,6 @@ public class ThicketServiceTest
         }
     }
 
-    static class TestMessageSender implements MessageSender<ThicketMessage>
-    {
-        List<SentMessage> messages = new LinkedList<>();
-
-        public void send(InetAddress destinationAddr, ThicketMessage message)
-        {
-            messages.add(new SentMessage(destinationAddr, message));
-        }
-    }
-
     static class SentMessage
     {
         final InetAddress destination;
@@ -681,6 +673,23 @@ public class ThicketServiceTest
         {
             this.destination = destination;
             this.message = message;
+        }
+    }
+
+    static class TestMessageSink implements IMessageSink
+    {
+        List<SentMessage> messages = new LinkedList<>();
+
+        public boolean allowOutgoingMessage(MessageOut message, int id, InetAddress to)
+        {
+            assert message.payload instanceof ThicketMessage;
+            messages.add(new SentMessage(to, (ThicketMessage) message.payload));
+            return false;
+        }
+
+        public boolean allowIncomingMessage(MessageIn message, int id)
+        {
+            return false;
         }
     }
 

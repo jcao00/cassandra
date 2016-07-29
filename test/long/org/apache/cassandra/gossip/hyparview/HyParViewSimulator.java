@@ -120,7 +120,7 @@ public class HyParViewSimulator
         }
     }
 
-    private static void executeCluster(PennStationDispatcher dispatcher, int[] clusterSizePerDatacenter) throws UnknownHostException
+    public static void executeCluster(PennStationDispatcher dispatcher, int[] clusterSizePerDatacenter) throws UnknownHostException
     {
         // add all the nodes to the dispatcher
         for (int i = 0; i < clusterSizePerDatacenter.length; i++)
@@ -153,7 +153,7 @@ public class HyParViewSimulator
         dispatcher.awaitQuiesence();
     }
 
-    private static void assertCluster(PennStationDispatcher dispatcher)
+    public static void assertCluster(PennStationDispatcher dispatcher)
     {
         while (true)
         {

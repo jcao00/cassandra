@@ -25,7 +25,6 @@ import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gossip.hyparview.HyParViewService;
-import org.apache.cassandra.gossip.thicket.ThicketMessageSender;
 import org.apache.cassandra.gossip.thicket.ThicketService;
 import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.utils.FBUtilities;
@@ -53,7 +52,7 @@ public class GossipContext
 
         hyparviewService = new HyParViewService(localAddress, datacenter, DatabaseDescriptor.getSeedProvider(),
                                                StageManager.getStage(Stage.GOSSIP), ScheduledExecutors.scheduledTasks);
-        thicketService = new ThicketService(localAddress, new ThicketMessageSender(), StageManager.getStage(Stage.GOSSIP), ScheduledExecutors.scheduledTasks);
+        thicketService = new ThicketService(localAddress, StageManager.getStage(Stage.GOSSIP), ScheduledExecutors.scheduledTasks);
         hyparviewService.register(thicketService);
         gossipListener = new GossipStateChangeListener(localAddress, thicketService, new GossipStateChangeListener.GossiperProvider(localAddress));
         thicketService.register(gossipListener);
