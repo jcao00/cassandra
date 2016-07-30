@@ -24,7 +24,6 @@ import java.util.LinkedList;
 import java.util.List;
 
 import org.apache.cassandra.gossip.GossipMessageId;
-import org.apache.cassandra.gossip.hyparview.HyParViewMessage;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
@@ -34,6 +33,10 @@ public abstract class ThicketMessage
 {
     public final InetAddress sender;
     public final GossipMessageId messageId;
+
+    /**
+     * As part of the Thicket protocol, a node's {@link LoadEstimate} is shared with peers on each message.
+     */
     public final Collection<LoadEstimate> estimates;
 
     protected ThicketMessage(InetAddress sender, GossipMessageId messageId, Collection<LoadEstimate> estimates)

@@ -17,6 +17,12 @@
  */
 package org.apache.cassandra.gossip;
 
+/**
+ * The base interface for interacting with a broadcast service. A component can send messages
+ * via the {@link #broadcast(Object, BroadcastServiceClient)} method, but to actaully receive messages
+ * and do something useful, a {@link BroadcastServiceClient} must be implemented and {@link #register(BroadcastServiceClient)},
+ * usually at startup.
+ */
 public interface BroadcastService
 {
     void broadcast(Object payload, BroadcastServiceClient client);

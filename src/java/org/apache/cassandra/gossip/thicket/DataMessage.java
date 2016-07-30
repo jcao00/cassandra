@@ -21,7 +21,6 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.gossip.BroadcastServiceClient;
@@ -33,24 +32,30 @@ import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 
-public class DataMessage<T> extends ThicketMessage
+public class DataMessage extends ThicketMessage
 {
     public static final IVersionedSerializer<DataMessage> serializer = new Serializer();
 
+    /**
+     * A map of client name to the serializer for it's data payloads, which we'll need for serializing the {@link #payload}.
+     */
     // TODO:JEB this is super lame-o, but sorta works for now
     static final ConcurrentHashMap<String, BroadcastServiceClient<?>> clients = new ConcurrentHashMap<>();
 
+    /**
+     * The root of the tree (that is, node) which first sent this message.
+     */
     public final InetAddress treeRoot;
-    public final T payload;
+
+    public final Object payload;
     public final String client;
 
     /**
-     * The number of nodes this message has already been passed through on it's traversal
-     * down the spanning tree.
+     * The number of nodes this message has already been passed through on it's traversal down the tree.
      */
     public final int hopCount;
 
-    public DataMessage(InetAddress sender, GossipMessageId messageId, InetAddress treeRoot, T payload, String client, Collection<LoadEstimate> estimates)
+    public DataMessage(InetAddress sender, GossipMessageId messageId, InetAddress treeRoot, Object payload, String client, Collection<LoadEstimate> estimates)
     {
         super(sender, messageId, estimates);
         this.treeRoot = treeRoot;
@@ -59,7 +64,7 @@ public class DataMessage<T> extends ThicketMessage
         hopCount = 1;
     }
 
-    public DataMessage(InetAddress sender, Collection<LoadEstimate> estimates, DataMessage<T> message)
+    public DataMessage(InetAddress sender, Collection<LoadEstimate> estimates, DataMessage message)
     {
         super(sender, message.messageId, estimates);
         treeRoot = message.treeRoot;

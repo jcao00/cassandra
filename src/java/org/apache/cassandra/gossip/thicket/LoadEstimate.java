@@ -19,7 +19,10 @@ package org.apache.cassandra.gossip.thicket;
 
 import java.net.InetAddress;
 
-public class LoadEstimate
+/**
+ * Represents the number of downstream peers ({@link #load}) in a given tree for a node.
+ */
+class LoadEstimate
 {
     final InetAddress treeRoot;
     final int load;
@@ -30,11 +33,13 @@ public class LoadEstimate
         this.load = load;
     }
 
+    @Override
     public String toString()
     {
         return String.format("%s, %s", treeRoot, load);
     }
 
+    @Override
     public boolean equals(Object o)
     {
         if (o == null || !(o instanceof LoadEstimate))
@@ -43,6 +48,7 @@ public class LoadEstimate
         return treeRoot.equals(est.treeRoot) && load == est.load;
     }
 
+    @Override
     public int hashCode()
     {
         return treeRoot.hashCode() + (37 * load);

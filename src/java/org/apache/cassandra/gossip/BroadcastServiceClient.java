@@ -19,6 +19,9 @@ package org.apache.cassandra.gossip;
 
 import org.apache.cassandra.io.IVersionedSerializer;
 
+/**
+ * Acts as a callback, via {@link #receive(Object)}, for {@link BroadcastService}s when messages are received from peers.
+ */
 public interface BroadcastServiceClient<T>
 {
     /**

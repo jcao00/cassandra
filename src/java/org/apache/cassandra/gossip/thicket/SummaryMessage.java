@@ -27,7 +27,6 @@ import com.google.common.collect.Multimap;
 
 import org.apache.cassandra.gossip.GossipMessageId;
 import org.apache.cassandra.io.IVersionedSerializer;
-import org.apache.cassandra.io.sstable.IndexInfo;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
@@ -38,9 +37,12 @@ public class SummaryMessage extends ThicketMessage
 {
     public static final IVersionedSerializer<SummaryMessage> serializer = new Serializer();
 
+    /**
+     * The recently received messageIds for each tree root.
+     */
     final Multimap<InetAddress, GossipMessageId> receivedMessages;
 
-    public SummaryMessage(InetAddress sender, GossipMessageId messageId, Multimap<InetAddress, GossipMessageId> receivedMessages, Collection<LoadEstimate> estimates)
+    SummaryMessage(InetAddress sender, GossipMessageId messageId, Multimap<InetAddress, GossipMessageId> receivedMessages, Collection<LoadEstimate> estimates)
     {
         super(sender, messageId, estimates);
         this.receivedMessages = receivedMessages;
