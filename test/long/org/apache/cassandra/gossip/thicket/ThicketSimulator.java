@@ -26,8 +26,6 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
 import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.After;
 import org.junit.Before;
@@ -35,15 +33,15 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gossip.hyparview.HyParViewSimulator;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.Pair;
 
 public class ThicketSimulator
 {
     private static final Logger logger = LoggerFactory.getLogger(ThicketSimulator.class);
-    TimesSquareDispacher dispatcher;
-    AtomicInteger messagePayload;
+    private TimesSquareDispacher dispatcher;
+    private AtomicInteger messagePayload;
 
     @Before
     public void setup()
@@ -56,63 +54,67 @@ public class ThicketSimulator
     {
         if (dispatcher != null)
             dispatcher.shutdown();
+        MessagingService.instance().clearMessageSinks();
     }
 
     @Test
     public void basicRun() throws UnknownHostException
     {
         System.out.println("***** thicket simulation - establish peer sampling service *****");
-        dispatcher = new TimesSquareDispacher(true);
+        dispatcher = new TimesSquareDispacher(false);
+        MessagingService.instance().addMessageSink(dispatcher);
         HyParViewSimulator.executeCluster(dispatcher, new int[] { 6 });
+        stopThickets(dispatcher);
         dispatcher.awaitQuiesence();
         HyParViewSimulator.assertCluster(dispatcher);
         dispatcher.dumpCurrentState();
+        restartThickets(dispatcher);
 
         System.out.println("***** thicket simulation - broadcasting messages *****");
         for (int i = 0; i < 1; i++)
             broadcastMessages(dispatcher, 1);
-            broadcastMessages(dispatcher, 1);
+//        broadcastMessages(dispatcher, 1);
 
         int limit = 4;
         int count = 0;
-//        for (InetAddress peer : dispatcher.getPeers())
-//        {
-//            TimesSquareDispacher.BroadcastNodeContext context = dispatcher.getContext(peer);
-//            broadcastMessage(context);
-//            dispatcher.awaitQuiesence();
-//            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
-//            System.out.println("***** thicket simulation - assert trees *****");
-//            assertBroadcastTree(dispatcher);
-//            System.out.println("thicket simulation - complete!");
-//            count ++;
-//            if (count == limit)
-//                break;
-//        }
+        for (InetAddress peer : dispatcher.getPeers())
+        {
+            TimesSquareDispacher.BroadcastNodeContext context = dispatcher.getContext(peer);
+            broadcastMessage(context);
+            dispatcher.awaitQuiesence();
+            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+            System.out.println("***** thicket simulation - assert trees *****");
+            assertBroadcastTree(dispatcher);
+            System.out.println("thicket simulation - complete!");
+            count ++;
+            if (count == limit)
+                break;
+        }
 
-//        TimesSquareDispacher.BroadcastNodeContext cxt = dispatcher.selectRandom();
-//        TimesSquareDispacher.BroadcastNodeContext cxt2 = dispatcher.selectRandom();
-//        for (int i = 0; i < 10; i++)
-//        {
-//            broadcastMessage(cxt);
-//            dispatcher.awaitQuiesence();
-//            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
-//            broadcastMessage(cxt2);
-//            dispatcher.awaitQuiesence();
-//            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
-//
-//            System.out.println("***** thicket simulation - assert trees *****");
-//            assertBroadcastTree(dispatcher, sentMessages);
-//            System.out.println("thicket simulation - complete!");
-//        }
-////        dispatcher.awaitQuiesence();
-//
-//        // give the broadcast trees time to GRAFT, PRUNE, and so on
-////        Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
-////
-////        System.out.println("***** thicket simulation - assert trees *****");
-////        assertBroadcastTree(dispatcher, sentMessages);
-//
-//        System.out.println("thicket simulation - complete!");
+        TimesSquareDispacher.BroadcastNodeContext cxt = dispatcher.selectRandom();
+        TimesSquareDispacher.BroadcastNodeContext cxt2 = dispatcher.selectRandom();
+        for (int i = 0; i < 10; i++)
+        {
+            broadcastMessage(cxt);
+            dispatcher.awaitQuiesence();
+            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+            broadcastMessage(cxt2);
+            dispatcher.awaitQuiesence();
+            Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+
+            System.out.println("***** thicket simulation - assert trees *****");
+            assertBroadcastTree(dispatcher);
+            System.out.println("thicket simulation - complete!");
+        }
+        dispatcher.awaitQuiesence();
+
+        // give the broadcast trees time to GRAFT, PRUNE, and so on
+        Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+
+        System.out.println("***** thicket simulation - assert trees *****");
+//        assertBroadcastTree(dispatcher, sentMessages);
+
+        System.out.println("thicket simulation - complete!");
     }
 
     private void broadcastMessages(TimesSquareDispacher dispatcher, int msgCount)

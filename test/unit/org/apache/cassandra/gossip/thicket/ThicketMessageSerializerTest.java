@@ -55,7 +55,6 @@ public class ThicketMessageSerializerTest
         DataMessage.clients.clear();
         DataMessage.clients.put(client.getClientName(), client);
         sender = InetAddress.getByName("127.0.0.1");
-//        ThicketMessageSender.addSerializer(client);
     }
 
     @Before

@@ -31,6 +31,9 @@ import org.apache.cassandra.net.MessageOut;
 
 public abstract class ThicketMessage
 {
+    /**
+     * The initial sender of the message; this is also the tree root for the tree rooted at that node.
+     */
     public final InetAddress sender;
     public final GossipMessageId messageId;
 

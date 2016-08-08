@@ -37,36 +37,42 @@ import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
 import org.apache.cassandra.gms.VersionedValue.VersionedValueFactory;
 import org.apache.cassandra.gossip.GossipStateChangeListener;
 import org.apache.cassandra.gossip.GossipStateChangeListener.GossipProvider;
+import org.apache.cassandra.gossip.hyparview.HyParViewMessage;
 import org.apache.cassandra.gossip.hyparview.PennStationDispatcher;
 import org.apache.cassandra.locator.SeedProvider;
+import org.apache.cassandra.net.MessageOut;
 
-// If keeping with famous NYC transportation hubs for naming the gossip simualtors,
-// I can't bring myself to name this class after the NYC Port Authority.
-public class TimesSquareDispacher extends PennStationDispatcher
+class TimesSquareDispacher extends PennStationDispatcher
 {
     private static final Logger logger = LoggerFactory.getLogger(TimesSquareDispacher.class);
     private List<NodeContext> contexts;
 
-    public TimesSquareDispacher(boolean verbose)
+    TimesSquareDispacher(boolean verbose)
     {
         super(verbose);
     }
 
+    @Override
     public void addPeer(InetAddress addr, String datacenter)
     {
         peers.put(addr, new BroadcastNodeContext(addr, datacenter, seedProvider));
     }
 
-//    public void sendMessage(InetAddress destination, ThicketMessage message)
-//    {
-//        if (!containsNode(destination))
-//            return;
-//
-//        totalMessagesSent.incrementAndGet();
-//        ((BroadcastNodeContext)peers.get(destination)).send(message, 0);
-//    }
+    @Override
+    public boolean allowOutgoingMessage(MessageOut message, int id, InetAddress to)
+    {
+        if (message.payload instanceof HyParViewMessage)
+            return super.allowOutgoingMessage(message, id, to);
 
-    public BroadcastNodeContext selectRandom()
+        if (containsNode(to))
+        {
+            totalMessagesSent.incrementAndGet();
+            ((BroadcastNodeContext)peers.get(to)).send((ThicketMessage)message.payload, 0);
+        }
+        return false;
+    }
+
+    BroadcastNodeContext selectRandom()
     {
         if (contexts == null)
         {
@@ -82,7 +88,7 @@ public class TimesSquareDispacher extends PennStationDispatcher
         return (BroadcastNodeContext)peers.get(addr);
     }
 
-    protected class BroadcastNodeContext extends NodeContext
+    class BroadcastNodeContext extends NodeContext
     {
         final ThicketService thicketService;
         final GossipStateChangeListener client;
@@ -102,7 +108,7 @@ public class TimesSquareDispacher extends PennStationDispatcher
             thicketService.register(client);
         }
 
-        public void broadcastUpdate()
+        void broadcastUpdate()
         {
             client.onChange(thicketService.getLocalAddress(), ApplicationState.DC, valueFactory.datacenter("some_datacenter"));
         }
@@ -123,6 +129,7 @@ public class TimesSquareDispacher extends PennStationDispatcher
             currentlyProcessingCount.decrementAndGet();
         }
 
+        @Override
         public void shutdown()
         {
             super.shutdown();
@@ -133,14 +140,14 @@ public class TimesSquareDispacher extends PennStationDispatcher
     /**
      * A rudimentary version of {@link Gossiper}, but pluggable for testing
      */
-    public static class FakeGossiper implements GossipProvider
+    private static class FakeGossiper implements GossipProvider
     {
         private final VersionedValueFactory valueFactory;
         private final IEndpointStateChangeSubscriber stateChangeSubscriber;
         private final EndpointState endpointState;
         private final Set<InetAddress> livePeers;
 
-        public FakeGossiper(IEndpointStateChangeSubscriber stateChangeSubscriber, int epoch, VersionedValueFactory valueFactory)
+        FakeGossiper(IEndpointStateChangeSubscriber stateChangeSubscriber, int epoch, VersionedValueFactory valueFactory)
         {
             this.stateChangeSubscriber = stateChangeSubscriber;
             this.valueFactory = valueFactory;
@@ -153,12 +160,14 @@ public class TimesSquareDispacher extends PennStationDispatcher
             endpointState.addApplicationState(ApplicationState.LOAD, valueFactory.load(310.5));
         }
 
+        @Override
         public EndpointState getLocalState()
         {
             endpointState.getHeartBeatState().updateHeartBeat();
             return endpointState;
         }
 
+        @Override
         public boolean receive(InetAddress addr, EndpointState state)
         {
             if (livePeers.add(addr))
