@@ -104,6 +104,7 @@ public class NodeProbe implements AutoCloseable
     final int port;
     private String username;
     private String password;
+    private boolean sslEnabled;
 
     private JMXConnector jmxc;
     private MBeanServerConnection mbeanServerConn;
@@ -123,13 +124,16 @@ public class NodeProbe implements AutoCloseable
     private boolean failed;
 
     /**
-     * Creates a NodeProbe using the specified JMX host, port, username, and password.
+     * Creates a NodeProbe using the specified JMX host, port, username, password and connects over SSL.
      *
      * @param host hostname or IP address of the JMX agent
      * @param port TCP port of the remote JMX agent
+     * @param username username for JMX credentials
+     * @param password password for JMX credentials
+     * @param sslEnabled Use SSL when connecting to the JMX agent
      * @throws IOException on connection failures
      */
-    public NodeProbe(String host, int port, String username, String password) throws IOException
+    public NodeProbe(String host, int port, String username, String password, boolean sslEnabled) throws IOException
     {
         assert username != null && !username.isEmpty() && password != null && !password.isEmpty()
                : "neither username nor password can be blank";
@@ -138,34 +142,36 @@ public class NodeProbe implements AutoCloseable
         this.port = port;
         this.username = username;
         this.password = password;
+        this.sslEnabled = sslEnabled;
         connect();
     }
 
     /**
-     * Creates a NodeProbe using the specified JMX host and port.
+     * Creates a NodeProbe using the specified JMX host, port and connects over SSL.
      *
      * @param host hostname or IP address of the JMX agent
      * @param port TCP port of the remote JMX agent
+     * @param sslEnabled Use SSL when connecting to the JMX agent
      * @throws IOException on connection failures
      */
-    public NodeProbe(String host, int port) throws IOException
+    public NodeProbe(String host, int port, boolean sslEnabled) throws IOException
     {
         this.host = host;
         this.port = port;
+        this.sslEnabled = sslEnabled;
         connect();
     }
 
     /**
-     * Creates a NodeProbe using the specified JMX host and default port.
+     * Creates a NodeProbe using the specified JMX host, default port and connects over SSL.
      *
      * @param host hostname or IP address of the JMX agent
+     * @param sslEnabled Use SSL when connecting to the JMX agent
      * @throws IOException on connection failures
      */
-    public NodeProbe(String host) throws IOException
+    public NodeProbe(String host, boolean sslEnabled) throws IOException
     {
-        this.host = host;
-        this.port = defaultPort;
-        connect();
+        this(host, defaultPort, sslEnabled);
     }
 
     /**
@@ -227,7 +233,7 @@ public class NodeProbe implements AutoCloseable
 
     private RMIClientSocketFactory getRMIClientSocketFactory()
     {
-        if (Boolean.parseBoolean(System.getProperty("ssl.enable")))
+        if (sslEnabled)
             return new SslRMIClientSocketFactory();
         else
             return RMISocketFactory.getDefaultSocketFactory();
