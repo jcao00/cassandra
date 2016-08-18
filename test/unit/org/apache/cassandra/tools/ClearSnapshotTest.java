@@ -49,7 +49,7 @@ public class ClearSnapshotTest extends ToolsTester
         cassandra = new EmbeddedCassandraService();
         cassandra.start();
 
-        probe = new NodeProbe("127.0.0.1", JMX_PORT);
+        probe = new NodeProbe("127.0.0.1", JMX_PORT, false);
     }
 
     @AfterClass
