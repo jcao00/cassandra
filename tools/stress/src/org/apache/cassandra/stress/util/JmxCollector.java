@@ -92,7 +92,7 @@ public class JmxCollector implements Callable<JmxCollector.GcStats>
     {
         try
         {
-            return new NodeProbe(host, port);
+            return new NodeProbe(host, port, false);
         }
         catch (IOException e)
         {

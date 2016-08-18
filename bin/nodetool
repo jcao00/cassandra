@@ -89,7 +89,7 @@ do
       then 
           SSL_ARGS=$(cat $SSL_FILE | tr '\n' ' ')
       fi
-      JVM_ARGS="$JVM_ARGS -Dssl.enable=true $SSL_ARGS"
+      JVM_ARGS="$JVM_ARGS $SSL_ARGS"
       ;;
     -D*)
       JVM_ARGS="$JVM_ARGS $1"

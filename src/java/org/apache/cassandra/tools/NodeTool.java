@@ -239,6 +239,9 @@ public class NodeTool
         @Option(type = OptionType.GLOBAL, name = {"-pwf", "--password-file"}, description = "Path to the JMX password file")
         private String passwordFilePath = EMPTY;
 
+        @Option(type = OptionType.GLOBAL, name = { "--ssl" }, description = "Use SSL")
+        private boolean sslEnabled = false;
+
         @Override
         public void run()
         {
@@ -310,10 +313,11 @@ public class NodeTool
             try
             {
                 if (username.isEmpty())
-                    nodeClient = new NodeProbe(host, parseInt(port));
+                    nodeClient = new NodeProbe(host, parseInt(port), sslEnabled);
                 else
-                    nodeClient = new NodeProbe(host, parseInt(port), username, password);
-            } catch (IOException | SecurityException e)
+                    nodeClient = new NodeProbe(host, parseInt(port), username, password, sslEnabled);
+            }
+            catch (IOException | SecurityException e)
             {
                 Throwable rootCause = Throwables.getRootCause(e);
                 System.err.println(format("nodetool: Failed to connect to '%s:%s' - %s: '%s'.", host, port, rootCause.getClass().getSimpleName(), rootCause.getMessage()));
