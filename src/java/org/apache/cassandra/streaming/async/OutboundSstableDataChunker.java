@@ -24,6 +24,8 @@ import java.io.IOError;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 
@@ -33,6 +35,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.DefaultFileRegion;
+import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.ChannelProxy;
@@ -40,14 +43,9 @@ import org.apache.cassandra.io.util.DataIntegrityMetadata;
 import org.apache.cassandra.io.util.DataIntegrityMetadata.ChecksumValidator;
 import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.StreamSession;
-import org.apache.cassandra.streaming.StreamWriter;
-import org.apache.cassandra.streaming.compress.CompressedStreamWriter;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.utils.Pair;
-
-import static org.apache.cassandra.streaming.StreamWriter.DEFAULT_CHUNK_SIZE;
-import static org.apache.cassandra.streaming.compress.CompressedStreamWriter.CHUNK_SIZE;
 
 /**
  * Used when only tranferring subsections of an sstable, and thus only the DATA component is shipped.
@@ -78,6 +76,10 @@ import static org.apache.cassandra.streaming.compress.CompressedStreamWriter.CHU
  */
 class OutboundSstableDataChunker implements StreamingFileChunker
 {
+    // TODO:JEB rename these, as i just ripped them out of {Compressed}StreamWriter
+    public static final int DEFAULT_CHUNK_SIZE = 64 * 1024;
+    public static final int CHUNK_SIZE = 20 * 1024 * 1024;
+
     static final int EOF = -1;
 
     private final ByteBufAllocator allocator;
@@ -124,7 +126,7 @@ class OutboundSstableDataChunker implements StreamingFileChunker
         channelProxy = ofm.ref.get().getDataChannel();
         this.sections = ofm.header.sections;
         compressed = false;
-        totalSize = StreamWriter.totalSize(sections);
+        totalSize = totalSize(sections);
 
         if (new File(ofm.ref.get().descriptor.filenameFor(Component.CRC)).exists())
         {
@@ -136,6 +138,14 @@ class OutboundSstableDataChunker implements StreamingFileChunker
             validator = null;
             chunkSize = DEFAULT_CHUNK_SIZE;
         }
+    }
+
+    private static long totalSize(Collection<Pair<Long, Long>> sections)
+    {
+        long size = 0;
+        for (Pair<Long, Long> section : sections)
+            size += section.right - section.left;
+        return size;
     }
 
     OutboundSstableDataChunker(ChannelHandlerContext ctx, OutgoingFileMessage ofm, CompressionInfo compressionInfo, boolean secureTransfer)
@@ -158,9 +168,48 @@ class OutboundSstableDataChunker implements StreamingFileChunker
         }
 
         validator = null;
-        sections = CompressedStreamWriter.getTransferSections(compressionInfo.chunks);
-        totalSize = CompressedStreamWriter.totalSize(compressionInfo.chunks);
+        sections = getTransferSections(compressionInfo.chunks);
+        totalSize = totalSize(compressionInfo.chunks);
         chunkSize = CHUNK_SIZE;
+    }
+
+    private static long totalSize(CompressionMetadata.Chunk[] chunks)
+    {
+        long size = 0;
+        // calculate total length of transferring chunks
+        for (CompressionMetadata.Chunk chunk : chunks)
+            size += chunk.length + 4; // 4 bytes for CRC
+        return size;
+    }
+
+    // chunks are assumed to be sorted by offset
+    private static List<Pair<Long, Long>> getTransferSections(CompressionMetadata.Chunk[] chunks)
+    {
+        List<Pair<Long, Long>> transferSections = new ArrayList<>();
+        Pair<Long, Long> lastSection = null;
+        for (CompressionMetadata.Chunk chunk : chunks)
+        {
+            if (lastSection != null)
+            {
+                if (chunk.offset == lastSection.right)
+                {
+                    // extend previous section to end of this chunk
+                    lastSection = Pair.create(lastSection.left, chunk.offset + chunk.length + 4); // 4 bytes for CRC
+                }
+                else
+                {
+                    transferSections.add(lastSection);
+                    lastSection = Pair.create(chunk.offset, chunk.offset + chunk.length + 4);
+                }
+            }
+            else
+            {
+                lastSection = Pair.create(chunk.offset, chunk.offset + chunk.length + 4);
+            }
+        }
+        if (lastSection != null)
+            transferSections.add(lastSection);
+        return transferSections;
     }
 
     /**
@@ -174,7 +223,7 @@ class OutboundSstableDataChunker implements StreamingFileChunker
         this.sections = sections;
         this.validator = validator;
         this.channelProxy = proxy;
-        totalSize = StreamWriter.totalSize(sections);
+        totalSize = totalSize(sections);
 
         compressed = false;
         secureTransfer = false;

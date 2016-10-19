@@ -56,11 +56,6 @@ public class StreamManager implements StreamManagerMBean
      *
      * @return StreamRateLimiter with rate limit set based on peer location.
      */
-    public static StreamRateLimiter getRateLimiter(InetAddress peer)
-    {
-        return new StreamRateLimiter(peer);
-    }
-
     public static class StreamRateLimiter
     {
         private static final double BYTES_PER_MEGABIT = (1024 * 1024) / 8; // from bits
@@ -99,17 +94,20 @@ public class StreamManager implements StreamManagerMBean
                 interDCLimiter.acquire(toTransfer);
         }
 
-        public boolean tryAcquire(int toTransfer)
+        public boolean tryAcquireGlobal(int toTransfer)
         {
             // good news: RateLimiter allows us to attempt to acquire without blocking.
             // bad news: if we can't acquire, the RateLimiter API does not tell us how long we should wait before trying again :(
-            if (limiter.tryAcquire(toTransfer))
-            {
-                if (isLocalDC || interDCLimiter.tryAcquire(toTransfer))
-                    return true;
-                // it would ge great, but perhaps infeasible/unpractical, to return the acquired count back to the limiter
-            }
-            return false;
+            return limiter.tryAcquire(toTransfer);
+        }
+
+        public boolean tryAcquireInterDc(int toTransfer)
+        {
+            // good news: RateLimiter allows us to attempt to acquire without blocking.
+            // bad news: if we can't acquire, the RateLimiter API does not tell us how long we should wait before trying again :(
+            return interDCLimiter.tryAcquire(toTransfer);
+            // it would ge great, but perhaps infeasible/unpractical, to return the acquired count back to
+            // the global limiter if we couldn't acquire here
         }
     }
 

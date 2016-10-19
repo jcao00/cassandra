@@ -34,6 +34,7 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelPipeline;
+import io.netty.handler.traffic.GlobalChannelTrafficShapingHandler;
 import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.Future;
@@ -47,14 +48,16 @@ import org.apache.cassandra.net.async.NettyFactory.OutboundChannelInitializer;
 import org.apache.cassandra.net.async.OutboundConnectionParams;
 import org.apache.cassandra.net.async.OutboundConnector;
 import org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionHandshakeResult;
-import org.apache.cassandra.streaming.ConnectionHandler;
+import org.apache.cassandra.streaming.StreamManager;
+import org.apache.cassandra.streaming.StreamManager.StreamRateLimiter;
 import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.streaming.StreamingMessageSender;
 import org.apache.cassandra.streaming.messages.IncomingFileMessage;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
-import org.apache.cassandra.streaming.messages.RetryMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.FBUtilities;
+import org.hsqldb.SessionManager;
 
 /**
  * Responsible for sending {@link StreamMessage}s to a given peer. We manage an array of netty {@link Channel}s
@@ -63,17 +66,19 @@ import org.apache.cassandra.utils.FBUtilities;
  * like any other cassandra message type, and only special case the {@link OutgoingFileMessage} as it is
  * the one doing the heavy lifting of transferring sstables.
  *
- * The main challenge is when sending files we might need to delay shipping the file if, for example,
- * we've exceeded our disk I/O use due to rate limiting. At that point, it's easy enough to reschedule processing
- * the file once we acquire the permits from the rate limiter; however, we need to ensure that no other messages
- * are submitted to the same channel while the current file is still being processed.
+ * One of the challenges is, when sending files, we might need to delay shipping the file if, for example,
+ * we've exceeded our network I/O use due to rate limiting (at the cassandra level). At that point, it's easy enough
+ * to reschedule processing the file once we acquire the permits from the rate limiter; however, we need to ensure that
+ * no other messages are submitted to the same channel while the current file is still being processed.
  * Hence, the use of an internal {@code {@link #queue}} to hold pending outbound messages.
  * Multiple netty channels allow multiple files to be sent in parallel.
  */
-public class NettyStreamingConnectionHandler implements ConnectionHandler
+public class NettyStreamingMessageSender implements StreamingMessageSender
 {
-    private static final Logger logger = LoggerFactory.getLogger(NettyStreamingConnectionHandler.class);
+    private static final Logger logger = LoggerFactory.getLogger(NettyStreamingMessageSender.class);
     private static final int DEFAULT_CHANNEL_BUFFER_SIZE = 1 << 16;
+
+    private static final long BYTES_PER_MEGABIT = (1024 * 1024) / 8; // from bits
 
     /**
      * A netty-specific attribute that is assigned to each {@link Channel} instance that is used to indicate
@@ -100,7 +105,7 @@ public class NettyStreamingConnectionHandler implements ConnectionHandler
     private volatile boolean closed;
 
     // TODO:JEB need extra "boolean forceSecure" param to account for behavior in BulkLoadConnFactory
-    public NettyStreamingConnectionHandler(StreamSession session, InetAddress connectionAddress, int protocolVersion)
+    public NettyStreamingMessageSender(StreamSession session, InetAddress connectionAddress, int protocolVersion)
     {
         this.session = session;
         this.protocolVersion = protocolVersion;
@@ -220,6 +225,9 @@ public class NettyStreamingConnectionHandler implements ConnectionHandler
         Channel channel = blocker.result.channel;
         ChannelPipeline pipeline = channel.pipeline();
         pipeline.addLast(NettyFactory.STREAMING_CLIENT_GROUP, "outboundStreamHandler", new StreamingSendHandler(session, protocolVersion));
+        StreamRateLimiter rateLimiter = new StreamRateLimiter(remoteAddress.getAddress());
+        pipeline.addLast(NettyFactory.STREAMING_CLIENT_GROUP, "networkThrottleHandler", new NetworkThrottlingHandler(rateLimiter));
+        // TODO:JEB add in lame-o logger
         return channel;
     }
 
@@ -266,8 +274,7 @@ public class NettyStreamingConnectionHandler implements ConnectionHandler
      * We need to be careful about concurrency as we get here from several paths:
      *
      * 1) {@link StreamSession#startStreamingFiles()}, which is only called once in the life of the session (at the beginning),
-     * 2) when a {@link RetryMessage} is received and it's target file re-enqueued,
-     * 3) {@link #onMessageComplete(Future, Channel)}, the callback from the netty event loop
+     * 2) {@link #onMessageComplete(Future, Channel)}, the callback from the netty event loop
      *
      * @return true if a message was sent to the netty channel; else, false.
      */

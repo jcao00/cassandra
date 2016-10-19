@@ -22,7 +22,7 @@ import java.io.IOException;
 
 import org.apache.cassandra.streaming.messages.StreamMessage;
 
-public interface ConnectionHandler
+public interface StreamingMessageSender
 {
     /**
      * Invoked when a node wants to start a stream session with a peer.

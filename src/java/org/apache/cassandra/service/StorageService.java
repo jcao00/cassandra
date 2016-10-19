@@ -300,7 +300,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_PREPARE_SYNACK, new StreamMessageVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_PREPARE_ACK, new StreamMessageVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_RECEIVED, new StreamMessageVerbHandler());
-        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.STREAM_RETRY, new StreamMessageVerbHandler());
     }
 
     public void registerDaemon(CassandraDaemon daemon)

@@ -45,8 +45,10 @@ public class StreamCoordinator
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamCoordinator.class);
 
-    // Executor strictly for establishing the initial connections. Once we're connected to the other end the rest of the
-    // streaming is handled directly by the ConnectionHandler's incoming and outgoing threads.
+    /**
+     * Executor strictly for establishing the initial connections. Once we're connected to the other end the rest of the
+     * streaming is handled directly by the {@link StreamingMessageSender}'s incoming and outgoing threads.
+     */
     private static final DebuggableThreadPoolExecutor streamExecutor = DebuggableThreadPoolExecutor.createWithFixedPoolSize("StreamConnectionEstablisher",
                                                                                                                             FBUtilities.getAvailableProcessors());
     private final boolean connectSequentially;

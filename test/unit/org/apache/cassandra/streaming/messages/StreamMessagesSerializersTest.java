@@ -99,12 +99,6 @@ public class StreamMessagesSerializersTest
     }
 
     @Test
-    public void retryMessage() throws IOException
-    {
-        serializeRoundTrip(new RetryMessage(UUID.randomUUID(), 42, UUID.randomUUID(), 121), RetryMessage.serializer);
-    }
-
-    @Test
     public void streamFailedMessage() throws IOException
     {
         serializeRoundTrip(new SessionFailedMessage(UUID.randomUUID(), 42), SessionFailedMessage.serializer);

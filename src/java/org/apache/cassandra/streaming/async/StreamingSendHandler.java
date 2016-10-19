@@ -21,7 +21,6 @@ package org.apache.cassandra.streaming.async;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
-import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
@@ -42,7 +41,6 @@ import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.NettyFactory;
-import org.apache.cassandra.streaming.StreamManager;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
@@ -51,6 +49,10 @@ import org.apache.cassandra.streaming.messages.StreamMessage;
 /**
  * A netty {@link ChannelHandler} responsible for transferring files. Has the ability to defer the transfer of an individual file
  * if, for example, the throttle limit has been reached.
+ *
+ * Note: this class extends from {@link ChannelDuplexHandler} in order to get the {@link #channelWritabilityChanged(ChannelHandlerContext)}
+ * behavior. That function allows us to know when the channel's high water mark has been exceeded (as the channel's writablility
+ * will have changed), and thus we can back off reading bytes from disk/writing them to the channel.
  */
 class StreamingSendHandler extends ChannelDuplexHandler
 {
@@ -60,7 +62,6 @@ class StreamingSendHandler extends ChannelDuplexHandler
 
     private final StreamSession session;
     private final int protocolVersion;
-    private final StreamManager.StreamRateLimiter limiter;
 
     private State state;
     private CurrentMessage currentMessage;
@@ -69,7 +70,6 @@ class StreamingSendHandler extends ChannelDuplexHandler
     {
         this.session = session;
         this.protocolVersion = protocolVersion;
-        this.limiter = StreamManager.getRateLimiter(session.peer);
         state = State.READY;
     }
 
@@ -190,12 +190,12 @@ class StreamingSendHandler extends ChannelDuplexHandler
      * for a given file as we'll need to delay processing for one of the following reasons:
      * <p>
      * 1) If the {@code ctx#channel} is not writable becasue we've hit the high water mark for
-     * the number bytes allowed in the channel, this method will return without sending more chunks.
+     * the number bytes allowed in the channel, this method will return without sending further chunks.
      * However, when outstanding chunks complete, {@link #onChunkComplete(Future, ChannelHandlerContext, CurrentMessage, boolean)}
      * is invoked, and it will call this method again if the {@code chunker} has more data to transfer.
      * <p>
      * 2) If we couldn't aqcuire the byte count of a chunk from the {@code #limiter}, then the transfer is
-     * 'suspended' for some number of milliseconds, and attempted again.
+     * suspended for some number of milliseconds, and attempted again.
      *
      * Is it critical that, when an exception is thrown, callers invoke {@link StreamingFileChunker#close()} to
      * release any resources.
@@ -208,31 +208,17 @@ class StreamingSendHandler extends ChannelDuplexHandler
             if (state == State.DONE || !ctx.channel().isWritable())
                 return;
 
-            int chunkSize = chunker.nextChunkSize();
-            if (limiter.tryAcquire(chunkSize))
+            try
             {
-                try
-                {
-                    Object chunk = chunker.next();
-                    boolean isLastChunk = !chunker.hasNext();
-                    ChannelFuture channelFuture = ctx.writeAndFlush(chunk);
-                    channelFuture.addListener((future) -> onChunkComplete(future, ctx, currentMessage, isLastChunk));
-                }
-                catch (Throwable t)
-                {
-                    // TODO:JEB review if throwing an exception is the best here.....
-                    throw new IllegalStateException("failed to get next chunk for transfer", t);
-                }
+                Object chunk = chunker.next();
+                boolean isLastChunk = !chunker.hasNext();
+                ChannelFuture channelFuture = ctx.writeAndFlush(chunk);
+                channelFuture.addListener((future) -> onChunkComplete(future, ctx, currentMessage, isLastChunk));
             }
-            else
+            catch (Throwable t)
             {
-                // at this point, all we know is we couldn't acquire the bytes from the limiter,
-                // we don't know *how long* to wait until we can acquire (or when we should try again).
-                // we know the upper bound to wait is one second (the limiter works on allotments per second),
-                // so starting with guess-work sizing of the duration
-                logger.info("transferFile(), gonna pause due to rateLimiter ...");
-                ctx.executor().schedule(() -> transferFile(ctx, currentMessage), 100, TimeUnit.MILLISECONDS);
-                return;
+                // TODO:JEB review if throwing an exception is the best here.....
+                throw new IllegalStateException("failed to get next chunk for transfer", t);
             }
         }
     }
