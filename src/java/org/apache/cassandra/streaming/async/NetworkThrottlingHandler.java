@@ -28,6 +28,7 @@ import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundBuffer;
 import io.netty.channel.ChannelPromise;
+import io.netty.channel.FileRegion;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.ScheduledFuture;
 import org.apache.cassandra.streaming.StreamManager.StreamRateLimiter;
@@ -51,7 +52,8 @@ class NetworkThrottlingHandler extends ChannelDuplexHandler
     private final StreamRateLimiter limiter;
 
     private State state;
-    private Pair<ByteBuf, ChannelPromise> delayedBuf;
+    // pair.left with either be a ByteBuf or FileRegion
+    private Pair<Object, ChannelPromise> delayedMessage;
     private ScheduledFuture<?> scheduledWrite;
 
 
@@ -64,19 +66,17 @@ class NetworkThrottlingHandler extends ChannelDuplexHandler
     @Override
     public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise)
     {
-        if (!(message instanceof ByteBuf))
+        if (!(message instanceof ByteBuf || message instanceof FileRegion) )
         {
-            ReferenceCountUtil.release(message);
-            promise.setFailure(new IllegalArgumentException("message is not a ByteByf, but a " + message.getClass().getName()));
+            ctx.write(message, promise);
             return;
         }
 
-        assert delayedBuf == null : "upstream handlers should not have sent more buffers while there is a delayed buffer";
+        assert delayedMessage == null : "upstream handlers should not have sent more buffers while there is a delayed buffer";
         assert state == State.START;
         assert scheduledWrite == null;
 
-        ByteBuf buf = (ByteBuf)message;
-        write(ctx, buf, promise);
+        writeInternal(ctx, message, promise);
     }
 
     /**
@@ -89,19 +89,19 @@ class NetworkThrottlingHandler extends ChannelDuplexHandler
      * algo that can intelligently check the allotment for both global & and inter-dc in 'one call'?
      */
     @VisibleForTesting
-    void write(final ChannelHandlerContext ctx, ByteBuf buf, ChannelPromise promise)
+    void writeInternal(final ChannelHandlerContext ctx, Object message, ChannelPromise promise)
     {
         scheduledWrite = null;
-        final int size = buf.readableBytes();
+        final int size = size(message);
         switch (state)
         {
             case START:
                 if (!limiter.tryAcquireGlobal(size))
                 {
                     state = State.AWAIT_GLOBAL_THROTTLE;
-                    delayedBuf = Pair.create(buf, promise);
+                    delayedMessage = Pair.create(message, promise);
                     setUserDefinedWritability(ctx, false);
-                    scheduledWrite = ctx.executor().schedule(() -> write(ctx, buf, promise), 200, TimeUnit.MILLISECONDS);
+                    scheduledWrite = ctx.executor().schedule(() -> writeInternal(ctx, message, promise), 200, TimeUnit.MILLISECONDS);
                     return;
                 }
                 // fall-through
@@ -109,18 +109,27 @@ class NetworkThrottlingHandler extends ChannelDuplexHandler
                 if (!limiter.tryAcquireInterDc(size))
                 {
                     state = State.AWAIT_INTER_DC_THROTTLE;
-                    delayedBuf = Pair.create(buf, promise);
+                    delayedMessage = Pair.create(message, promise);
                     setUserDefinedWritability(ctx, false);
-                    scheduledWrite = ctx.executor().schedule(() -> write(ctx, buf, promise), 200, TimeUnit.MILLISECONDS);
+                    scheduledWrite = ctx.executor().schedule(() -> writeInternal(ctx, message, promise), 200, TimeUnit.MILLISECONDS);
                     return;
                 }
                 // fall-through
         }
 
-        ctx.write(buf, promise);
+        ctx.write(message, promise);
         state = State.START;
-        delayedBuf = null;
+        delayedMessage = null;
         setUserDefinedWritability(ctx, true);
+    }
+
+    private int size(Object msg)
+    {
+        if (msg instanceof ByteBuf)
+            return ((ByteBuf)msg).readableBytes();
+        if (msg instanceof FileRegion)
+            return (int)((FileRegion)msg).count();
+        return 0;
     }
 
     private void setUserDefinedWritability(ChannelHandlerContext ctx, boolean writable)
@@ -142,11 +151,11 @@ class NetworkThrottlingHandler extends ChannelDuplexHandler
 
     private void closeResources()
     {
-        if (delayedBuf != null)
+        if (delayedMessage != null)
         {
-            delayedBuf.left.release();
-            delayedBuf.right.setFailure(new ClosedChannelException());
-            delayedBuf = null;
+            ReferenceCountUtil.release(delayedMessage.left);
+            delayedMessage.right.setFailure(new ClosedChannelException());
+            delayedMessage = null;
         }
 
         if (scheduledWrite != null)

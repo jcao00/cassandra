@@ -23,13 +23,20 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.util.concurrent.Uninterruptibles;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.ReferenceCountUtil;
+import org.apache.cassandra.service.StorageService;
+import org.jctools.queues.SpscArrayQueue;
 
 /**
  * An {@link InputStream} that blocks on a {@link #queue} for {@link ByteBuf}s. An instance is responsibile for the reference
@@ -39,8 +46,9 @@ import io.netty.util.ReferenceCountUtil;
  */
 public class AppendingByteBufInputStream extends InputStream
 {
+    private static final Logger logger = LoggerFactory.getLogger(AppendingByteBufInputStream.class);
     private final byte[] oneByteArray = new byte[1];
-    private final BlockingQueue<ByteBuf> queue;
+    private final SpscArrayQueue<ByteBuf> queue;
     private final AtomicInteger bufferredByteCount;
     private final int lowWaterMark;
     private final int highWaterMark;
@@ -55,7 +63,7 @@ public class AppendingByteBufInputStream extends InputStream
         this.lowWaterMark = lowWaterMark;
         this.highWaterMark = highWaterMark;
         this.ctx = ctx;
-        queue = new LinkedBlockingQueue<>();
+        queue = new SpscArrayQueue<>(1 << 10);
         bufferredByteCount = new AtomicInteger(0);
     }
 
@@ -130,16 +138,18 @@ public class AppendingByteBufInputStream extends InputStream
                 currentBufSize = 0;
             }
 
-            try
+            // the jctools queues are non-blocking, so if the queue is empty, we need some kind of wait mechanism.
+            // we could try a spinlock, but as we're waiting for network data (packet arrival, kernel handling of TCP),
+            // it's not as predictable as just waiting for the computation from another CPU or thread.
+            // thus a spinlock may just end up hogging the CPU, which is probably not what we want for a background activity like streaming.
+            while ((currentBuf = queue.poll()) == null)
             {
-                currentBuf = queue.take();
-                currentBufSize = currentBuf.readableBytes();
+                Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MICROSECONDS);
+                if (Thread.interrupted() || closed)
+                    throw new EOFException();
             }
-            catch (InterruptedException e)
-            {
-                // we get notified (via interrupt) when the netty channel closes.
-                throw new EOFException();
-            }
+            logger.info("got buf from queue, readable byte = {}", currentBuf.readableBytes());
+            currentBufSize = currentBuf.readableBytes();
         }
     }
 

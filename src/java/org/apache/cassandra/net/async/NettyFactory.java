@@ -112,8 +112,7 @@ public final class NettyFactory
 
                 Throwable failedChannelCause = channelFuture.cause();
             if (failedChannelCause.getMessage().contains("in use"))
-                throw new ConfigurationException(channelFuture.channel().remoteAddress()
-                                                 + " is in use by another process.  Change listen_address:storage_port " +
+                throw new ConfigurationException(localAddr + " is in use by another process.  Change listen_address:storage_port " +
                                                  "in cassandra.yaml to values that do not conflict with other services");
             else if (failedChannelCause.getMessage().contains("Cannot assign requested address"))
                 throw new ConfigurationException("Unable to bind to address " + channelFuture.channel().remoteAddress()
