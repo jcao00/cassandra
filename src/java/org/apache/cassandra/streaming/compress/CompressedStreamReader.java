@@ -35,6 +35,7 @@ import org.apache.cassandra.io.util.TrackedInputStream;
 import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.StreamReader;
 import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.streaming.StreamingUtils;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -140,10 +141,6 @@ public class CompressedStreamReader extends StreamReader
     @Override
     protected long totalSize()
     {
-        long size = 0;
-        // calculate total length of transferring chunks
-        for (CompressionMetadata.Chunk chunk : compressionInfo.chunks)
-            size += chunk.length + 4; // 4 bytes for CRC
-        return size;
+        return StreamingUtils.totalSize(compressionInfo.chunks);
     }
 }

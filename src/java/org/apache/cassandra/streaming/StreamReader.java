@@ -158,10 +158,7 @@ public class StreamReader
 
     protected long totalSize()
     {
-        long size = 0;
-        for (Pair<Long, Long> section : sections)
-            size += section.right - section.left;
-        return size;
+        return StreamingUtils.totalSize(sections);
     }
 
     protected void writePartition(StreamDeserializer deserializer, SSTableMultiWriter writer) throws IOException

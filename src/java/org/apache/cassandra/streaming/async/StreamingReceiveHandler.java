@@ -140,92 +140,92 @@ public class StreamingReceiveHandler extends ChannelInboundHandlerAdapter
         ctx.fireExceptionCaught(cause);
     }
 
-    /**
-     * A task that can execute the blocking deserialization behavior of {@link StreamReader#read(ReadableByteChannel)}.
-     */
-    private class DeserializingSstableTask implements Runnable
-    {
-        private final ChannelHandlerContext ctx;
-        private final InputStream inputStream;
-        private final InetSocketAddress remoteAddress;
-        private final int protocolVersion;
-
-        DeserializingSstableTask(ChannelHandlerContext ctx, InputStream inputStream, InetSocketAddress remoteAddress, int protocolVersion)
-        {
-            this.ctx = ctx;
-            this.inputStream = inputStream;
-            this.remoteAddress = remoteAddress;
-            this.protocolVersion = protocolVersion;
-        }
-
-        @Override
-        public void run()
-        {
-            FileMessageHeader header = null;
-            StreamSession session = null;
-            try
-            {
-                while (!closed)
-                {
-                    header = readHeader(inputStream);
-                    session = StreamManager.instance.findSession(remoteAddress.getAddress(), new IncomingFileMessage(null, header));
-                    if (session == null)
-                        throw new IllegalArgumentException("could not locate session for file header data: " + header);
-
-                    StreamReader reader = header.compressionInfo == null
-                                          ? new StreamReader(header, session)
-                                          : new CompressedStreamReader(header, session);
-
-
-                    SSTableMultiWriter ssTableMultiWriter = reader.read(Channels.newChannel(inputStream));
-                    session.receive(new IncomingFileMessage(ssTableMultiWriter, header));
-                }
-            }
-            catch (EOFException e)
-            {
-                // thrown when netty socket closes/is interrupted
-                logger.debug("eof reading from socket; closing");
-            }
-            catch (Throwable t)
-            {
-                // Throwable can be Runtime error containing IOException.
-                // In that case we don't want to retry.
-                // TODO:JEB resolve this
-//                Throwable cause = t;
-//                while ((cause = cause.getCause()) != null)
+//    /**
+//     * A task that can execute the blocking deserialization behavior of {@link StreamReader#read(ReadableByteChannel)}.
+//     */
+//    private class DeserializingSstableTask implements Runnable
+//    {
+//        private final ChannelHandlerContext ctx;
+//        private final InputStream inputStream;
+//        private final InetSocketAddress remoteAddress;
+//        private final int protocolVersion;
+//
+//        DeserializingSstableTask(ChannelHandlerContext ctx, InputStream inputStream, InetSocketAddress remoteAddress, int protocolVersion)
+//        {
+//            this.ctx = ctx;
+//            this.inputStream = inputStream;
+//            this.remoteAddress = remoteAddress;
+//            this.protocolVersion = protocolVersion;
+//        }
+//
+//        @Override
+//        public void run()
+//        {
+//            FileMessageHeader header = null;
+//            StreamSession session = null;
+//            try
+//            {
+//                while (!closed)
 //                {
-//                    if (cause instanceof IOException)
-//                        throw (IOException) cause;
+//                    header = readHeader(inputStream);
+//                    session = StreamManager.instance.findSession(remoteAddress.getAddress(), new IncomingFileMessage(null, header));
+//                    if (session == null)
+//                        throw new IllegalArgumentException("could not locate session for file header data: " + header);
+//
+//                    StreamReader reader = header.compressionInfo == null
+//                                          ? new StreamReader(header, session)
+//                                          : new CompressedStreamReader(header, session);
+//
+//
+//                    SSTableMultiWriter ssTableMultiWriter = reader.read(Channels.newChannel(inputStream));
+//                    session.receive(new IncomingFileMessage(ssTableMultiWriter, header));
 //                }
-//                JVMStabilityInspector.inspectThrowable(t);
-                logger.error("failed in streambackground thread", t);
-            }
-            finally
-            {
-
-                // TODO:JEB do we close the session or send compelte somewheres?
-
-                StreamingReceiveHandler.this.closed = true;
-                FileUtils.closeQuietly(inputStream);
-            }
-        }
-
-        /**
-         * Parse the incoming {@link ByteBuf} for the file headers.
-         *
-         * @return The derserialized file headers if there were enough bytes in the buffer; else, null.
-         */
-        private FileMessageHeader readHeader(InputStream in) throws IOException
-        {
-            DataInputPlus input = new DataInputPlus.DataInputStreamPlus(in);
-            int magic = input.readInt();
-            MessagingService.validateMagic(magic);
-
-            // message size is not currently used, but if we move to a non-blocking paradigm for the individual file transfers,
-            // then we would need it (at least for the headers)
-            int msgSize = input.readInt();
-
-            return FileMessageHeader.serializer.deserialize(input, protocolVersion);
-        }
-    }
+//            }
+//            catch (EOFException e)
+//            {
+//                // thrown when netty socket closes/is interrupted
+//                logger.debug("eof reading from socket; closing");
+//            }
+//            catch (Throwable t)
+//            {
+//                // Throwable can be Runtime error containing IOException.
+//                // In that case we don't want to retry.
+//                // TODO:JEB resolve this
+////                Throwable cause = t;
+////                while ((cause = cause.getCause()) != null)
+////                {
+////                    if (cause instanceof IOException)
+////                        throw (IOException) cause;
+////                }
+////                JVMStabilityInspector.inspectThrowable(t);
+//                logger.error("failed in streambackground thread", t);
+//            }
+//            finally
+//            {
+//
+//                // TODO:JEB do we close the session or send compelte somewheres?
+//
+//                StreamingReceiveHandler.this.closed = true;
+//                FileUtils.closeQuietly(inputStream);
+//            }
+//        }
+//
+//        /**
+//         * Parse the incoming {@link ByteBuf} for the file headers.
+//         *
+//         * @return The derserialized file headers if there were enough bytes in the buffer; else, null.
+//         */
+//        private FileMessageHeader readHeader(InputStream in) throws IOException
+//        {
+//            DataInputPlus input = new DataInputPlus.DataInputStreamPlus(in);
+//            int magic = input.readInt();
+//            MessagingService.validateMagic(magic);
+//
+//            // message size is not currently used, but if we move to a non-blocking paradigm for the individual file transfers,
+//            // then we would need it (at least for the headers)
+//            int msgSize = input.readInt();
+//
+//            return FileMessageHeader.serializer.deserialize(input, protocolVersion);
+//        }
+//    }
 }

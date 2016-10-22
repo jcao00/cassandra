@@ -21,21 +21,19 @@ package org.apache.cassandra.net.async;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.Uninterruptibles;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.ReferenceCountUtil;
-import org.apache.cassandra.service.StorageService;
 import org.jctools.queues.SpscArrayQueue;
 
 /**
@@ -46,17 +44,37 @@ import org.jctools.queues.SpscArrayQueue;
  */
 public class AppendingByteBufInputStream extends InputStream
 {
+    private static final int DISABLED_WATER_MARK = Integer.MIN_VALUE;
+
     private static final Logger logger = LoggerFactory.getLogger(AppendingByteBufInputStream.class);
     private final byte[] oneByteArray = new byte[1];
     private final SpscArrayQueue<ByteBuf> queue;
-    private final AtomicInteger bufferredByteCount;
     private final int lowWaterMark;
     private final int highWaterMark;
     private final ChannelHandlerContext ctx;
 
     private ByteBuf currentBuf;
-    private int currentBufSize;
     private volatile boolean closed;
+
+    // count of readable bytes -- needed to know if a sufficient number of bytes available for a given read
+
+    /**
+     * Total count of bytes in all {@link ByteBuf}s held by this instance. This is retained so that we know when to enable/disable
+     * the netty channel's auto-read behavior. This value only indicates that total number of bytes in all buffers, and does
+     * not distinguish between read and unread bytes - just anything taking up memory.
+     */
+    private final AtomicInteger liveByteCount;
+
+    /**
+     * The count of readable bytes in all {@link ByteBuf}s held by this instance.
+     */
+    private final AtomicInteger readableByteCount;
+
+
+    public AppendingByteBufInputStream(ChannelHandlerContext ctx)
+    {
+        this(DISABLED_WATER_MARK, DISABLED_WATER_MARK, ctx);
+    }
 
     public AppendingByteBufInputStream(int lowWaterMark, int highWaterMark, ChannelHandlerContext ctx)
     {
@@ -64,7 +82,8 @@ public class AppendingByteBufInputStream extends InputStream
         this.highWaterMark = highWaterMark;
         this.ctx = ctx;
         queue = new SpscArrayQueue<>(1 << 10);
-        bufferredByteCount = new AtomicInteger(0);
+        liveByteCount = new AtomicInteger(0);
+        readableByteCount = new AtomicInteger(0);
     }
 
     public void append(ByteBuf buf) throws IllegalStateException
@@ -74,25 +93,23 @@ public class AppendingByteBufInputStream extends InputStream
             ReferenceCountUtil.release(buf);
             throw new IllegalStateException("stream is already closed, so cannot add another buffer");
         }
-        updateBufferedByteCount(buf.readableBytes());
+        readableByteCount.addAndGet(buf.readableBytes());
+        updateBufferedByteCount(buf.capacity());
         queue.add(buf);
     }
 
     void updateBufferedByteCount(int diff)
     {
-        while (true)
-        {
-            int cur = bufferredByteCount.intValue();
-            if (bufferredByteCount.compareAndSet(cur, cur + diff))
-                break;
-        }
+        int liveCount = liveByteCount.addAndGet(diff);
 
-        // TODO:JEB damnit, this is a data race! fix me
-        int val = bufferredByteCount.get();
-        if (val < lowWaterMark)
-            ctx.channel().config().setAutoRead(true);
-        else if (val > highWaterMark)
-            ctx.channel().config().setAutoRead(false);
+        if (highWaterMark != DISABLED_WATER_MARK)
+        {
+            // TODO:JEB damnit, this is a data race! fix me
+            if (liveCount < lowWaterMark)
+                ctx.channel().config().setAutoRead(true);
+            else if (liveCount > highWaterMark)
+                ctx.channel().config().setAutoRead(false);
+        }
     }
 
     @Override
@@ -126,16 +143,16 @@ public class AppendingByteBufInputStream extends InputStream
                     int toReadCount = Math.min(remaining, currentBuf.readableBytes());
                     currentBuf.readBytes(out, off, toReadCount);
                     remaining -= toReadCount;
+                    readableByteCount.addAndGet(-toReadCount);
 
                     if (remaining == 0)
                         return len;
                     off += toReadCount;
                 }
 
-                updateBufferedByteCount(-currentBufSize);
+                updateBufferedByteCount(-currentBuf.capacity());
                 currentBuf.release();
                 currentBuf = null;
-                currentBufSize = 0;
             }
 
             // the jctools queues are non-blocking, so if the queue is empty, we need some kind of wait mechanism.
@@ -149,19 +166,75 @@ public class AppendingByteBufInputStream extends InputStream
                     throw new EOFException();
             }
             logger.info("got buf from queue, readable byte = {}", currentBuf.readableBytes());
-            currentBufSize = currentBuf.readableBytes();
         }
     }
 
-    public int getBufferredByteCount()
+    public int readableBytes()
     {
-        return bufferredByteCount.get();
+        return readableByteCount.get();
     }
 
     @VisibleForTesting
     public int buffersInQueue()
     {
         return queue.size();
+    }
+
+    // TODO:JEB this isn't quite thread safe ... don't do anything stoopid.
+    // current expected use is only on the producer thread, with no contention. Thus, it needs to be externally synchronized.
+    // Does *not* call BB#release() as we're essentially transferring ownership of the bufs to the caller.
+    public int drain(final long maxBytes, Consumer<ByteBuf> consumer)
+    {
+        int readBytes = 0;  // the count of readableBytes consumed
+        int removedBufSizes = 0; // the total count of bytes from buffers that have been consumed
+        try
+        {
+            if (currentBuf != null)
+            {
+                if (currentBuf.readableBytes() > maxBytes)
+                {
+                    ByteBuf buf = currentBuf.readRetainedSlice((int)maxBytes);
+                    consumer.accept(buf);
+                    readBytes = (int)maxBytes;
+                    return readBytes;
+                }
+
+                readBytes = currentBuf.readableBytes();
+                removedBufSizes = currentBuf.capacity();
+                consumer.accept(currentBuf);
+                currentBuf = null;
+            }
+
+            if (readBytes < maxBytes)
+            {
+                for (Iterator<ByteBuf> iter = queue.iterator(); iter.hasNext(); )
+                {
+                    ByteBuf buf = iter.next();
+                    long remaining = maxBytes - readBytes;
+                    if (buf.readableBytes() > remaining)
+                    {
+                        ByteBuf b = currentBuf.readRetainedSlice((int) remaining);
+                        consumer.accept(b);
+                        readBytes += remaining;
+                        return (int)maxBytes;
+                    }
+
+                    readBytes = buf.readableBytes();
+                    removedBufSizes += buf.capacity();
+                    consumer.accept(buf);
+                    iter.remove();
+                }
+            }
+
+            return readBytes;
+        }
+        finally
+        {
+            if (readBytes > 0)
+                readableByteCount.addAndGet(-readBytes);
+            if (removedBufSizes > 0)
+                updateBufferedByteCount(-removedBufSizes);
+        }
     }
 
     @Override
