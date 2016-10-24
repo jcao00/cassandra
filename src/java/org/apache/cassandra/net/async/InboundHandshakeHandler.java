@@ -29,7 +29,7 @@ import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.streaming.async.StreamingReceiveHandler;
+import org.apache.cassandra.streaming.async.StreamingInboundHandler;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.Pair;
 
@@ -195,7 +195,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
     private List<Pair<String, ChannelHandler>> createStreamingPipelineHandlers(ChannelHandlerContext ctx, int protocolVersion)
     {
         InetSocketAddress address = (InetSocketAddress) ctx.channel().remoteAddress();
-        return Collections.singletonList(Pair.create("streamRecieve", new StreamingReceiveHandler(address, protocolVersion)));
+        return Collections.singletonList(Pair.create("streamInbound", new StreamingInboundHandler(address, protocolVersion)));
     }
 
     /**

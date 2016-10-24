@@ -21,7 +21,6 @@ package org.apache.cassandra.net.async;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -32,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.ReferenceCountUtil;
 import org.jctools.queues.SpscArrayQueue;
@@ -44,10 +44,11 @@ import org.jctools.queues.SpscArrayQueue;
  */
 public class AppendingByteBufInputStream extends InputStream
 {
-    private static final int DISABLED_WATER_MARK = Integer.MIN_VALUE;
-
     private static final Logger logger = LoggerFactory.getLogger(AppendingByteBufInputStream.class);
+
+    private static final int DISABLED_WATER_MARK = Integer.MIN_VALUE;
     private final byte[] oneByteArray = new byte[1];
+
     private final SpscArrayQueue<ByteBuf> queue;
     private final int lowWaterMark;
     private final int highWaterMark;
@@ -93,6 +94,7 @@ public class AppendingByteBufInputStream extends InputStream
             ReferenceCountUtil.release(buf);
             throw new IllegalStateException("stream is already closed, so cannot add another buffer");
         }
+//        logger.debug("**** buffer append readable bytes = {}, capacity = {}", buf.readableBytes(), buf.capacity() );
         readableByteCount.addAndGet(buf.readableBytes());
         updateBufferedByteCount(buf.capacity());
         queue.add(buf);
@@ -104,11 +106,19 @@ public class AppendingByteBufInputStream extends InputStream
 
         if (highWaterMark != DISABLED_WATER_MARK)
         {
+            ChannelConfig config = ctx.channel().config();
+            boolean autoRead = config.isAutoRead();
             // TODO:JEB damnit, this is a data race! fix me
-            if (liveCount < lowWaterMark)
-                ctx.channel().config().setAutoRead(true);
-            else if (liveCount > highWaterMark)
-                ctx.channel().config().setAutoRead(false);
+            if (liveCount < lowWaterMark && !autoRead)
+            {
+//                logger.info("enabling autoRead");
+                config.setAutoRead(true);
+            }
+            else if (liveCount > highWaterMark && autoRead)
+            {
+//                logger.info("disabling autoRead");
+                config.setAutoRead(false);
+            }
         }
     }
 
@@ -161,11 +171,11 @@ public class AppendingByteBufInputStream extends InputStream
             // thus a spinlock may just end up hogging the CPU, which is probably not what we want for a background activity like streaming.
             while ((currentBuf = queue.poll()) == null)
             {
-                Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MICROSECONDS);
+                Uninterruptibles.sleepUninterruptibly(50, TimeUnit.MICROSECONDS);
                 if (Thread.interrupted() || closed)
                     throw new EOFException();
             }
-            logger.info("got buf from queue, readable byte = {}", currentBuf.readableBytes());
+//            logger.info("got buf from queue, readable byte = {}", currentBuf.readableBytes());
         }
     }
 
@@ -207,22 +217,24 @@ public class AppendingByteBufInputStream extends InputStream
 
             if (readBytes < maxBytes)
             {
-                for (Iterator<ByteBuf> iter = queue.iterator(); iter.hasNext(); )
+                ByteBuf buf;
+                // only peek() the queue as we don't know if we should remove the buffer yet
+                while ((buf = queue.peek()) != null)
                 {
-                    ByteBuf buf = iter.next();
                     long remaining = maxBytes - readBytes;
                     if (buf.readableBytes() > remaining)
                     {
-                        ByteBuf b = currentBuf.readRetainedSlice((int) remaining);
+                        ByteBuf b = buf.readRetainedSlice((int) remaining);
                         consumer.accept(b);
                         readBytes += remaining;
                         return (int)maxBytes;
                     }
 
-                    readBytes = buf.readableBytes();
+                    // we know we'll consume the entire buffer, so go ahead and pull it off the queue
+                    buf = queue.poll();
+                    readBytes += buf.readableBytes();
                     removedBufSizes += buf.capacity();
                     consumer.accept(buf);
-                    iter.remove();
                 }
             }
 
@@ -230,10 +242,13 @@ public class AppendingByteBufInputStream extends InputStream
         }
         finally
         {
+//            logger.debug("at end of drain() 1, drainCount = {}, readableByteCount = {}, liveByteCount = {}", drainCount, readableByteCount, liveByteCount);
             if (readBytes > 0)
                 readableByteCount.addAndGet(-readBytes);
             if (removedBufSizes > 0)
                 updateBufferedByteCount(-removedBufSizes);
+//            logger.debug("at end of drain() 2, drainCount = {}, readableByteCount = {}, liveByteCount = {}", drainCount, readableByteCount, liveByteCount);
+//            drainCount++;
         }
     }
 

@@ -79,12 +79,12 @@ public class StreamReader
     }
 
     /**
-     * @param channel where this reads data from
+     * @param inputStream where this reads data from
      * @return SSTable transferred
      * @throws IOException if reading the remote sstable fails. Will throw an RTE if local write fails.
      */
     @SuppressWarnings("resource") // channel needs to remain open, streams on top of it can't be closed
-    public SSTableMultiWriter read(ReadableByteChannel channel) throws IOException
+    public SSTableMultiWriter read(InputStream inputStream) throws IOException
     {
         long totalSize = totalSize();
 
@@ -105,7 +105,7 @@ public class StreamReader
 
         // TODO:JEB temporarily disabling on-fly-compression 'cuz it's a pain in the ass with non-blocking IO.
         // also the more efficient storage thanks to 8099/3.0 makes compression much less of a 'gotta have'
-        TrackedInputStream in = new TrackedInputStream(/*new LZ4BlockInputStream*/(Channels.newInputStream(channel)));
+        TrackedInputStream in = new TrackedInputStream(/*new LZ4BlockInputStream*/inputStream);
         StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata, in, inputVersion, getHeader(cfs.metadata),
                                                                  totalSize, session.planId());
         SSTableMultiWriter writer = null;
