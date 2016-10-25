@@ -57,8 +57,8 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
 
     public static final int CRC_LENGTH = Integer.BYTES;
 
-    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 19;
-    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 22;
+    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 20; // 1 << 19 = 500Kb
+    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 30; // 1 << 22 = 4Mb
 
     enum State { HEADER_MAGIC, HEADER_LENGTH, HEADER_PAYLOAD, PAYLOAD, CLOSED }
 
@@ -99,7 +99,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
     public void handlerAdded(ChannelHandlerContext ctx)
     {
         pendingBuffers = new AppendingByteBufInputStream(ctx);
-        blockingIOThread = new FastThreadLocalThread(new DeserializingSstableTask(ctx, remoteAddress, protocolVersion, transferQueue),
+        blockingIOThread = new FastThreadLocalThread(new DeserializingSstableTask(ctx, remoteAddress, transferQueue),
                                                      String.format("Stream-Inbound-%s", remoteAddress.toString()));
         blockingIOThread.setDaemon(true);
         blockingIOThread.start();
@@ -126,7 +126,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
 
         try
         {
-            channelRead(ctx);
+            parseBufferedBytes(ctx);
         }
         catch (Exception e)
         {
@@ -137,7 +137,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
         }
     }
 
-    private void channelRead(ChannelHandlerContext ctx) throws Exception
+    private void parseBufferedBytes(ChannelHandlerContext ctx) throws Exception
     {
         DataInputPlus in = null;
         switch (state)
@@ -205,7 +205,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
         if (currentTransferContext.remaingPayloadBytesToReceive == 0)
         {
             state = State.HEADER_MAGIC;
-            channelRead(ctx);
+            parseBufferedBytes(ctx);
         }
     }
 
@@ -333,14 +333,12 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
     {
         private final ChannelHandlerContext ctx;
         private final InetSocketAddress remoteAddress;
-        private final int protocolVersion;
         private final BlockingQueue<FileTransferContext> queue;
 
-        DeserializingSstableTask(ChannelHandlerContext ctx, InetSocketAddress remoteAddress, int protocolVersion, BlockingQueue<FileTransferContext> queue)
+        DeserializingSstableTask(ChannelHandlerContext ctx, InetSocketAddress remoteAddress, BlockingQueue<FileTransferContext> queue)
         {
             this.ctx = ctx;
             this.remoteAddress = remoteAddress;
-            this.protocolVersion = protocolVersion;
             this.queue = queue;
         }
 

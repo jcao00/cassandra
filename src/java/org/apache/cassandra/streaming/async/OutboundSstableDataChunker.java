@@ -25,11 +25,12 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
@@ -43,6 +44,7 @@ import org.apache.cassandra.io.util.DataIntegrityMetadata;
 import org.apache.cassandra.io.util.DataIntegrityMetadata.ChecksumValidator;
 import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.streaming.StreamingUtils;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.utils.Pair;
@@ -76,8 +78,16 @@ import org.apache.cassandra.utils.Pair;
  */
 class OutboundSstableDataChunker implements StreamingFileChunker
 {
-    // TODO:JEB rename these, as i just ripped them out of {Compressed}StreamWriter
+    private static final Logger logger = LoggerFactory.getLogger(OutboundSstableDataChunker.class);
+
+    /**
+     * chunk size used on the uncompressed sstable path.
+     */
     public static final int DEFAULT_CHUNK_SIZE = 64 * 1024;
+
+    /**
+     * chunk size used on the compressed ssatble path.
+     */
     public static final int CHUNK_SIZE = 20 * 1024 * 1024;
 
     static final int EOF = -1;
@@ -126,7 +136,7 @@ class OutboundSstableDataChunker implements StreamingFileChunker
         channelProxy = ofm.ref.get().getDataChannel();
         this.sections = ofm.header.sections;
         compressed = false;
-        totalSize = totalSize(sections);
+        totalSize = StreamingUtils.totalSize(sections);
 
         if (new File(ofm.ref.get().descriptor.filenameFor(Component.CRC)).exists())
         {
@@ -138,14 +148,6 @@ class OutboundSstableDataChunker implements StreamingFileChunker
             validator = null;
             chunkSize = DEFAULT_CHUNK_SIZE;
         }
-    }
-
-    private static long totalSize(Collection<Pair<Long, Long>> sections)
-    {
-        long size = 0;
-        for (Pair<Long, Long> section : sections)
-            size += section.right - section.left;
-        return size;
     }
 
     OutboundSstableDataChunker(ChannelHandlerContext ctx, OutgoingFileMessage ofm, CompressionInfo compressionInfo, boolean secureTransfer)
@@ -169,17 +171,8 @@ class OutboundSstableDataChunker implements StreamingFileChunker
 
         validator = null;
         sections = getTransferSections(compressionInfo.chunks);
-        totalSize = totalSize(compressionInfo.chunks);
+        totalSize = StreamingUtils.totalSize(compressionInfo.chunks);
         chunkSize = CHUNK_SIZE;
-    }
-
-    private static long totalSize(CompressionMetadata.Chunk[] chunks)
-    {
-        long size = 0;
-        // calculate total length of transferring chunks
-        for (CompressionMetadata.Chunk chunk : chunks)
-            size += chunk.length + 4; // 4 bytes for CRC
-        return size;
     }
 
     // chunks are assumed to be sorted by offset
@@ -223,7 +216,7 @@ class OutboundSstableDataChunker implements StreamingFileChunker
         this.sections = sections;
         this.validator = validator;
         this.channelProxy = proxy;
-        totalSize = totalSize(sections);
+        totalSize = StreamingUtils.totalSize(sections);
 
         compressed = false;
         secureTransfer = false;
@@ -309,8 +302,19 @@ class OutboundSstableDataChunker implements StreamingFileChunker
             nextStartPosition = nextEndPosition;
         }
 
-        final long length = currentSection.right - nextStartPosition;
-        final int toTransfer = (int) Math.min(chunkSize, length);
+        final int toTransfer;
+        // if we're transferring a compressed sstable without SSL/TLS, send the entire section down (let DefaultFileRegion deal chunking it).
+        // with DefaultFileRegion, no bytes are read into user space, and thus do not contribute toward the ChannelOutboundBuffer size & the high water mark
+        if (compressed && !secureTransfer)
+        {
+            toTransfer = (int)(currentSection.right - currentSection.left);
+        }
+        else
+        {
+            final long length = currentSection.right - nextStartPosition;
+            toTransfer = (int) Math.min(chunkSize, length);
+        }
+
         nextEndPosition = nextStartPosition + toTransfer;
 
         if (validator != null)

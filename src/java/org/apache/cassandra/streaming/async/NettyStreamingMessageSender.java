@@ -212,6 +212,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         if (DatabaseDescriptor.getInternodeSendBufferSize() > 0)
             sendBufferSize = DatabaseDescriptor.getInternodeSendBufferSize();
 
+        // TODO:JEB set the so_snd buffer size correctly!!!!!!
+        // TODO:JEB set the high/low water marks
         Bootstrap bootstrap = NettyFactory.createOutboundBootstrap(initializer, sendBufferSize, false, Optional.empty());
         OutboundConnector connector = new OutboundConnector(bootstrap, localAddress, remoteAddress);
         connector.connect();

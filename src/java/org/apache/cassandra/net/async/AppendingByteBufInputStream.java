@@ -21,12 +21,12 @@ package org.apache.cassandra.net.async;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.function.Consumer;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,7 +34,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.ReferenceCountUtil;
-import org.jctools.queues.SpscArrayQueue;
+import io.netty.util.internal.PlatformDependent;
 
 /**
  * An {@link InputStream} that blocks on a {@link #queue} for {@link ByteBuf}s. An instance is responsibile for the reference
@@ -49,7 +49,7 @@ public class AppendingByteBufInputStream extends InputStream
     private static final int DISABLED_WATER_MARK = Integer.MIN_VALUE;
     private final byte[] oneByteArray = new byte[1];
 
-    private final SpscArrayQueue<ByteBuf> queue;
+    private final BlockingQueue<ByteBuf> queue;
     private final int lowWaterMark;
     private final int highWaterMark;
     private final ChannelHandlerContext ctx;
@@ -69,8 +69,18 @@ public class AppendingByteBufInputStream extends InputStream
     /**
      * The count of readable bytes in all {@link ByteBuf}s held by this instance.
      */
-    private final AtomicInteger readableByteCount;
+    private volatile int readableByteCount;
+    private static final AtomicIntegerFieldUpdater<AppendingByteBufInputStream> READABLE_BYTE_COUNT_UPDATER;
 
+    static
+    {
+        @SuppressWarnings("rawtypes")
+        AtomicIntegerFieldUpdater<AppendingByteBufInputStream> readableByteCountUpdater =
+        PlatformDependent.newAtomicIntegerFieldUpdater(AppendingByteBufInputStream.class, "readableByteCount");
+        if (readableByteCountUpdater == null)
+            readableByteCountUpdater = AtomicIntegerFieldUpdater.newUpdater(AppendingByteBufInputStream.class, "readableByteCount");
+        READABLE_BYTE_COUNT_UPDATER = readableByteCountUpdater;
+    }
 
     public AppendingByteBufInputStream(ChannelHandlerContext ctx)
     {
@@ -82,9 +92,8 @@ public class AppendingByteBufInputStream extends InputStream
         this.lowWaterMark = lowWaterMark;
         this.highWaterMark = highWaterMark;
         this.ctx = ctx;
-        queue = new SpscArrayQueue<>(1 << 10);
+        queue = new LinkedBlockingQueue<>();
         liveByteCount = new AtomicInteger(0);
-        readableByteCount = new AtomicInteger(0);
     }
 
     public void append(ByteBuf buf) throws IllegalStateException
@@ -95,7 +104,7 @@ public class AppendingByteBufInputStream extends InputStream
             throw new IllegalStateException("stream is already closed, so cannot add another buffer");
         }
 //        logger.debug("**** buffer append readable bytes = {}, capacity = {}", buf.readableBytes(), buf.capacity() );
-        readableByteCount.addAndGet(buf.readableBytes());
+        READABLE_BYTE_COUNT_UPDATER.addAndGet(this, buf.readableBytes());
         updateBufferedByteCount(buf.capacity());
         queue.add(buf);
     }
@@ -153,7 +162,7 @@ public class AppendingByteBufInputStream extends InputStream
                     int toReadCount = Math.min(remaining, currentBuf.readableBytes());
                     currentBuf.readBytes(out, off, toReadCount);
                     remaining -= toReadCount;
-                    readableByteCount.addAndGet(-toReadCount);
+                    READABLE_BYTE_COUNT_UPDATER.addAndGet(this, -toReadCount);
 
                     if (remaining == 0)
                         return len;
@@ -165,29 +174,20 @@ public class AppendingByteBufInputStream extends InputStream
                 currentBuf = null;
             }
 
-            // the jctools queues are non-blocking, so if the queue is empty, we need some kind of wait mechanism.
-            // we could try a spinlock, but as we're waiting for network data (packet arrival, kernel handling of TCP),
-            // it's not as predictable as just waiting for the computation from another CPU or thread.
-            // thus a spinlock may just end up hogging the CPU, which is probably not what we want for a background activity like streaming.
-            while ((currentBuf = queue.poll()) == null)
+            try
             {
-                Uninterruptibles.sleepUninterruptibly(50, TimeUnit.MICROSECONDS);
-                if (Thread.interrupted() || closed)
-                    throw new EOFException();
+                currentBuf = queue.take();
             }
-//            logger.info("got buf from queue, readable byte = {}", currentBuf.readableBytes());
+            catch (InterruptedException ie)
+            {
+                throw new EOFException();
+            }
         }
     }
 
     public int readableBytes()
     {
-        return readableByteCount.get();
-    }
-
-    @VisibleForTesting
-    public int buffersInQueue()
-    {
-        return queue.size();
+        return readableByteCount;
     }
 
     // TODO:JEB this isn't quite thread safe ... don't do anything stoopid.
@@ -242,13 +242,10 @@ public class AppendingByteBufInputStream extends InputStream
         }
         finally
         {
-//            logger.debug("at end of drain() 1, drainCount = {}, readableByteCount = {}, liveByteCount = {}", drainCount, readableByteCount, liveByteCount);
             if (readBytes > 0)
-                readableByteCount.addAndGet(-readBytes);
+                READABLE_BYTE_COUNT_UPDATER.addAndGet(this, -readBytes);
             if (removedBufSizes > 0)
                 updateBufferedByteCount(-removedBufSizes);
-//            logger.debug("at end of drain() 2, drainCount = {}, readableByteCount = {}, liveByteCount = {}", drainCount, readableByteCount, liveByteCount);
-//            drainCount++;
         }
     }
 

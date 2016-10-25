@@ -286,6 +286,7 @@ class StreamingSendHandler extends ChannelDuplexHandler
     @Override
     public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception
     {
+        // TODO:JEB this needs help!!
         logger.info("SHH.channelWritabilityChanged: {}", ctx.channel().isWritable());
 
         // TODO:JEB check state, make sure we *can* send a message (and that we're currently in the middle of sending one)
