@@ -43,7 +43,7 @@ public class AppendingByteBufInputStreamTest
     {
         EmbeddedChannel channel = new EmbeddedChannel(new Lz4FrameEncoder());
         ctx = channel.pipeline().firstContext();
-        inputStream = new AppendingByteBufInputStream(MAX_BUFFERED_BYTES, MAX_BUFFERED_BYTES, ctx);
+        inputStream = new AppendingByteBufInputStream("", MAX_BUFFERED_BYTES, MAX_BUFFERED_BYTES, ctx, false);
     }
 
     @After

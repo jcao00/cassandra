@@ -31,8 +31,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.ChannelConfig;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.PlatformDependent;
 
@@ -46,13 +44,9 @@ public class AppendingByteBufInputStream extends InputStream
 {
     private static final Logger logger = LoggerFactory.getLogger(AppendingByteBufInputStream.class);
 
-    private static final int DISABLED_WATER_MARK = Integer.MIN_VALUE;
     private final byte[] oneByteArray = new byte[1];
 
     private final BlockingQueue<ByteBuf> queue;
-    private final int lowWaterMark;
-    private final int highWaterMark;
-    private final ChannelHandlerContext ctx;
 
     private ByteBuf currentBuf;
     private volatile boolean closed;
@@ -82,16 +76,8 @@ public class AppendingByteBufInputStream extends InputStream
         READABLE_BYTE_COUNT_UPDATER = readableByteCountUpdater;
     }
 
-    public AppendingByteBufInputStream(ChannelHandlerContext ctx)
+    public AppendingByteBufInputStream()
     {
-        this(DISABLED_WATER_MARK, DISABLED_WATER_MARK, ctx);
-    }
-
-    public AppendingByteBufInputStream(int lowWaterMark, int highWaterMark, ChannelHandlerContext ctx)
-    {
-        this.lowWaterMark = lowWaterMark;
-        this.highWaterMark = highWaterMark;
-        this.ctx = ctx;
         queue = new LinkedBlockingQueue<>();
         liveByteCount = new AtomicInteger(0);
     }
@@ -111,24 +97,7 @@ public class AppendingByteBufInputStream extends InputStream
 
     void updateBufferedByteCount(int diff)
     {
-        int liveCount = liveByteCount.addAndGet(diff);
-
-        if (highWaterMark != DISABLED_WATER_MARK)
-        {
-            ChannelConfig config = ctx.channel().config();
-            boolean autoRead = config.isAutoRead();
-            // TODO:JEB damnit, this is a data race! fix me
-            if (liveCount < lowWaterMark && !autoRead)
-            {
-//                logger.info("enabling autoRead");
-                config.setAutoRead(true);
-            }
-            else if (liveCount > highWaterMark && autoRead)
-            {
-//                logger.info("disabling autoRead");
-                config.setAutoRead(false);
-            }
-        }
+        liveByteCount.addAndGet(diff);
     }
 
     @Override
@@ -145,19 +114,13 @@ public class AppendingByteBufInputStream extends InputStream
 
     public int read(byte out[], int off, final int len) throws IOException
     {
-        if (out == null)
-            throw new NullPointerException();
-        else if (off < 0 || len < 0 || len > out.length - off)
-            throw new IndexOutOfBoundsException();
-        else if (len == 0)
-            return 0;
-
         int remaining = len;
         while (true)
         {
             if (currentBuf != null)
             {
-                if (currentBuf.isReadable())
+                int bufReadableBytes = currentBuf.readableBytes();
+                if (bufReadableBytes > 0)
                 {
                     int toReadCount = Math.min(remaining, currentBuf.readableBytes());
                     currentBuf.readBytes(out, off, toReadCount);
@@ -165,7 +128,16 @@ public class AppendingByteBufInputStream extends InputStream
                     READABLE_BYTE_COUNT_UPDATER.addAndGet(this, -toReadCount);
 
                     if (remaining == 0)
+                    {
+                        // TODO:JEB refactor this code - to avoid duplication
+                        if (bufReadableBytes - toReadCount == 0)
+                        {
+                            updateBufferedByteCount(-currentBuf.capacity());
+                            currentBuf.release();
+                            currentBuf = null;
+                        }
                         return len;
+                    }
                     off += toReadCount;
                 }
 

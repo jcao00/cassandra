@@ -17,33 +17,43 @@
  */
 package org.apache.cassandra.streaming;
 
-import java.io.*;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
+import java.io.File;
+import java.io.IOError;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Collection;
 import java.util.UUID;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.UnmodifiableIterator;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
-import org.apache.cassandra.db.*;
-import org.apache.cassandra.db.rows.*;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.DeletionTime;
+import org.apache.cassandra.db.Directories;
+import org.apache.cassandra.db.Keyspace;
+import org.apache.cassandra.db.PartitionColumns;
+import org.apache.cassandra.db.SerializationHeader;
+import org.apache.cassandra.db.rows.EncodingStats;
+import org.apache.cassandra.db.rows.Row;
+import org.apache.cassandra.db.rows.SerializationHelper;
+import org.apache.cassandra.db.rows.Unfiltered;
+import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.SSTableSimpleIterator;
 import org.apache.cassandra.io.sstable.format.RangeAwareSSTableWriter;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.Version;
-import org.apache.cassandra.io.util.RewindableDataInputStreamPlus;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.RewindableDataInputStreamPlus;
+import org.apache.cassandra.io.util.TrackedInputStream;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.io.util.TrackedInputStream;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
@@ -86,8 +96,7 @@ public class StreamReader
     @SuppressWarnings("resource") // channel needs to remain open, streams on top of it can't be closed
     public SSTableMultiWriter read(InputStream inputStream) throws IOException
     {
-        long totalSize = totalSize();
-
+        long totalSize = StreamingUtils.totalSize(sections);
         Pair<String, String> kscf = Schema.instance.getCF(cfId);
         ColumnFamilyStore cfs = null;
         if (kscf != null)
@@ -154,11 +163,6 @@ public class StreamReader
         RangeAwareSSTableWriter writer = new RangeAwareSSTableWriter(cfs, estimatedKeys, repairedAt, format, sstableLevel, totalSize, session.getTransaction(cfId), getHeader(cfs.metadata));
         StreamHook.instance.reportIncomingFile(cfs, writer, session, fileSeqNum);
         return writer;
-    }
-
-    protected long totalSize()
-    {
-        return StreamingUtils.totalSize(sections);
     }
 
     protected void writePartition(StreamDeserializer deserializer, SSTableMultiWriter writer) throws IOException

@@ -20,6 +20,7 @@ package org.apache.cassandra.streaming.async;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -57,8 +58,8 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
 
     public static final int CRC_LENGTH = Integer.BYTES;
 
-    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 20; // 1 << 19 = 500Kb
-    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 30; // 1 << 22 = 4Mb
+    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 19; // 1 << 19 = 500Kb
+    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 22; // 1 << 22 = 4Mb
 
     enum State { HEADER_MAGIC, HEADER_LENGTH, HEADER_PAYLOAD, PAYLOAD, CLOSED }
 
@@ -98,7 +99,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
     @SuppressWarnings("resource")
     public void handlerAdded(ChannelHandlerContext ctx)
     {
-        pendingBuffers = new AppendingByteBufInputStream(ctx);
+        pendingBuffers = new AppendingByteBufInputStream();
         blockingIOThread = new FastThreadLocalThread(new DeserializingSstableTask(ctx, remoteAddress, transferQueue),
                                                      String.format("Stream-Inbound-%s", remoteAddress.toString()));
         blockingIOThread.setDaemon(true);
@@ -114,15 +115,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
             return;
         }
 
-        // perform checks on the buffer up front to avoid doing them later (and possibly duplicating the work)
-        ByteBuf buf = (ByteBuf) message;
-        if (!buf.isReadable())
-        {
-            buf.release();
-            return;
-        }
-
-        pendingBuffers.append(buf);
+        pendingBuffers.append((ByteBuf) message);
 
         try
         {
@@ -193,10 +186,11 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
             return;
 
         int drainedBytes;
-        if (!currentTransferContext.header.isCompressed())
-            drainedBytes = pendingBuffers.drain(currentTransferContext.remaingPayloadBytesToReceive, byteBuf -> currentTransferContext.inputStream.append(byteBuf));
-        else
+//        if (currentTransferContext.header.isCompressed())
             drainedBytes = drain(ctx, currentTransferContext, pendingBuffers, byteBuf -> currentTransferContext.inputStream.append(byteBuf));
+
+//        else
+//            drainedBytes = pendingBuffers.drain(currentTransferContext.remaingPayloadBytesToReceive, byteBuf -> currentTransferContext.inputStream.append(byteBuf));
 
         currentTransferContext.remaingPayloadBytesToReceive -= drainedBytes;
 
@@ -212,7 +206,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
     /**
      * Attempt to decompress as many chunks from the {@code pendingBuffers} as possible.
      */
-    private static int drain(ChannelHandlerContext ctx, FileTransferContext transferContext, AppendingByteBufInputStream pendingBuffers, Consumer<ByteBuf> consumer) throws IOException
+    private static int drain(ChannelHandlerContext ctx, FileTransferContext transferContext, AppendingByteBufInputStream pendingBuffers, Consumer<byte[]> consumer) throws IOException
     {
         CompressionInfo compressionInfo = transferContext.header.compressionInfo;
         // try to decompress as many blocks as possible
@@ -245,7 +239,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
                 compressedChunk = ByteToMessageDecoder.MERGE_CUMULATOR.cumulate(ctx.alloc(), compressedChunk, aggregatedBuf);
             }
 
-            ByteBuf decompressedChunk = decompress(ctx, compressionInfo, compressedChunk, chunk.length);
+            byte[] decompressedChunk = decompress(ctx, compressionInfo, compressedChunk, chunk.length);
             consumer.accept(decompressedChunk);
             transferContext.currentCompressionChunk++;
             consumedBytes += readLength;
@@ -253,15 +247,16 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
         return consumedBytes;
     }
 
-    private static ByteBuf decompress(ChannelHandlerContext ctx, CompressionInfo compressionInfo, ByteBuf compressedChunk, int chunkCompressedLength) throws IOException
+    private static byte[] decompress(ChannelHandlerContext ctx, CompressionInfo compressionInfo, ByteBuf compressedChunk, int chunkCompressedLength) throws IOException
     {
         ByteBuffer srcBuffer = compressedChunk.nioBuffer(compressedChunk.readerIndex(), chunkCompressedLength);
         final int chunkUncompressedLength = compressionInfo.parameters.chunkLength();
-        ByteBuf decompressedChunk = ctx.alloc().buffer(chunkUncompressedLength, chunkUncompressedLength);
-        ByteBuffer destBuffer = decompressedChunk.nioBuffer(0, chunkUncompressedLength);
+//        ByteBuf decompressedChunk = ctx.alloc().buffer(chunkUncompressedLength, chunkUncompressedLength);
+//        ByteBuffer destBuffer = decompressedChunk.nioBuffer(0, chunkUncompressedLength);
+        ByteBuffer destBuffer = ByteBuffer.allocate(chunkUncompressedLength);
 
         compressionInfo.parameters.getSstableCompressor().uncompress(srcBuffer, destBuffer);
-        decompressedChunk.writerIndex(destBuffer.position());
+//        decompressedChunk.writerIndex(destBuffer.position());
         compressedChunk.readerIndex(compressedChunk.readerIndex() + chunkCompressedLength); // not sure this one is necessary
 
         // TODO:JEB put this shit back in
@@ -275,7 +270,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
 //                    throw new IOException("CRC unmatched");
 //            }
 
-        return decompressedChunk;
+        return destBuffer.array();
     }
 
     @Override
@@ -305,9 +300,10 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
     private static class FileTransferContext
     {
         /**
-         * A queue for the incoming {@link ByteBuf}s, which will be processed by the {@link #blockingIOThread}.
+         * A queue for the incoming {@link ByteBuf}s, which will be processed by the {@link #blockingIOThread}. Items in this queue
+         * live longer than {@link StreamingInboundHandler#pendingBuffers}, and hence we set the low/high water marks from this instance.
          */
-        private final AppendingByteBufInputStream inputStream;
+        private final AppendingByteArrayInputStream inputStream;
 
         private int headerLength;
         private FileMessageHeader header;
@@ -322,12 +318,12 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
 
         private FileTransferContext(ChannelHandlerContext ctx)
         {
-            inputStream = new AppendingByteBufInputStream(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx);
+            inputStream = new AppendingByteArrayInputStream(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx);
         }
     }
 
     /**
-     * A task that can execute the blocking deserialization behavior of {@link StreamReader#read(java.io.InputStream)}.
+     * A task that can execute the blocking deserialization behavior of {@link StreamReader#read(InputStream)} )} )}.
      */
     private class DeserializingSstableTask implements Runnable
     {
@@ -357,6 +353,8 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
                     header = transferContext.header;
 
                     StreamReader reader = new StreamReader(header, transferContext.session);
+                    logger.info("starting stream read");
+//                    long totalSize = StreamingUtils.totalSize(transferContext.header.sections);
                     SSTableMultiWriter ssTableMultiWriter = reader.read(transferContext.inputStream);
                     transferContext.session.receive(new IncomingFileMessage(ssTableMultiWriter, header));
                 }
