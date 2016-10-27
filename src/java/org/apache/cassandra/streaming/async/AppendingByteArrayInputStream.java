@@ -30,8 +30,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
+import org.apache.cassandra.utils.concurrent.Locks;
 
 public class AppendingByteArrayInputStream extends InputStream
 {
@@ -74,22 +74,22 @@ public class AppendingByteArrayInputStream extends InputStream
 
     void updateBufferedByteCount(int diff)
     {
-        int liveCount = liveByteCount.addAndGet(diff);
+        int liveBytes = liveByteCount.addAndGet(diff);
 
         if (highWaterMark != DISABLED_WATER_MARK)
         {
-            ChannelConfig config = ctx.channel().config();
-            boolean autoRead = config.isAutoRead();
-            // TODO:JEB damnit, this is a data race! fix me
-            if (liveCount < lowWaterMark && !autoRead)
+            // TODO:JEB document this
+            Locks.monitorEnterUnsafe(this);
+            try
             {
-//                logger.info("enabling autoRead");
-                config.setAutoRead(true);
+                if (liveBytes < lowWaterMark)
+                    ctx.channel().config().setAutoRead(true);
+                else if (liveBytes > highWaterMark)
+                    ctx.channel().config().setAutoRead(false);
             }
-            else if (liveCount > highWaterMark && autoRead)
+            finally
             {
-//                logger.info("disabling autoRead");
-                config.setAutoRead(false);
+                Locks.monitorExitUnsafe(this);
             }
         }
     }
@@ -97,11 +97,16 @@ public class AppendingByteArrayInputStream extends InputStream
     @Override
     public int read() throws IOException
     {
-        if (currentBuf != null && currentPosition < currentBuf.length)
+        if (currentBuf != null)
         {
-            byte b = currentBuf[currentPosition];
-            currentPosition++;
-            return b & 0xFF;
+            if (currentPosition < currentBuf.length)
+            {
+                byte b = currentBuf[currentPosition];
+                currentPosition++;
+                return b & 0xFF;
+            }
+
+            updateBufferedByteCount(-currentBuf.length);
         }
 
         try
@@ -119,15 +124,8 @@ public class AppendingByteArrayInputStream extends InputStream
         return b & 0xFF;
     }
 
-    public int read(byte out[], int off, final int len) throws IOException
+    public int read(byte[] out, int off, final int len) throws IOException
     {
-//        if (out == null)
-//            throw new NullPointerException();
-//        else if (off < 0 || len < 0 || len > out.length - off)
-//            throw new IndexOutOfBoundsException();
-//        else if (len == 0)
-//            return 0;
-
         int remaining = len;
         while (true)
         {

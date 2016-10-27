@@ -218,7 +218,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         OutboundConnector connector = new OutboundConnector(bootstrap, localAddress, remoteAddress);
         connector.connect();
 
-        if (!blocker.await() || blocker.result.result != ConnectionHandshakeResult.Result.GOOD)
+        // TODO:JEB fix this?!?!?
+        if (!blocker.await() )//|| blocker.result.result != ConnectionHandshakeResult.Result.GOOD)
         {
             connector.cancel();
             throw new RuntimeException("failed to make streaming connection to " + remoteAddress);
@@ -321,6 +322,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             tryPublishFromQueue(channel);
             return true;
         }
+
+        logger.error("future = {}, cause = {}", future, future.cause());
 
         // TODO:JEB re-evaluate this error condition
         // we only want to call session.onError when the socket is still open

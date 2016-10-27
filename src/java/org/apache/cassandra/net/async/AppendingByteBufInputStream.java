@@ -23,9 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,15 +49,6 @@ public class AppendingByteBufInputStream extends InputStream
     private ByteBuf currentBuf;
     private volatile boolean closed;
 
-    // count of readable bytes -- needed to know if a sufficient number of bytes available for a given read
-
-    /**
-     * Total count of bytes in all {@link ByteBuf}s held by this instance. This is retained so that we know when to enable/disable
-     * the netty channel's auto-read behavior. This value only indicates that total number of bytes in all buffers, and does
-     * not distinguish between read and unread bytes - just anything taking up memory.
-     */
-    private final AtomicInteger liveByteCount;
-
     /**
      * The count of readable bytes in all {@link ByteBuf}s held by this instance.
      */
@@ -79,7 +68,6 @@ public class AppendingByteBufInputStream extends InputStream
     public AppendingByteBufInputStream()
     {
         queue = new LinkedBlockingQueue<>();
-        liveByteCount = new AtomicInteger(0);
     }
 
     public void append(ByteBuf buf) throws IllegalStateException
@@ -89,15 +77,8 @@ public class AppendingByteBufInputStream extends InputStream
             ReferenceCountUtil.release(buf);
             throw new IllegalStateException("stream is already closed, so cannot add another buffer");
         }
-//        logger.debug("**** buffer append readable bytes = {}, capacity = {}", buf.readableBytes(), buf.capacity() );
         READABLE_BYTE_COUNT_UPDATER.addAndGet(this, buf.readableBytes());
-        updateBufferedByteCount(buf.capacity());
         queue.add(buf);
-    }
-
-    void updateBufferedByteCount(int diff)
-    {
-        liveByteCount.addAndGet(diff);
     }
 
     @Override
@@ -132,7 +113,6 @@ public class AppendingByteBufInputStream extends InputStream
                         // TODO:JEB refactor this code - to avoid duplication
                         if (bufReadableBytes - toReadCount == 0)
                         {
-                            updateBufferedByteCount(-currentBuf.capacity());
                             currentBuf.release();
                             currentBuf = null;
                         }
@@ -141,7 +121,6 @@ public class AppendingByteBufInputStream extends InputStream
                     off += toReadCount;
                 }
 
-                updateBufferedByteCount(-currentBuf.capacity());
                 currentBuf.release();
                 currentBuf = null;
             }
@@ -160,65 +139,6 @@ public class AppendingByteBufInputStream extends InputStream
     public int readableBytes()
     {
         return readableByteCount;
-    }
-
-    // TODO:JEB this isn't quite thread safe ... don't do anything stoopid.
-    // current expected use is only on the producer thread, with no contention. Thus, it needs to be externally synchronized.
-    // Does *not* call BB#release() as we're essentially transferring ownership of the bufs to the caller.
-    public int drain(final long maxBytes, Consumer<ByteBuf> consumer)
-    {
-        int readBytes = 0;  // the count of readableBytes consumed
-        int removedBufSizes = 0; // the total count of bytes from buffers that have been consumed
-        try
-        {
-            if (currentBuf != null)
-            {
-                if (currentBuf.readableBytes() > maxBytes)
-                {
-                    ByteBuf buf = currentBuf.readRetainedSlice((int)maxBytes);
-                    consumer.accept(buf);
-                    readBytes = (int)maxBytes;
-                    return readBytes;
-                }
-
-                readBytes = currentBuf.readableBytes();
-                removedBufSizes = currentBuf.capacity();
-                consumer.accept(currentBuf);
-                currentBuf = null;
-            }
-
-            if (readBytes < maxBytes)
-            {
-                ByteBuf buf;
-                // only peek() the queue as we don't know if we should remove the buffer yet
-                while ((buf = queue.peek()) != null)
-                {
-                    long remaining = maxBytes - readBytes;
-                    if (buf.readableBytes() > remaining)
-                    {
-                        ByteBuf b = buf.readRetainedSlice((int) remaining);
-                        consumer.accept(b);
-                        readBytes += remaining;
-                        return (int)maxBytes;
-                    }
-
-                    // we know we'll consume the entire buffer, so go ahead and pull it off the queue
-                    buf = queue.poll();
-                    readBytes += buf.readableBytes();
-                    removedBufSizes += buf.capacity();
-                    consumer.accept(buf);
-                }
-            }
-
-            return readBytes;
-        }
-        finally
-        {
-            if (readBytes > 0)
-                READABLE_BYTE_COUNT_UPDATER.addAndGet(this, -readBytes);
-            if (removedBufSizes > 0)
-                updateBufferedByteCount(-removedBufSizes);
-        }
     }
 
     @Override

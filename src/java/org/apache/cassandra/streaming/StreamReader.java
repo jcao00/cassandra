@@ -22,6 +22,7 @@ import java.io.IOError;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collection;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.google.common.base.Throwables;
@@ -52,6 +53,7 @@ import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.RewindableDataInputStreamPlus;
 import org.apache.cassandra.io.util.TrackedInputStream;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -73,6 +75,7 @@ public class StreamReader
     protected final int sstableLevel;
     protected final SerializationHeader.Component header;
     protected final int fileSeqNum;
+    private final CompressionInfo compressionInfo;
 
     public StreamReader(FileMessageHeader header, StreamSession session)
     {
@@ -86,6 +89,7 @@ public class StreamReader
         this.sstableLevel = header.sstableLevel;
         this.header = header.header;
         this.fileSeqNum = header.sequenceNumber;
+        this.compressionInfo = header.getCompressionInfo();
     }
 
     /**
@@ -94,26 +98,16 @@ public class StreamReader
      * @throws IOException if reading the remote sstable fails. Will throw an RTE if local write fails.
      */
     @SuppressWarnings("resource") // channel needs to remain open, streams on top of it can't be closed
-    public SSTableMultiWriter read(InputStream inputStream) throws IOException
+    public SSTableMultiWriter read(ColumnFamilyStore cfs, InputStream inputStream) throws IOException
     {
-        long totalSize = StreamingUtils.totalSize(sections);
-        Pair<String, String> kscf = Schema.instance.getCF(cfId);
-        ColumnFamilyStore cfs = null;
-        if (kscf != null)
-            cfs = Keyspace.open(kscf.left).getColumnFamilyStore(kscf.right);
-
-        if (kscf == null || cfs == null)
-        {
-            // schema was dropped during streaming
-            throw new IOException("CF " + cfId + " was dropped during streaming");
-        }
-
-        logger.debug("[Stream #{}] Start receiving file #{} from {}, repairedAt = {}, size = {}, ks = '{}', table = '{}'.",
-                     session.planId(), fileSeqNum, session.peer, repairedAt, totalSize, cfs.keyspace.getName(),
-                     cfs.getColumnFamilyName());
+        long totalSize = compressionInfo == null ? StreamingUtils.totalSize(sections) : StreamingUtils.totalSize(compressionInfo.chunks);
 
         // TODO:JEB temporarily disabling on-fly-compression 'cuz it's a pain in the ass with non-blocking IO.
         // also the more efficient storage thanks to 8099/3.0 makes compression much less of a 'gotta have'
+        // TODO:JEB get rid of TrackedInputStream ... less virtual function calls on the hot path the better ;)
+        logger.debug("[Stream #{}] Start receiving file #{} from {}, repairedAt = {}, size = {}, ks = '{}', table = '{}'.",
+                     session.planId(), fileSeqNum, session.peer, repairedAt, totalSize, cfs.keyspace.getName(),
+                     cfs.getColumnFamilyName());
         TrackedInputStream in = new TrackedInputStream(/*new LZ4BlockInputStream*/inputStream);
         StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata, in, inputVersion, getHeader(cfs.metadata),
                                                                  totalSize, session.planId());

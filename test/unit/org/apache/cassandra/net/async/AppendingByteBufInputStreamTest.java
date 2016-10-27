@@ -27,23 +27,16 @@ import org.junit.Test;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.embedded.EmbeddedChannel;
-import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import org.apache.cassandra.io.util.DataInputBuffer;
 
 public class AppendingByteBufInputStreamTest
 {
-    private static final int MAX_BUFFERED_BYTES = 1 << 10;
     private AppendingByteBufInputStream inputStream;
-    private ChannelHandlerContext ctx;
 
     @Before
     public void setUp()
     {
-        EmbeddedChannel channel = new EmbeddedChannel(new Lz4FrameEncoder());
-        ctx = channel.pipeline().firstContext();
-        inputStream = new AppendingByteBufInputStream("", MAX_BUFFERED_BYTES, MAX_BUFFERED_BYTES, ctx, false);
+        inputStream = new AppendingByteBufInputStream();
     }
 
     @After

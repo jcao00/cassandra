@@ -42,7 +42,7 @@ public class StreamingUtils
         long size = 0;
         // calculate total length of transferring chunks
         for (CompressionMetadata.Chunk chunk : chunks)
-            size += chunk.length + StreamingInboundHandler.CRC_LENGTH;
+            size += chunk.length + StreamingInboundHandler.CHECKSUM_LENGTH;
         return size;
     }
 }

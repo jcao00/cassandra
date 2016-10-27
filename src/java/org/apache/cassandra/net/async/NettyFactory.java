@@ -165,7 +165,8 @@ public final class NettyFactory
         Bootstrap bootstrap = new Bootstrap().group(OUTBOUND_GROUP)
                                              .channel(transport)
                                              .option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT)
-                                             .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000)
+// TODO:JEB fix this ?!?!?!?
+//                                             .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000)
                                              .option(ChannelOption.SO_KEEPALIVE, true)
                                              .option(ChannelOption.SO_REUSEADDR, true)
                                              .option(ChannelOption.SO_SNDBUF, sendBufferSize)
