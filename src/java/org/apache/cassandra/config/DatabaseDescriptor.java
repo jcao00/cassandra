@@ -43,6 +43,7 @@ import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.auth.IRoleManager;
 import org.apache.cassandra.config.Config.CommitLogSync;
 import org.apache.cassandra.config.Config.RequestSchedulerId;
+import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSWriteError;
@@ -2397,5 +2398,25 @@ public class DatabaseDescriptor
     public static BackPressureStrategy getBackPressureStrategy()
     {
         return backPressureStrategy;
+    }
+
+    public static ConsistencyLevel getAuthReadConsistencyLevel()
+    {
+        return conf.auth_read_consistency_level;
+    }
+
+    public static void setAuthReadConsistencyLevel(ConsistencyLevel consistencyLevel)
+    {
+        conf.auth_read_consistency_level = consistencyLevel;
+    }
+
+    public static ConsistencyLevel getAuthWriteConsistencyLevel()
+    {
+        return conf.auth_write_consistency_level;
+    }
+
+    public static void setAuthWriteConsistencyLevel(ConsistencyLevel consistencyLevel)
+    {
+        conf.auth_write_consistency_level = consistencyLevel;
     }
 }
