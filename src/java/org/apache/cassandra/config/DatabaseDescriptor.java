@@ -41,6 +41,7 @@ import org.apache.cassandra.config.Config.RequestSchedulerId;
 import org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -1999,4 +2000,23 @@ public class DatabaseDescriptor
         return conf.gc_warn_threshold_in_ms;
     }
 
+    public static ConsistencyLevel getAuthReadConsistencyLevel()
+    {
+        return conf.auth_read_consistency_level;
+    }
+
+    public static void setAuthReadConsistencyLevel(ConsistencyLevel consistencyLevel)
+    {
+        conf.auth_read_consistency_level = consistencyLevel;
+    }
+
+    public static ConsistencyLevel getAuthWriteConsistencyLevel()
+    {
+        return conf.auth_write_consistency_level;
+    }
+
+    public static void setAuthWriteConsistencyLevel(ConsistencyLevel consistencyLevel)
+    {
+        conf.auth_write_consistency_level = consistencyLevel;
+    }
 }
