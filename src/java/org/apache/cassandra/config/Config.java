@@ -32,6 +32,8 @@ import com.google.common.collect.Sets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.db.ConsistencyLevel;
+
 /**
  * A class that contains configuration properties for the cassandra node it runs within.
  *
@@ -387,6 +389,9 @@ public class Config
     {
         isClientMode = clientMode;
     }
+
+    public volatile ConsistencyLevel auth_read_consistency_level = ConsistencyLevel.LOCAL_ONE;
+    public volatile ConsistencyLevel auth_write_consistency_level = ConsistencyLevel.LOCAL_ONE;
 
     public enum CommitLogSync
     {

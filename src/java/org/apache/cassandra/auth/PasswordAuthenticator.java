@@ -117,7 +117,7 @@ public class PasswordAuthenticator implements IAuthenticator
 
             ResultMessage.Rows rows =
                 authenticationStatement.execute(QueryState.forInternalCalls(),
-                                                QueryOptions.forInternalCalls(consistencyForRole(username),
+                                                QueryOptions.forInternalCalls(consistencyForRole(username, false),
                                                                               Lists.newArrayList(ByteBufferUtil.bytes(username))),
                                                 System.nanoTime());
 
