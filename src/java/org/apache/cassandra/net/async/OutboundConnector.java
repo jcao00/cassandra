@@ -81,7 +81,7 @@ class OutboundConnector
             return;
         connectAttemptCount++;
         logger.debug("attempting to connect to {}", remoteAddr);
-        connectFuture = localAddr == null ? bootstrap.connect(remoteAddr) : bootstrap.connect(remoteAddr, localAddr);
+        connectFuture = bootstrap.connect(remoteAddr);
         connectFuture.addListener(this::connectCallback);
     }
 

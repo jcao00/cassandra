@@ -25,6 +25,7 @@ import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
@@ -45,8 +46,10 @@ import org.apache.cassandra.utils.CoalescingStrategies.CoalescingStrategy;
  *   <li>or no flush is scheduled and we ask the coalescing strategy when to schedule a flush</li>
  * </ul>
  * <p>
+ *
+ * Note: this class extends {@link ChannelDuplexHandler} to get the {@link #channelWritabilityChanged} behavior.
  */
-class FlushHandler extends ChannelOutboundHandlerAdapter
+class FlushHandler extends ChannelDuplexHandler
 {
     public static final Logger logger = LoggerFactory.getLogger(FlushHandler.class);
 
@@ -101,6 +104,19 @@ class FlushHandler extends ChannelOutboundHandlerAdapter
     public void flush(ChannelHandlerContext ctx)
     {
         // nop - all flush behavior is expected to be controlled by the write() method
+    }
+
+    @Override
+    public void channelWritabilityChanged(ChannelHandlerContext ctx)
+    {
+        if (!ctx.channel().isWritable())
+        {
+            logger.info("**** JEB: flushing channel due to !isWritable()");
+            ctx.flush();
+        }
+
+        // TODO:JEB not sure it's worthwhile to send this ... but it might not be correct otherwise
+        ctx.fireChannelWritabilityChanged();
     }
 
     @VisibleForTesting

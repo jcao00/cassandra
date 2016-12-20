@@ -1401,11 +1401,7 @@ public final class MessagingService implements MessagingServiceMBean
         {
             boolean secure = isEncryptedConnection(to);
             InetSocketAddress preferredRemote = new InetSocketAddress(SystemKeyspace.getPreferredIP(to), secure ? DatabaseDescriptor.getSSLStoragePort() : DatabaseDescriptor.getStoragePort());
-
-            InetSocketAddress local = null;
-            if (!Config.getOutboundBindAny())
-                local = new InetSocketAddress(FBUtilities.getLocalAddress(), 0);
-
+            InetSocketAddress local = new InetSocketAddress(FBUtilities.getLocalAddress(), 0);
             ServerEncryptionOptions encryptionOptions = secure ? DatabaseDescriptor.getServerEncryptionOptions() : null;
 
             pool = new OutboundMessagingPool(preferredRemote, local, encryptionOptions, backPressure.newState(to));

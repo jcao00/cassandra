@@ -15,6 +15,7 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.ServerChannel;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.epoll.EpollSocketChannel;
@@ -168,6 +169,7 @@ public final class NettyFactory
                                              .option(ChannelOption.SO_REUSEADDR, true)
                                              .option(ChannelOption.SO_SNDBUF, sendBufferSize)
                                              .option(ChannelOption.TCP_NODELAY, tcpNoDelay)
+                                             .option(ChannelOption.WRITE_BUFFER_WATER_MARK, WriteBufferWaterMark.DEFAULT)
                                              .handler(initializer);
     }
 

@@ -85,16 +85,11 @@ public class DefaultConnectionFactory implements StreamConnectionFactory
         // zero means 'bind on any available port.'
         if (MessagingService.isEncryptedConnection(endpoint))
         {
-            if (Config.getOutboundBindAny())
-                return SSLFactory.getSocket(DatabaseDescriptor.getServerEncryptionOptions(), endpoint, DatabaseDescriptor.getSSLStoragePort());
-            else
-                return SSLFactory.getSocket(DatabaseDescriptor.getServerEncryptionOptions(), endpoint, DatabaseDescriptor.getSSLStoragePort(), FBUtilities.getLocalAddress(), 0);
+            return SSLFactory.getSocket(DatabaseDescriptor.getServerEncryptionOptions(), endpoint, DatabaseDescriptor.getSSLStoragePort());
         }
         else
         {
             SocketChannel channel = SocketChannel.open();
-            if (!Config.getOutboundBindAny())
-                channel.bind(new InetSocketAddress(FBUtilities.getLocalAddress(), 0));
             channel.connect(new InetSocketAddress(endpoint, DatabaseDescriptor.getStoragePort()));
             return channel.socket();
         }
