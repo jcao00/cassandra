@@ -168,6 +168,7 @@ public final class NettyFactory
                                              .option(ChannelOption.SO_KEEPALIVE, true)
                                              .option(ChannelOption.SO_REUSEADDR, true)
                                              .option(ChannelOption.SO_SNDBUF, sendBufferSize)
+                                             .option(ChannelOption.SO_RCVBUF, 1 << 15)
                                              .option(ChannelOption.TCP_NODELAY, tcpNoDelay)
                                              .option(ChannelOption.WRITE_BUFFER_WATER_MARK, WriteBufferWaterMark.DEFAULT)
                                              .handler(initializer);

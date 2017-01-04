@@ -22,11 +22,12 @@ import java.net.InetSocketAddress;
 
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
-import org.apache.cassandra.locator.Ec2MultiRegionSnitch;
 import org.apache.cassandra.metrics.ConnectionMetrics;
 import org.apache.cassandra.net.BackPressureState;
 import org.apache.cassandra.net.MessageOut;
+import org.apache.cassandra.utils.CoalescingStrategies;
 
 /**
  * Groups a set of outbound connections to a given peer, and routes outgoing messages to the appropriate connection
@@ -55,12 +56,24 @@ public class OutboundMessagingPool
         this.backPressureState = backPressureState;
         metrics = new ConnectionMetrics(localAddr.getAddress(), this);
 
-        smallMessageChannel = new OutboundMessagingConnection(preferredRemoteAddr, localAddr, encryptionOptions, true);
-        largeMessageChannel = new OutboundMessagingConnection(preferredRemoteAddr, localAddr, encryptionOptions, true);
+        smallMessageChannel = new OutboundMessagingConnection(preferredRemoteAddr, localAddr, encryptionOptions, coalescingStrategy(remoteAddr, true));
+        largeMessageChannel = new OutboundMessagingConnection(preferredRemoteAddr, localAddr, encryptionOptions, coalescingStrategy(remoteAddr, true));
 
         // don't attempt coalesce the gossip messages, just ship them out asap (let's not anger the FD on any peer node by any artificial delays)
-        gossipChannel = new OutboundMessagingConnection(preferredRemoteAddr, localAddr, encryptionOptions, false);
+        gossipChannel = new OutboundMessagingConnection(preferredRemoteAddr, localAddr, encryptionOptions, coalescingStrategy(remoteAddr, false));
     }
+
+    private static CoalescingStrategies.CoalescingStrategy coalescingStrategy(InetSocketAddress remoteAddr, boolean maybeCoalesce)
+    {
+        String strategyName = maybeCoalesce ? DatabaseDescriptor.getOtcCoalescingStrategy() : CoalescingStrategies.DISABLED;
+        String displayName = remoteAddr.getAddress().getHostAddress();
+        return CoalescingStrategies.newCoalescingStrategy(strategyName,
+                                                          DatabaseDescriptor.getOtcCoalescingWindow(),
+                                                          OutboundMessagingConnection.logger,
+                                                          displayName);
+
+    }
+
 
     public BackPressureState getBackPressureState()
     {

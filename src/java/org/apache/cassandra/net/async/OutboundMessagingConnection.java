@@ -40,7 +40,6 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
-import io.netty.util.internal.PlatformDependent;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -49,6 +48,7 @@ import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.NettyFactory.Mode;
 import org.apache.cassandra.net.async.NettyFactory.OutboundChannelInitializer;
+import org.apache.cassandra.utils.CoalescingStrategies.CoalescingStrategy;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
@@ -69,7 +69,7 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
  */
 public class OutboundMessagingConnection
 {
-    private static final Logger logger = LoggerFactory.getLogger(OutboundMessagingConnection.class);
+    static final Logger logger = LoggerFactory.getLogger(OutboundMessagingConnection.class);
 
     private static final String INTRADC_TCP_NODELAY_PROPERTY = Config.PROPERTY_PREFIX + "otc_intradc_tcp_nodelay";
     /**
@@ -112,7 +112,6 @@ public class OutboundMessagingConnection
     private volatile InetSocketAddress preferredConnectAddress;
 
     private final ServerEncryptionOptions encryptionOptions;
-    private final boolean maybeCoalesce;
 
     /**
      * A future for notifying when the timeout for creating the connection and negotiating the handshake has elapsed.
@@ -128,23 +127,20 @@ public class OutboundMessagingConnection
     @SuppressWarnings("rawtypes")
     private static final AtomicReferenceFieldUpdater<OutboundMessagingConnection, State> stateUpdater;
     private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> pendingMessagesUpdater;
+    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> scheduledFlushStateUpdater;
 
     static
     {
-        @SuppressWarnings("rawtypes")
-        AtomicReferenceFieldUpdater<OutboundMessagingConnection, State> referenceFieldUpdater = PlatformDependent.newAtomicReferenceFieldUpdater(OutboundMessagingConnection.class, "state");
-        if (referenceFieldUpdater == null)
-            referenceFieldUpdater = AtomicReferenceFieldUpdater.newUpdater(OutboundMessagingConnection.class, State.class, "state");
-        stateUpdater = referenceFieldUpdater;
-
-        AtomicIntegerFieldUpdater<OutboundMessagingConnection> intFieldUpdater = PlatformDependent.newAtomicIntegerFieldUpdater(OutboundMessagingConnection.class, "pendingMessages");
-        if (intFieldUpdater == null)
-            intFieldUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "pendingMessages");
-        pendingMessagesUpdater = intFieldUpdater;
+        stateUpdater = AtomicReferenceFieldUpdater.newUpdater(OutboundMessagingConnection.class, State.class, "state");
+        pendingMessagesUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "pendingMessages");
+        scheduledFlushStateUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "scheduledFlushState");
     }
 
     private volatile State state = State.NOT_READY;
     private volatile int pendingMessages;
+    private volatile int scheduledFlushState;
+
+    private final CoalescingStrategy coalescingStrategy;
 
     private OutboundConnector outboundConnector;
 
@@ -158,23 +154,25 @@ public class OutboundMessagingConnection
      */
     private int targetVersion;
 
-    OutboundMessagingConnection(InetSocketAddress remoteAddr, InetSocketAddress localAddr, ServerEncryptionOptions encryptionOptions, boolean maybeCoalesce)
+    OutboundMessagingConnection(InetSocketAddress remoteAddr, InetSocketAddress localAddr, ServerEncryptionOptions encryptionOptions,
+                                CoalescingStrategy coalescingStrategy)
     {
-        this(remoteAddr, localAddr, encryptionOptions, maybeCoalesce, ScheduledExecutors.scheduledTasks);
+        this(remoteAddr, localAddr, encryptionOptions, coalescingStrategy, ScheduledExecutors.scheduledFastTasks);
     }
 
     @VisibleForTesting
-    OutboundMessagingConnection(InetSocketAddress remoteAddr, InetSocketAddress localAddr, ServerEncryptionOptions encryptionOptions, boolean maybeCoalesce, ScheduledExecutorService sceduledExecutor)
+    OutboundMessagingConnection(InetSocketAddress remoteAddr, InetSocketAddress localAddr, ServerEncryptionOptions encryptionOptions,
+                                CoalescingStrategy coalescingStrategy, ScheduledExecutorService sceduledExecutor)
     {
         this.localAddr = localAddr;
         this.remoteAddr = remoteAddr;
         preferredConnectAddress = remoteAddr;
         this.encryptionOptions = encryptionOptions;
-        this.maybeCoalesce = maybeCoalesce;
         backlog = new ConcurrentLinkedQueue<>();
         droppedMessageCount = new AtomicLong(0);
         completedMessageCount = new AtomicLong(0);
         this.scheduledExecutor = sceduledExecutor;
+        this.coalescingStrategy = coalescingStrategy;
 
         // We want to use the most precise protocol version we know because while there is version detection on connect(),
         // the target version might be accessed by the pool (in getConnection()) before we actually connect (as we
@@ -197,8 +195,9 @@ public class OutboundMessagingConnection
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
         if (state == State.READY)
         {
-            ChannelFuture future = channel.writeAndFlush(queuedMessage);
+            ChannelFuture future = channel.write(queuedMessage);
             future.addListener(f -> handleMessageFuture(f, queuedMessage));
+            determineFlush(queuedMessage);
         }
         else
         {
@@ -206,6 +205,43 @@ public class OutboundMessagingConnection
             backlog.add(queuedMessage);
             connect();
         }
+    }
+
+    private void determineFlush(QueuedMessage queuedMessage)
+    {
+        // grab a local referene to the member field, in case it changes while we execute -
+        // mostly for the async coalesced flush
+        final Channel channel = this.channel;
+        if (!coalescingStrategy.isCoalescing())
+        {
+            assert scheduledFlushState == 0;
+            channel.flush();
+            return;
+        }
+
+        coalescingStrategy.newArrival(queuedMessage);
+
+        // TODO:JEB there may be more race conditions here, but should be good enough for a test perf run
+        if (!(scheduledFlushStateUpdater.compareAndSet(this, 0, 1)))
+            return;
+
+        long flushDelayNanos = coalescingStrategy.currentCoalescingTimeNanos();
+        if (flushDelayNanos <= 0)
+        {
+            scheduledFlushStateUpdater.set(this, 0);
+            channel.flush();
+            return;
+        }
+
+        scheduledExecutor.schedule(() -> {
+//      channel.eventLoop().schedule(() -> {
+            if (channel.isActive())
+            {
+                scheduledFlushStateUpdater.set(this, 0);
+                channel.flush();
+            }
+        }, flushDelayNanos, TimeUnit.NANOSECONDS);
+
     }
 
     /**
@@ -308,7 +344,7 @@ public class OutboundMessagingConnection
     {
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, preferredConnectAddress, messagingVersion,
                                                                        this::finishHandshake, encryptionOptions, Mode.MESSAGING,
-                                                                       maybeCoalesce, compress, droppedMessageCount, completedMessageCount);
+                                                                       compress, droppedMessageCount, completedMessageCount);
         OutboundChannelInitializer initializer = new OutboundChannelInitializer(params);
 
         boolean tcpNoDelay = isLocalDC(remoteAddr.getAddress()) ? INTRADC_TCP_NODELAY : DatabaseDescriptor.getInterDCTcpNoDelay();
@@ -380,6 +416,7 @@ public class OutboundMessagingConnection
         switch (result.result)
         {
             case GOOD:
+                logger.debug("successfully connected to {}", remoteAddr);
                 // TODO:JEB work out with pcmanus the best way to handle this
                 // drain the backlog to the channel
                 writeBacklogToChannel();
@@ -409,14 +446,20 @@ public class OutboundMessagingConnection
      */
     void writeBacklogToChannel()
     {
+        boolean wroteOnce = false;
         while (true)
         {
             final QueuedMessage msg = backlog.poll();
             if (msg == null)
                 break;
-            ChannelFuture future = channel.writeAndFlush(msg);
+            ChannelFuture future = channel.write(msg);
             future.addListener(f -> handleMessageFuture(f, msg));
+            wroteOnce = true;
         }
+
+        // TODO:JEB incorporate with instance-level flusher thingamabob
+        if (wroteOnce)
+            channel.flush();
     }
 
     private boolean shouldCompressConnection(InetAddress addr)

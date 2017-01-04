@@ -34,6 +34,7 @@ import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionHandshakeResult;
 import org.apache.cassandra.net.async.OutboundMessagingConnection.State;
+import org.apache.cassandra.utils.CoalescingStrategies;
 
 import static org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionHandshakeResult.Result.DISCONNECT;
 import static org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionHandshakeResult.Result.GOOD;
@@ -61,7 +62,7 @@ public class OutboundMessagingConnectionTest
     @Before
     public void setup()
     {
-        omc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, false, null);
+        omc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, new FakeCoalescingStrategy(false));
         omc.setPendingMessages(PENDING_MESSAGES_COUNT);
         channel = new EmbeddedChannel();
         omc.setChannel(channel);

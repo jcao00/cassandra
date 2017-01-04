@@ -81,10 +81,10 @@ public class HandshakeHandlersTest
         InboundHandshakeHandler inboundHandshakeHandler = new InboundHandshakeHandler(new TestAuthenticator(true));
         EmbeddedChannel inboundChannel = new EmbeddedChannel(inboundHandshakeHandler);
 
-        OutboundMessagingConnection imc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, false);
+        OutboundMessagingConnection imc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, new FakeCoalescingStrategy(false));
         OutboundConnectionParams params = new OutboundConnectionParams(LOCAL_ADDR, REMOTE_ADDR, MESSAGING_VERSION,
                                                                        imc::finishHandshake, null, NettyFactory.Mode.MESSAGING,
-                                                                       false, false, new AtomicLong(), new AtomicLong());
+                                                                       false, new AtomicLong(), new AtomicLong());
         OutboundHandshakeHandler outboundHandshakeHandler = new OutboundHandshakeHandler(params);
         EmbeddedChannel outboundChannel = new EmbeddedChannel(outboundHandshakeHandler);
         Assert.assertEquals(1, outboundChannel.outboundMessages().size());
@@ -167,10 +167,10 @@ public class HandshakeHandlersTest
     {
         OutboundConnectionParams params = new OutboundConnectionParams(LOCAL_ADDR, REMOTE_ADDR, MESSAGING_VERSION,
                                                                        this::nop, null, NettyFactory.Mode.MESSAGING,
-                                                                       false, compress, new AtomicLong(), new AtomicLong());
+                                                                       compress, new AtomicLong(), new AtomicLong());
         OutboundHandshakeHandler outboundHandshakeHandler = new OutboundHandshakeHandler(params);
         EmbeddedChannel outboundChannel = new EmbeddedChannel(outboundHandshakeHandler);
-        OutboundMessagingConnection omc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, false);
+        OutboundMessagingConnection omc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, new FakeCoalescingStrategy(false));
         omc.setTargetVersion(MESSAGING_VERSION);
         outboundHandshakeHandler.setupPipeline(outboundChannel.pipeline(), MESSAGING_VERSION);
 

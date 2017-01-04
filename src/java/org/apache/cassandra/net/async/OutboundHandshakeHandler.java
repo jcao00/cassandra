@@ -226,20 +226,8 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
         // only create an updated params instance if the messaging versions are different
         OutboundConnectionParams updatedParams = messagingVersion == params.protocolVersion ? params : params.updateProtocolVersion(messagingVersion);
         pipeline.addLast("messageOutHandler", new MessageOutHandler(updatedParams));
-        pipeline.addLast("flushHandler", new FlushHandler(coalescingStrategy(remoteAddr, updatedParams.maybeCoalesce)));
         pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
-        pipeline.addLast("lameoLogger", new ErrorLoggingHandler());
-    }
-
-    static CoalescingStrategy coalescingStrategy(InetSocketAddress remoteAddr, boolean maybeCoalesce)
-    {
-        String strategyName = maybeCoalesce ? DatabaseDescriptor.getOtcCoalescingStrategy() : CoalescingStrategies.DISABLED;
-        String displayName = remoteAddr.getAddress().getHostAddress();
-        return CoalescingStrategies.newCoalescingStrategy(strategyName,
-                                                          DatabaseDescriptor.getOtcCoalescingWindow(),
-                                                          FlushHandler.logger,
-                                                          displayName);
-
+        pipeline.addLast("errorLogger", new ErrorLoggingHandler());
     }
 
     private class ErrorLoggingHandler extends ChannelDuplexHandler
