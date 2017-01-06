@@ -29,6 +29,11 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -84,7 +89,7 @@ public class HandshakeHandlersTest
         OutboundMessagingConnection imc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, new FakeCoalescingStrategy(false));
         OutboundConnectionParams params = new OutboundConnectionParams(LOCAL_ADDR, REMOTE_ADDR, MESSAGING_VERSION,
                                                                        imc::finishHandshake, null, NettyFactory.Mode.MESSAGING,
-                                                                       false, new AtomicLong(), new AtomicLong());
+                                                                       false, new AtomicLong(), new AtomicLong(), new AtomicLong());
         OutboundHandshakeHandler outboundHandshakeHandler = new OutboundHandshakeHandler(params);
         EmbeddedChannel outboundChannel = new EmbeddedChannel(outboundHandshakeHandler);
         Assert.assertEquals(1, outboundChannel.outboundMessages().size());
@@ -167,7 +172,7 @@ public class HandshakeHandlersTest
     {
         OutboundConnectionParams params = new OutboundConnectionParams(LOCAL_ADDR, REMOTE_ADDR, MESSAGING_VERSION,
                                                                        this::nop, null, NettyFactory.Mode.MESSAGING,
-                                                                       compress, new AtomicLong(), new AtomicLong());
+                                                                       compress, new AtomicLong(), new AtomicLong(), new AtomicLong());
         OutboundHandshakeHandler outboundHandshakeHandler = new OutboundHandshakeHandler(params);
         EmbeddedChannel outboundChannel = new EmbeddedChannel(outboundHandshakeHandler);
         OutboundMessagingConnection omc = new OutboundMessagingConnection(REMOTE_ADDR, LOCAL_ADDR, null, new FakeCoalescingStrategy(false));
@@ -200,5 +205,27 @@ public class HandshakeHandlersTest
     {
         // do nothing, really
         return null;
+    }
+
+    @Test
+    public void ksjdflksdhf()
+    {
+        EmbeddedChannel outboundChannel = new EmbeddedChannel(new CountingHandler(), new CountingHandler(), new CountingHandler());
+        ByteBuf buf = PooledByteBufAllocator.DEFAULT.buffer(8, 8);
+        buf.writerIndex(8);
+        System.out.println("open bytes in channel: " + outboundChannel.bytesBeforeUnwritable());
+        outboundChannel.write(buf);
+        System.out.println("open bytes in channel: " + outboundChannel.bytesBeforeUnwritable());
+    }
+
+    private class CountingHandler extends ChannelOutboundHandlerAdapter
+    {
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception
+        {
+            System.out.println("BEFORE current count: " + ctx.channel().unsafe().outboundBuffer().totalPendingWriteBytes());
+            ctx.write(msg, promise);
+            System.out.println("AFTER  current count: " + ctx.channel().unsafe().outboundBuffer().totalPendingWriteBytes());
+        }
     }
 }

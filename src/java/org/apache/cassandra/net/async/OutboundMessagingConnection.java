@@ -126,19 +126,17 @@ public class OutboundMessagingConnection
      */
     @SuppressWarnings("rawtypes")
     private static final AtomicReferenceFieldUpdater<OutboundMessagingConnection, State> stateUpdater;
-    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> pendingMessagesUpdater;
     private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> scheduledFlushStateUpdater;
 
     static
     {
         stateUpdater = AtomicReferenceFieldUpdater.newUpdater(OutboundMessagingConnection.class, State.class, "state");
-        pendingMessagesUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "pendingMessages");
         scheduledFlushStateUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "scheduledFlushState");
     }
 
     private volatile State state = State.NOT_READY;
-    private volatile int pendingMessages;
     private volatile int scheduledFlushState;
+    private final AtomicLong pendingMessageCount = new AtomicLong();
 
     private final CoalescingStrategy coalescingStrategy;
 
@@ -191,13 +189,16 @@ public class OutboundMessagingConnection
      */
     void sendMessage(MessageOut msg, int id)
     {
-        pendingMessagesUpdater.incrementAndGet(this);
+        pendingMessageCount.incrementAndGet();
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
+
+        // grab a local referene to the member field, in case it changes while we execute -
+        // mostly for the async coalesced flush
+        final Channel channel = this.channel;
         if (state == State.READY)
         {
-            ChannelFuture future = channel.write(queuedMessage);
+            ChannelFuture future = channel.writeAndFlush(queuedMessage);
             future.addListener(f -> handleMessageFuture(f, queuedMessage));
-            determineFlush(queuedMessage);
         }
         else
         {
@@ -207,41 +208,62 @@ public class OutboundMessagingConnection
         }
     }
 
-    private void determineFlush(QueuedMessage queuedMessage)
+    void sendMessage_CoalescingAware(MessageOut msg, int id)
     {
+        pendingMessageCount.incrementAndGet();
+        QueuedMessage queuedMessage = new QueuedMessage(msg, id);
+
         // grab a local referene to the member field, in case it changes while we execute -
         // mostly for the async coalesced flush
         final Channel channel = this.channel;
-        if (!coalescingStrategy.isCoalescing())
+        if (state == State.READY)
         {
-            assert scheduledFlushState == 0;
-            channel.flush();
-            return;
-        }
+            if (!coalescingStrategy.isCoalescing())
+            {
+                assert scheduledFlushState == 0;
+                ChannelFuture future = channel.writeAndFlush(queuedMessage);
+                future.addListener(f -> handleMessageFuture(f, queuedMessage));
+                return;
+            }
 
-        coalescingStrategy.newArrival(queuedMessage);
+            coalescingStrategy.newArrival(queuedMessage);
 
-        // TODO:JEB there may be more race conditions here, but should be good enough for a test perf run
-        if (!(scheduledFlushStateUpdater.compareAndSet(this, 0, 1)))
-            return;
+            // TODO:JEB there may be more race conditions here, but should be good enough for a test perf run
+            // if we lost the race to set the state, simply write to the channel (no flush)
+            if (!(scheduledFlushStateUpdater.compareAndSet(this, 0, 1)))
+            {
+                ChannelFuture future = channel.write(queuedMessage);
+                future.addListener(f -> handleMessageFuture(f, queuedMessage));
+                return;
+            }
 
-        long flushDelayNanos = coalescingStrategy.currentCoalescingTimeNanos();
-        if (flushDelayNanos <= 0)
-        {
-            scheduledFlushStateUpdater.set(this, 0);
-            channel.flush();
-            return;
-        }
-
-        scheduledExecutor.schedule(() -> {
-//      channel.eventLoop().schedule(() -> {
-            if (channel.isActive())
+            long flushDelayNanos = coalescingStrategy.currentCoalescingTimeNanos();
+            // if we've run out of coalesce time, write and flush
+            if (flushDelayNanos <= 0)
             {
                 scheduledFlushStateUpdater.set(this, 0);
-                channel.flush();
+                ChannelFuture future = channel.writeAndFlush(queuedMessage);
+                future.addListener(f -> handleMessageFuture(f, queuedMessage));
+                return;
             }
-        }, flushDelayNanos, TimeUnit.NANOSECONDS);
 
+            logger.info("gonna flush in {} nanos", flushDelayNanos);
+            ChannelFuture future = channel.write(queuedMessage);
+            future.addListener(f -> handleMessageFuture(f, queuedMessage));
+
+            scheduledExecutor.schedule(() -> {
+                if (channel.isActive())
+                {
+                    scheduledFlushStateUpdater.set(this, 0);
+                    channel.flush();
+                }
+            }, flushDelayNanos, TimeUnit.NANOSECONDS);        }
+        else
+        {
+            // TODO:JEB work out with pcmanus the best way to handle this
+            backlog.add(queuedMessage);
+            connect();
+        }
     }
 
     /**
@@ -257,7 +279,7 @@ public class OutboundMessagingConnection
         if (!future.isDone())
             return;
 
-        pendingMessagesUpdater.decrementAndGet(this);
+//        pendingMessagesUpdater.decrementAndGet(this);
         // only handle failures, for now. in netty, cancelled futures will have a CancellationException set as the cause
         Throwable cause = future.cause();
         if (cause == null)
@@ -299,10 +321,14 @@ public class OutboundMessagingConnection
             logger.error("error writing to peer {} (on address {})", remoteAddr, preferredConnectAddress, cause);
         }
 
+        // TODO:JEB double check the pending msg count logic/error cases here
         if (requeue)
         {
-            pendingMessagesUpdater.incrementAndGet(this);
             backlog.add(new RetriedQueuedMessage(msg));
+        }
+        else
+        {
+            pendingMessageCount.decrementAndGet();
         }
     }
 
@@ -344,7 +370,7 @@ public class OutboundMessagingConnection
     {
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, preferredConnectAddress, messagingVersion,
                                                                        this::finishHandshake, encryptionOptions, Mode.MESSAGING,
-                                                                       compress, droppedMessageCount, completedMessageCount);
+                                                                       compress, droppedMessageCount, completedMessageCount, pendingMessageCount);
         OutboundChannelInitializer initializer = new OutboundChannelInitializer(params);
 
         boolean tcpNoDelay = isLocalDC(remoteAddr.getAddress()) ? INTRADC_TCP_NODELAY : DatabaseDescriptor.getInterDCTcpNoDelay();
@@ -353,7 +379,8 @@ public class OutboundMessagingConnection
         if (DatabaseDescriptor.getInternodeSendBufferSize() > 0)
             sendBufferSize = DatabaseDescriptor.getInternodeSendBufferSize();
 
-        return NettyFactory.createOutboundBootstrap(initializer, sendBufferSize, tcpNoDelay);
+        SizeEstimator sizeEstimator = new SizeEstimator(targetVersion);
+        return NettyFactory.createOutboundBootstrap(initializer, sendBufferSize, tcpNoDelay, sizeEstimator);
     }
 
     private boolean isLocalDC(InetAddress targetHost)
@@ -520,7 +547,7 @@ public class OutboundMessagingConnection
             // plus, CLQ.size() is not a constant-time operation, so you'd end up itering the queue twice
             // (once for the count, once for each element on CLQ.clear())
             while (backlog.poll() != null)
-                pendingMessagesUpdater.decrementAndGet(this);
+                pendingMessageCount.decrementAndGet();
         }
 
         if (channel != null)
@@ -560,7 +587,7 @@ public class OutboundMessagingConnection
 
     public Integer getPendingMessages()
     {
-        return pendingMessages;
+        return pendingMessageCount.intValue();
     }
 
     public Long getCompletedMesssages()
@@ -586,7 +613,7 @@ public class OutboundMessagingConnection
     @VisibleForTesting
     void addToBacklog(QueuedMessage msg)
     {
-        pendingMessagesUpdater.incrementAndGet(this);
+        pendingMessageCount.incrementAndGet();
         backlog.add(msg);
     }
 
@@ -629,6 +656,6 @@ public class OutboundMessagingConnection
     @VisibleForTesting
     void setPendingMessages(int i)
     {
-        pendingMessagesUpdater.set(this, i);
+        pendingMessageCount.set(i);
     }
 }

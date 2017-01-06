@@ -36,6 +36,7 @@ import io.netty.buffer.ByteBufOutputStream;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
+import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.SingleThreadEventExecutor;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
@@ -59,7 +60,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     /**
      * The amount of prefix data, in bytes, before the serialized message.
      */
-    private static final int MESSAGE_PREFIX_SIZE = 12;
+    static final int MESSAGE_PREFIX_SIZE = 12;
 
     private final InetSocketAddress remoteAddr;
     /**
@@ -69,24 +70,21 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
 
     private final AtomicLong completedMessageCount;
 
-    // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
+//    // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
 //    private static final MetricNameFactory factory = new DefaultNameFactory("Messaging");
 //    private static final Timer serializationDelay = Metrics.timer(factory.createMetricName("MOH-SerializationLatency"));
-//    private static final Histogram messagesSinceFlushHisto = Metrics.histogram(factory.createMetricName("MOH-MessagesSinceFlush"), false);
-
+//
 //    static
 //    {
-//        startTimerDump();
+//        //startTimerDump();
 //    }
-//
-//    private int messagesSinceFlush;
 //
 //    private static void startTimerDump()
 //    {
 //        ScheduledExecutors.scheduledTasks.scheduleWithFixedDelay(new TimerDumper(), 1, 1, TimeUnit.SECONDS);
 //    }
 //
-//    private static class TimerDumper implements Runnable
+//    static class TimerDumper implements Runnable
 //    {
 //        long currentCount;
 //
@@ -101,8 +99,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
 //                if (lastCount + 10 > currentCount)
 //                    return;
 //
-//                logger.info("SERAILIZATION_DELAY: {}", serialize(snapshot));
-//                logger.info("MESSAGES_SINCE_FLUSH: {}", serialize(messagesSinceFlushHisto.getSnapshot()));
+//                logger.info("JEB::SERAILIZATION_DELAY: {}", serialize(snapshot));
 //            }
 //            catch (Exception e)
 //            {
@@ -159,7 +156,6 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         captureTracingInfo(msg);
         serializeMessage(msg, out);
         completedMessageCount.incrementAndGet();
-//        messagesSinceFlush++;
     }
 
     /**
@@ -213,12 +209,10 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         if (spaceRemaining != 0)
             logger.error("reported message size {}, actual message size {}, msg {}", out.capacity(), out.writerIndex(), msg.message);
     }
-//
-//    @Override
-//    public void flush(ChannelHandlerContext ctx)
-//    {
-////        messagesSinceFlushHisto.update(messagesSinceFlush);
-////        messagesSinceFlush = 0;
-//        ctx.flush();
-//    }
+
+    @Override
+    public void flush(ChannelHandlerContext ctx)
+    {
+        ctx.flush();
+    }
 }

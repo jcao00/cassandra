@@ -14,6 +14,7 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MessageSizeEstimator;
 import io.netty.channel.ServerChannel;
 import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.epoll.EpollEventLoopGroup;
@@ -60,15 +61,21 @@ public final class NettyFactory
     }
 
     private static final boolean useEpoll = NativeTransportService.useEpoll();
-    private static final EventLoopGroup ACCEPT_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors(), "MessagingService-NettyAcceptor-Threads");
-    private static final EventLoopGroup INBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyInbound-Threads");
-    private static final EventLoopGroup OUTBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyOutbound-Threads");
+    private static final EventLoopGroup ACCEPT_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors(), "MessagingService-NettyAcceptor-Threads", false);
+    private static final EventLoopGroup INBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyInbound-Threads", false);
+    private static final EventLoopGroup OUTBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyOutbound-Threads", true);
 
-    private static EventLoopGroup getEventLoopGroup(int threadCount, String threadNamePrefix)
+    private static EventLoopGroup getEventLoopGroup(int threadCount, String threadNamePrefix, boolean boostIoRatio)
     {
-        return useEpoll
-               ? new EpollEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix))
-               : new NioEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
+        if (useEpoll)
+        {
+            EpollEventLoopGroup eventLoopGroup = new EpollEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
+            if (boostIoRatio)
+                eventLoopGroup.setIoRatio(100);
+            return eventLoopGroup;
+        }
+
+        return new NioEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
     }
 
     private NettyFactory()
@@ -158,7 +165,8 @@ public final class NettyFactory
      * Create the {@link Bootstrap} for connecting to a remote peer. This method does <b>not</b> attempt to connect to the peer,
      * and thus does not block.
      */
-    static Bootstrap createOutboundBootstrap(OutboundChannelInitializer initializer, int sendBufferSize, boolean tcpNoDelay)
+    static Bootstrap createOutboundBootstrap(OutboundChannelInitializer initializer, int sendBufferSize, boolean tcpNoDelay,
+                                             MessageSizeEstimator sizeEstimator)
     {
         Class<? extends Channel>  transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
         return new Bootstrap().group(OUTBOUND_GROUP)
@@ -171,6 +179,7 @@ public final class NettyFactory
                                              .option(ChannelOption.SO_RCVBUF, 1 << 15)
                                              .option(ChannelOption.TCP_NODELAY, tcpNoDelay)
                                              .option(ChannelOption.WRITE_BUFFER_WATER_MARK, WriteBufferWaterMark.DEFAULT)
+//                                             .option(ChannelOption.MESSAGE_SIZE_ESTIMATOR, sizeEstimator)
                                              .handler(initializer);
     }
 

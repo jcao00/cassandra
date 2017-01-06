@@ -123,6 +123,7 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
     @Override
     public void channelActive(final ChannelHandlerContext ctx) throws Exception
     {
+        logger.debug("starting handshake with {}", remoteAddr);
         ctx.writeAndFlush(firstHandshakeMessage(ctx.alloc().buffer(FIRST_MESSAGE_LENGTH), createHeader(messagingVersion, params.compress, mode)));
         long timeout = TimeUnit.MILLISECONDS.toNanos(DatabaseDescriptor.getRpcTimeout());
         timeoutFuture = ctx.executor().schedule(() -> abortHandshake(ctx), timeout, TimeUnit.MILLISECONDS);
@@ -225,8 +226,9 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
 
         // only create an updated params instance if the messaging versions are different
         OutboundConnectionParams updatedParams = messagingVersion == params.protocolVersion ? params : params.updateProtocolVersion(messagingVersion);
+        pipeline.addLast("flushHandler", new FlushHandler(updatedParams));
         pipeline.addLast("messageOutHandler", new MessageOutHandler(updatedParams));
-        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
+//        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
         pipeline.addLast("errorLogger", new ErrorLoggingHandler());
     }
 
