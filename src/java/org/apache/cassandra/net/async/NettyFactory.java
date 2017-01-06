@@ -70,8 +70,8 @@ public final class NettyFactory
         if (useEpoll)
         {
             EpollEventLoopGroup eventLoopGroup = new EpollEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
-            if (boostIoRatio)
-                eventLoopGroup.setIoRatio(100);
+//            if (boostIoRatio)
+//                eventLoopGroup.setIoRatio(100);
             return eventLoopGroup;
         }
 
