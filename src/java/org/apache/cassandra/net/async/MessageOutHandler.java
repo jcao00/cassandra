@@ -60,7 +60,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     /**
      * The amount of prefix data, in bytes, before the serialized message.
      */
-    static final int MESSAGE_PREFIX_SIZE = 12;
+    private static final int MESSAGE_PREFIX_SIZE = 12;
 
     private final InetSocketAddress remoteAddr;
     /**
@@ -70,58 +70,58 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
 
     private final AtomicLong completedMessageCount;
 
-//    // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
-//    private static final MetricNameFactory factory = new DefaultNameFactory("Messaging");
-//    private static final Timer serializationDelay = Metrics.timer(factory.createMetricName("MOH-SerializationLatency"));
-//
-//    static
-//    {
-//        //startTimerDump();
-//    }
-//
-//    private static void startTimerDump()
-//    {
-//        ScheduledExecutors.scheduledTasks.scheduleWithFixedDelay(new TimerDumper(), 1, 1, TimeUnit.SECONDS);
-//    }
-//
-//    static class TimerDumper implements Runnable
-//    {
-//        long currentCount;
-//
-//        public void run()
-//        {
-//            try
-//            {
-//                Snapshot snapshot = serializationDelay.getSnapshot();
-//
-//                long lastCount = currentCount;
-//                currentCount = serializationDelay.getCount();
-//                if (lastCount + 10 > currentCount)
-//                    return;
-//
-//                logger.info("JEB::SERAILIZATION_DELAY: {}", serialize(snapshot));
-//            }
-//            catch (Exception e)
-//            {
-//                logger.error("error", e);
-//            }
-//        }
-//
-//        private StringBuilder serialize(Snapshot snapshot)
-//        {
-//            StringBuilder sb = new StringBuilder(256);
-//            sb.append(currentCount).append("::");
-//            sb.append(snapshot.getMin()).append(',');
-//            sb.append((long)snapshot.getMedian()).append(',');
-//            sb.append((long)snapshot.get75thPercentile()).append(',');
-//            sb.append((long)snapshot.get95thPercentile()).append(',');
-//            sb.append((long)snapshot.get98thPercentile()).append(',');
-//            sb.append((long)snapshot.get99thPercentile()).append(',');
-//            sb.append((long)snapshot.get999thPercentile()).append(',');
-//            sb.append(snapshot.getMax());
-//            return sb;
-//        }
-//    }
+    // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
+    private static final MetricNameFactory factory = new DefaultNameFactory("Messaging");
+    private static final Timer serializationDelay = Metrics.timer(factory.createMetricName("MOH-SerializationLatency"));
+
+    static
+    {
+        //startTimerDump();
+    }
+
+    private static void startTimerDump()
+    {
+        ScheduledExecutors.scheduledTasks.scheduleWithFixedDelay(new TimerDumper(), 1, 1, TimeUnit.SECONDS);
+    }
+
+    static class TimerDumper implements Runnable
+    {
+        long currentCount;
+
+        public void run()
+        {
+            try
+            {
+                Snapshot snapshot = serializationDelay.getSnapshot();
+
+                long lastCount = currentCount;
+                currentCount = serializationDelay.getCount();
+                if (lastCount + 10 > currentCount)
+                    return;
+
+                logger.info("JEB::SERAILIZATION_DELAY: {}", serialize(snapshot));
+            }
+            catch (Exception e)
+            {
+                logger.error("error", e);
+            }
+        }
+
+        private StringBuilder serialize(Snapshot snapshot)
+        {
+            StringBuilder sb = new StringBuilder(256);
+            sb.append(currentCount).append("::");
+            sb.append(snapshot.getMin()).append(',');
+            sb.append((long)snapshot.getMedian()).append(',');
+            sb.append((long)snapshot.get75thPercentile()).append(',');
+            sb.append((long)snapshot.get95thPercentile()).append(',');
+            sb.append((long)snapshot.get98thPercentile()).append(',');
+            sb.append((long)snapshot.get99thPercentile()).append(',');
+            sb.append((long)snapshot.get999thPercentile()).append(',');
+            sb.append(snapshot.getMax());
+            return sb;
+        }
+    }
 
     MessageOutHandler(OutboundConnectionParams params)
     {
@@ -138,8 +138,8 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     @Override
     protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, QueuedMessage msg, boolean preferDirect) throws Exception
     {
-//        long now = System.nanoTime();
-//        serializationDelay.update(now - msg.timestampNanos(), TimeUnit.NANOSECONDS);
+        long now = System.nanoTime();
+        serializationDelay.update(now - msg.timestampNanos(), TimeUnit.NANOSECONDS);
 
         // frame size includes the magic and and other values *before* the actaul serialized message
         int currentFrameSize = MESSAGE_PREFIX_SIZE + msg.message.serializedSize(targetMessagingVersion);

@@ -62,7 +62,7 @@ public class FlushHandler extends ChannelDuplexHandler
 
     static
     {
-        //startTimerDump();
+        startTimerDump();
     }
 
     private static void startTimerDump()
@@ -71,7 +71,7 @@ public class FlushHandler extends ChannelDuplexHandler
     }
 
     private static class TimerDumper implements Runnable
-        {
+    {
         long currentCount;
 
         public void run()
@@ -124,7 +124,7 @@ public class FlushHandler extends ChannelDuplexHandler
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
     {
-        ctx.write(msg, promise);
+        ctx.write(msg);
 
         messagesSinceFlush++;
         bytesSinceFlush += ((ByteBuf)msg).readableBytes();
@@ -136,16 +136,16 @@ public class FlushHandler extends ChannelDuplexHandler
     private void flushInternal(ChannelHandlerContext ctx)
     {
         ctx.flush();
-//        messagesSinceFlushHisto.update(messagesSinceFlush);
-//        messagesSinceFlush = 0;
-//        bytesSinceFlushHisto.update(bytesSinceFlush);
-//        bytesSinceFlush = 0;
-//        long now = System.nanoTime();
-//
-//        if (lastFlushNanos > 0)
-//            flushDelayNanosHisto.update(now - lastFlushNanos, TimeUnit.NANOSECONDS);
-//
-//        lastFlushNanos = now;
+        messagesSinceFlushHisto.update(messagesSinceFlush);
+        messagesSinceFlush = 0;
+        bytesSinceFlushHisto.update(bytesSinceFlush);
+        bytesSinceFlush = 0;
+        long now = System.nanoTime();
+
+        if (lastFlushNanos > 0)
+            flushDelayNanosHisto.update(now - lastFlushNanos, TimeUnit.NANOSECONDS);
+
+        lastFlushNanos = now;
     }
 
     /**

@@ -65,7 +65,7 @@ public class OutboundHandshakeHandlerTest
         channel = new EmbeddedChannel(new ChannelOutboundHandlerAdapter());
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, remoteAddr, MESSAGING_VERSION,
                                                                        this::callbackHandler, null, NettyFactory.Mode.MESSAGING,
-                                                                       false, new AtomicLong(), new AtomicLong());
+                                                                       false, new AtomicLong(), new AtomicLong(), new AtomicLong());
         handler = new OutboundHandshakeHandler(params);
         channel.pipeline().addFirst(HANDLER_NAME, handler);
         result = null;
@@ -162,7 +162,7 @@ public class OutboundHandshakeHandlerTest
         channel.pipeline().remove(HANDLER_NAME);
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, remoteAddr, msgVersion,
                                                                        this::callbackHandler, null, NettyFactory.Mode.MESSAGING,
-                                                                       false, new AtomicLong(), new AtomicLong());
+                                                                       false, new AtomicLong(), new AtomicLong(), new AtomicLong());
         handler = new OutboundHandshakeHandler(params);
         channel.pipeline().addFirst(HANDLER_NAME, handler);
         channel.writeInbound(buf);
@@ -181,7 +181,7 @@ public class OutboundHandshakeHandlerTest
         ChannelPipeline pipeline = new EmbeddedChannel(new ChannelOutboundHandlerAdapter()).pipeline();
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, remoteAddr, MESSAGING_VERSION,
                                                                        this::callbackHandler, null, NettyFactory.Mode.MESSAGING,
-                                                                       true, new AtomicLong(), new AtomicLong());
+                                                                       true, new AtomicLong(), new AtomicLong(), new AtomicLong());
         handler = new OutboundHandshakeHandler(params);
         handler.setupPipeline(pipeline, MESSAGING_VERSION);
         Assert.assertNotNull(pipeline.get(Lz4FrameEncoder.class));
@@ -195,7 +195,7 @@ public class OutboundHandshakeHandlerTest
         ChannelPipeline pipeline = new EmbeddedChannel(new ChannelOutboundHandlerAdapter()).pipeline();
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, remoteAddr, MESSAGING_VERSION,
                                                                        this::callbackHandler, null, NettyFactory.Mode.MESSAGING,
-                                                                       false, new AtomicLong(), new AtomicLong());
+                                                                       false, new AtomicLong(), new AtomicLong(), new AtomicLong());
         handler = new OutboundHandshakeHandler(params);
         handler.setupPipeline(pipeline, MESSAGING_VERSION);
         Assert.assertNull(pipeline.get(Lz4FrameEncoder.class));
