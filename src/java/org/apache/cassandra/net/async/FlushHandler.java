@@ -173,8 +173,8 @@ public class FlushHandler extends ChannelDuplexHandler
     @Override
     public void flush(ChannelHandlerContext ctx)
     {
-        // TODO:JEB ignoring these calls for now
-//        flushInternal(ctx);
+        // explicitly ignoring these calls to flush to the socket - we only flush on the conditions stated above.
+        // TODO:JEB document this elsewhere: only using the flush() call as a mechanism to wake up the netty event loop thread
     }
 
     @Override

@@ -197,8 +197,6 @@ public class OutboundMessagingConnection
         pendingMessageCount.incrementAndGet();
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
 
-        // grab a local referene to the member field, in case it changes while we execute -
-        // mostly for the async coalesced flush
         final Channel channel = this.channel;
         if (state == State.READY)
         {
