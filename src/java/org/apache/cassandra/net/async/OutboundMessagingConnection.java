@@ -126,19 +126,19 @@ public class OutboundMessagingConnection
      */
     @SuppressWarnings("rawtypes")
     private static final AtomicReferenceFieldUpdater<OutboundMessagingConnection, State> stateUpdater;
-//    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> pendingMessagesUpdater;
-//    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> scheduledFlushStateUpdater;
+    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> pendingMessagesUpdater;
+    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> scheduledFlushStateUpdater;
 
     static
     {
         stateUpdater = AtomicReferenceFieldUpdater.newUpdater(OutboundMessagingConnection.class, State.class, "state");
-//        pendingMessagesUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "pendingMessages");
-//        scheduledFlushStateUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "scheduledFlushState");
+        pendingMessagesUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "pendingMessages");
+        scheduledFlushStateUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "scheduledFlushState");
     }
 
     private volatile State state = State.NOT_READY;
-//    private volatile int pendingMessages;
-//    private volatile int scheduledFlushState;
+    private volatile int pendingMessages;
+    private volatile int scheduledFlushState;
 
     private final AtomicLong pendingMessageCount = new AtomicLong();
 
@@ -191,76 +191,18 @@ public class OutboundMessagingConnection
      * If the {@link #channel} is not set up, then one lucky thread is selected to create the Channel, while other threads
      * just add the {@code msg} to the backlog queue.
      */
-    void sendMessage(MessageOut msg, int id)
-    {
-//        pendingMessagesUpdater.incrementAndGet(this);
-        pendingMessageCount.incrementAndGet();
-        QueuedMessage queuedMessage = new QueuedMessage(msg, id);
-
-        final Channel channel = this.channel;
-        if (state == State.READY)
-        {
-            ChannelFuture future = channel.writeAndFlush(queuedMessage);
-            future.addListener(f -> handleMessageFuture(f, queuedMessage));
-        }
-        else
-        {
-            // TODO:JEB work out with pcmanus the best way to handle this
-            backlog.add(queuedMessage);
-            connect();
-        }
-    }
 //    void sendMessage(MessageOut msg, int id)
 //    {
-//        pendingMessagesUpdater.incrementAndGet(this);
+////        pendingMessagesUpdater.incrementAndGet(this);
+//        pendingMessageCount.incrementAndGet();
 //        QueuedMessage queuedMessage = new QueuedMessage(msg, id);
 //
-//        // grab a local referene to the member field, in case it changes while we execute -
-//        // mostly for the async coalesced flush
 //        final Channel channel = this.channel;
 //        if (state == State.READY)
 //        {
-//            if (!coalescingStrategy.isCoalescing())
-//            {
-//                assert scheduledFlushState == 0;
-//                ChannelFuture future = channel.writeAndFlush(queuedMessage);
-//                future.addListener(f -> handleMessageFuture(f, queuedMessage));
-//                return;
-//            }
-//
-//            coalescingStrategy.newArrival(queuedMessage);
-//
-//            // TODO:JEB there may be more race conditions here, but should be good enough for a test perf run
-//            // if we lost the race to set the state, simply write to the channel (no flush)
-//            if (!(scheduledFlushStateUpdater.compareAndSet(this, 0, 1)))
-//            {
-//                ChannelFuture future = channel.write(queuedMessage);
-//                future.addListener(f -> handleMessageFuture(f, queuedMessage));
-//                return;
-//            }
-//
-//            long flushDelayNanos = coalescingStrategy.currentCoalescingTimeNanos();
-//            // if we've run out of coalesce time, write and flush
-//            if (flushDelayNanos <= 0)
-//            {
-//                scheduledFlushStateUpdater.set(this, 0);
-//                ChannelFuture future = channel.writeAndFlush(queuedMessage);
-//                future.addListener(f -> handleMessageFuture(f, queuedMessage));
-//                return;
-//            }
-//
-//            logger.info("gonna flush in {} nanos", flushDelayNanos);
-//            MessageOutHandler.flushDelayNanosHisto.update(flushDelayNanos);
-//            ChannelFuture future = channel.write(queuedMessage);
+//            ChannelFuture future = channel.writeAndFlush(queuedMessage);
 //            future.addListener(f -> handleMessageFuture(f, queuedMessage));
-//
-//            scheduledExecutor.schedule(() -> {
-//                if (channel.isActive())
-//                {
-//                    scheduledFlushStateUpdater.set(this, 0);
-//                    channel.flush();
-//                }
-//            }, flushDelayNanos, TimeUnit.NANOSECONDS);        }
+//        }
 //        else
 //        {
 //            // TODO:JEB work out with pcmanus the best way to handle this
@@ -268,6 +210,64 @@ public class OutboundMessagingConnection
 //            connect();
 //        }
 //    }
+    void sendMessage(MessageOut msg, int id)
+    {
+        pendingMessagesUpdater.incrementAndGet(this);
+        QueuedMessage queuedMessage = new QueuedMessage(msg, id);
+
+        // grab a local referene to the member field, in case it changes while we execute -
+        // mostly for the async coalesced flush
+        final Channel channel = this.channel;
+        if (state == State.READY)
+        {
+            if (!coalescingStrategy.isCoalescing())
+            {
+                assert scheduledFlushState == 0;
+                ChannelFuture future = channel.writeAndFlush(queuedMessage);
+                future.addListener(f -> handleMessageFuture(f, queuedMessage));
+                return;
+            }
+
+            coalescingStrategy.newArrival(queuedMessage);
+
+            // TODO:JEB there may be more race conditions here, but should be good enough for a test perf run
+            // if we lost the race to set the state, simply write to the channel (no flush)
+            if (!(scheduledFlushStateUpdater.compareAndSet(this, 0, 1)))
+            {
+                ChannelFuture future = channel.write(queuedMessage);
+                future.addListener(f -> handleMessageFuture(f, queuedMessage));
+                return;
+            }
+
+            long flushDelayNanos = coalescingStrategy.currentCoalescingTimeNanos();
+            // if we've run out of coalesce time, write and flush
+            if (flushDelayNanos <= 0)
+            {
+                scheduledFlushStateUpdater.set(this, 0);
+                ChannelFuture future = channel.writeAndFlush(queuedMessage);
+                future.addListener(f -> handleMessageFuture(f, queuedMessage));
+                return;
+            }
+
+            logger.info("gonna flush in {} nanos", flushDelayNanos);
+//            MessageOutHandler.flushDelayNanosHisto.update(flushDelayNanos);
+            ChannelFuture future = channel.write(queuedMessage);
+            future.addListener(f -> handleMessageFuture(f, queuedMessage));
+
+            scheduledExecutor.schedule(() -> {
+                if (channel.isActive())
+                {
+                    scheduledFlushStateUpdater.set(this, 0);
+                    channel.flush();
+                }
+            }, flushDelayNanos, TimeUnit.NANOSECONDS);        }
+        else
+        {
+            // TODO:JEB work out with pcmanus the best way to handle this
+            backlog.add(queuedMessage);
+            connect();
+        }
+    }
 
     /**
      * Handles the result of attempting to send a message. If we've had an IOException, we typically want to create a new connection/channel.
