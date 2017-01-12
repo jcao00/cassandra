@@ -1031,6 +1031,23 @@ public final class MessagingService implements MessagingServiceMBean
                         throw e;
                 }
             }
+
+
+            for (OutboundMessagingPool pool : channelManagers.values())
+            {
+                try
+                {
+                    pool.close(false);
+                }
+                catch (Exception e)
+                {
+                    if (e instanceof IOException)
+                        // see https://issues.apache.org/jira/browse/CASSANDRA-10545
+                        handleIOException((IOException) e);
+                    else
+                        throw e;
+                }
+            }
         }
         catch (IOException e)
         {
