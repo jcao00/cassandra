@@ -17,7 +17,7 @@
  */
 package org.apache.cassandra.utils;
 
-import org.apache.cassandra.concurrent.NamedThreadFactory;
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.io.util.FileUtils;
 import org.slf4j.Logger;
@@ -146,28 +146,12 @@ public class CoalescingStrategies
         {
             this.logger = logger;
             this.displayName = displayName;
-            if (DEBUG_COALESCING)
-            {
-                NamedThreadFactory.createThread(() ->
-                {
-                    while (true)
-                    {
-                        try
-                        {
-                            Thread.sleep(5000);
-                        }
-                        catch (InterruptedException e)
-                        {
-                            throw new AssertionError();
-                        }
-                        shouldLogAverage = true;
-                    }
-                }, displayName + " debug thread").start();
-            }
+
             RandomAccessFile rasTemp = null;
             ByteBuffer logBufferTemp = null;
             if (DEBUG_COALESCING)
             {
+                ScheduledExecutors.scheduledFastTasks.scheduleWithFixedDelay(() -> shouldLogAverage = true, 5, 5, TimeUnit.SECONDS);
                 try
                 {
                     File outFile = File.createTempFile("coalescing_" + this.displayName + "_", ".log", new File(DEBUG_COALESCING_PATH));

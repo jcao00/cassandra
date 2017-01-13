@@ -14,7 +14,6 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
-import io.netty.channel.MessageSizeEstimator;
 import io.netty.channel.ServerChannel;
 import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.epoll.EpollEventLoopGroup;
@@ -159,8 +158,7 @@ public final class NettyFactory
      * Create the {@link Bootstrap} for connecting to a remote peer. This method does <b>not</b> attempt to connect to the peer,
      * and thus does not block.
      */
-    static Bootstrap createOutboundBootstrap(OutboundChannelInitializer initializer, int sendBufferSize, boolean tcpNoDelay,
-                                             MessageSizeEstimator sizeEstimator)
+    static Bootstrap createOutboundBootstrap(OutboundChannelInitializer initializer, int sendBufferSize, boolean tcpNoDelay)
     {
         Class<? extends Channel>  transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
         return new Bootstrap().group(OUTBOUND_GROUP)
@@ -173,7 +171,6 @@ public final class NettyFactory
                                              .option(ChannelOption.SO_RCVBUF, 1 << 15)
                                              .option(ChannelOption.TCP_NODELAY, tcpNoDelay)
                                              .option(ChannelOption.WRITE_BUFFER_WATER_MARK, WriteBufferWaterMark.DEFAULT)
-                                             .option(ChannelOption.MESSAGE_SIZE_ESTIMATOR, sizeEstimator)
                                              .handler(initializer);
     }
 

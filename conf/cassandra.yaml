@@ -1087,4 +1087,4 @@ back_pressure_strategy:
         - high_ratio: 0.90
           factor: 5
           flow: FAST
-otc_coalescing_strategy: DISABLED
+otc_coalescing_strategy: TIMEHORIZON

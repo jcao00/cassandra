@@ -37,13 +37,14 @@ class OutboundConnectionParams
     final ServerEncryptionOptions encryptionOptions;
     final NettyFactory.Mode mode;
     final boolean compress;
+    final boolean coalesce;
     final AtomicLong droppedMessageCount;
     final AtomicLong completedMessageCount;
     final AtomicLong pendingMessageCount;
 
     OutboundConnectionParams(InetSocketAddress localAddr, InetSocketAddress remoteAddr, int protocolVersion,
                              Consumer<ConnectionHandshakeResult> callback, ServerEncryptionOptions encryptionOptions, NettyFactory.Mode mode,
-                             boolean compress, AtomicLong droppedMessageCount, AtomicLong completedMessageCount, AtomicLong pendingMessageCount)
+                             boolean compress, boolean coalesce, AtomicLong droppedMessageCount, AtomicLong completedMessageCount, AtomicLong pendingMessageCount)
     {
         this.localAddr = localAddr;
         this.remoteAddr = remoteAddr;
@@ -52,6 +53,7 @@ class OutboundConnectionParams
         this.encryptionOptions = encryptionOptions;
         this.mode = mode;
         this.compress = compress;
+        this.coalesce = coalesce;
         this.droppedMessageCount = droppedMessageCount;
         this.completedMessageCount = completedMessageCount;
         this.pendingMessageCount = pendingMessageCount;
@@ -60,6 +62,6 @@ class OutboundConnectionParams
     OutboundConnectionParams updateProtocolVersion(int protocolVersion)
     {
         return new OutboundConnectionParams(localAddr, remoteAddr, protocolVersion, callback,
-                                            encryptionOptions, mode, compress, droppedMessageCount, completedMessageCount, pendingMessageCount);
+                                            encryptionOptions, mode, compress, coalesce, droppedMessageCount, completedMessageCount, pendingMessageCount);
     }
 }

@@ -126,18 +126,18 @@ public class OutboundMessagingConnection
      */
     @SuppressWarnings("rawtypes")
     private static final AtomicReferenceFieldUpdater<OutboundMessagingConnection, State> stateUpdater;
-    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> pendingMessagesUpdater;
+//    private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> pendingMessagesUpdater;
     private static final AtomicIntegerFieldUpdater<OutboundMessagingConnection> scheduledFlushStateUpdater;
 
     static
     {
         stateUpdater = AtomicReferenceFieldUpdater.newUpdater(OutboundMessagingConnection.class, State.class, "state");
-        pendingMessagesUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "pendingMessages");
+//        pendingMessagesUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "pendingMessages");
         scheduledFlushStateUpdater = AtomicIntegerFieldUpdater.newUpdater(OutboundMessagingConnection.class, "scheduledFlushState");
     }
 
     private volatile State state = State.NOT_READY;
-    private volatile int pendingMessages;
+//    private volatile int pendingMessages;
     private volatile int scheduledFlushState;
 
     private final AtomicLong pendingMessageCount = new AtomicLong();
@@ -212,18 +212,18 @@ public class OutboundMessagingConnection
 //    }
     void sendMessage(MessageOut msg, int id)
     {
-        pendingMessagesUpdater.incrementAndGet(this);
+        pendingMessageCount.incrementAndGet();
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
 
         // grab a local referene to the member field, in case it changes while we execute -
         // mostly for the async coalesced flush
-        final Channel channel = this.channel;
+        final Channel channelLocal = this.channel;
         if (state == State.READY)
         {
             if (!coalescingStrategy.isCoalescing())
             {
                 assert scheduledFlushState == 0;
-                ChannelFuture future = channel.writeAndFlush(queuedMessage);
+                ChannelFuture future = channelLocal.writeAndFlush(queuedMessage);
                 future.addListener(f -> handleMessageFuture(f, queuedMessage));
                 return;
             }
@@ -234,7 +234,7 @@ public class OutboundMessagingConnection
             // if we lost the race to set the state, simply write to the channel (no flush)
             if (!(scheduledFlushStateUpdater.compareAndSet(this, 0, 1)))
             {
-                ChannelFuture future = channel.write(queuedMessage);
+                ChannelFuture future = channelLocal.write(queuedMessage);
                 future.addListener(f -> handleMessageFuture(f, queuedMessage));
                 return;
             }
@@ -244,22 +244,29 @@ public class OutboundMessagingConnection
             if (flushDelayNanos <= 0)
             {
                 scheduledFlushStateUpdater.set(this, 0);
-                ChannelFuture future = channel.writeAndFlush(queuedMessage);
+                ChannelFuture future = channelLocal.writeAndFlush(queuedMessage);
                 future.addListener(f -> handleMessageFuture(f, queuedMessage));
                 return;
             }
 
             logger.info("gonna flush in {} nanos", flushDelayNanos);
 //            MessageOutHandler.flushDelayNanosHisto.update(flushDelayNanos);
-            ChannelFuture future = channel.write(queuedMessage);
+            ChannelFuture future = channelLocal.write(queuedMessage);
             future.addListener(f -> handleMessageFuture(f, queuedMessage));
 
-            scheduledExecutor.schedule(() -> {
-                if (channel.isActive())
-                {
-                    scheduledFlushStateUpdater.set(this, 0);
-                    channel.flush();
-                }
+            // NOTE: the task is scheduled on a Executor that is *not* the netty event loop as
+            // the scheduled task is put at the head of the queue, and will be executed first when the event loop wakes up.
+            // As the task will be on the event loop, the flush() will execute immediately, not after any other tasks in the queue.
+            // This is not good as the flush() will happen before any of the write() tasks.
+            // This means we flush before putting any data into the outbound buffer :(
+//            scheduledExecutor.schedule(() -> {
+            channelLocal.eventLoop().schedule(() -> {
+                scheduledFlushStateUpdater.set(this, 0);
+                // TODO:JEB whyyyyy
+                channelLocal.eventLoop().execute(() -> {
+                    // check if there is still enough pending, or do I want to schedule the coalescing runnable again?
+                    channelLocal.flush();
+                });
             }, flushDelayNanos, TimeUnit.NANOSECONDS);        }
         else
         {
@@ -372,7 +379,8 @@ public class OutboundMessagingConnection
     {
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, preferredConnectAddress, messagingVersion,
                                                                        this::finishHandshake, encryptionOptions, Mode.MESSAGING,
-                                                                       compress, droppedMessageCount, completedMessageCount, pendingMessageCount);
+                                                                       compress, coalescingStrategy.isCoalescing(), droppedMessageCount,
+                                                                       completedMessageCount, pendingMessageCount);
         OutboundChannelInitializer initializer = new OutboundChannelInitializer(params);
 
         boolean tcpNoDelay = isLocalDC(remoteAddr.getAddress()) ? INTRADC_TCP_NODELAY : DatabaseDescriptor.getInterDCTcpNoDelay();
@@ -381,8 +389,7 @@ public class OutboundMessagingConnection
         if (DatabaseDescriptor.getInternodeSendBufferSize() > 0)
             sendBufferSize = DatabaseDescriptor.getInternodeSendBufferSize();
 
-        SizeEstimator sizeEstimator = new SizeEstimator(targetVersion);
-        return NettyFactory.createOutboundBootstrap(initializer, sendBufferSize, tcpNoDelay, sizeEstimator);
+        return NettyFactory.createOutboundBootstrap(initializer, sendBufferSize, tcpNoDelay);
     }
 
     private boolean isLocalDC(InetAddress targetHost)
@@ -471,22 +478,27 @@ public class OutboundMessagingConnection
     }
 
     /**
-     * Attempt to write the backlog of messages to the {@link #channel}.
+     * Attempt to write the backlog of messages to the {@link #channel}. Any backlogged {@link QueuedMessage}s are
+     * not registered/logged with the {@link #coalescingStrategy} as those messages aren't behaving in the "normal"
+     * path for coalescing - they were delayed due to setting up the socket connection, not the normal incoming rate,
+     * so let's not unduly skew the {@link #coalescingStrategy}.
      */
     void writeBacklogToChannel()
     {
         boolean wroteOnce = false;
+        final Channel channel = this.channel;
         while (true)
         {
             final QueuedMessage msg = backlog.poll();
             if (msg == null)
                 break;
+            // don't bother recording with the coalescing handler
             ChannelFuture future = channel.write(msg);
             future.addListener(f -> handleMessageFuture(f, msg));
             wroteOnce = true;
         }
 
-        // TODO:JEB incorporate with instance-level flusher thingamabob
+        // as this is an infrequent operation, don't bother coordinating with the instance-level flush task
         if (wroteOnce)
             channel.flush();
     }

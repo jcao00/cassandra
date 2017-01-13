@@ -107,7 +107,7 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
      */
     private Future<?> timeoutFuture;
 
-    private volatile boolean isCancelled;
+    private boolean isCancelled;
 
     OutboundHandshakeHandler(OutboundConnectionParams params)
     {
