@@ -191,26 +191,26 @@ public class OutboundMessagingConnection
      * If the {@link #channel} is not set up, then one lucky thread is selected to create the Channel, while other threads
      * just add the {@code msg} to the backlog queue.
      */
-//    void sendMessage(MessageOut msg, int id)
-//    {
-////        pendingMessagesUpdater.incrementAndGet(this);
-//        pendingMessageCount.incrementAndGet();
-//        QueuedMessage queuedMessage = new QueuedMessage(msg, id);
-//
-//        final Channel channel = this.channel;
-//        if (state == State.READY)
-//        {
-//            ChannelFuture future = channel.writeAndFlush(queuedMessage);
-//            future.addListener(f -> handleMessageFuture(f, queuedMessage));
-//        }
-//        else
-//        {
-//            // TODO:JEB work out with pcmanus the best way to handle this
-//            backlog.add(queuedMessage);
-//            connect();
-//        }
-//    }
     void sendMessage(MessageOut msg, int id)
+    {
+        pendingMessageCount.incrementAndGet();
+        QueuedMessage queuedMessage = new QueuedMessage(msg, id);
+
+        final Channel channel = this.channel;
+        if (state == State.READY)
+        {
+            ChannelFuture future = channel.writeAndFlush(queuedMessage);
+            future.addListener(f -> handleMessageFuture(f, queuedMessage));
+        }
+        else
+        {
+            // TODO:JEB work out with pcmanus the best way to handle this
+            backlog.add(queuedMessage);
+            connect();
+        }
+    }
+
+    void sendMessage_Coalesce(MessageOut msg, int id)
     {
         pendingMessageCount.incrementAndGet();
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
