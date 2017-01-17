@@ -191,7 +191,7 @@ public class OutboundMessagingConnection
      * If the {@link #channel} is not set up, then one lucky thread is selected to create the Channel, while other threads
      * just add the {@code msg} to the backlog queue.
      */
-    void sendMessage(MessageOut msg, int id)
+    void sendMessage_NoCoalesce(MessageOut msg, int id)
     {
         pendingMessageCount.incrementAndGet();
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
@@ -210,7 +210,7 @@ public class OutboundMessagingConnection
         }
     }
 
-    void sendMessage_Coalesce(MessageOut msg, int id)
+    void sendMessage(MessageOut msg, int id)
     {
         pendingMessageCount.incrementAndGet();
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
@@ -249,7 +249,7 @@ public class OutboundMessagingConnection
                 return;
             }
 
-            logger.info("gonna flush in {} nanos", flushDelayNanos);
+//            logger.info("gonna flush in {} nanos", flushDelayNanos);
 //            MessageOutHandler.flushDelayNanosHisto.update(flushDelayNanos);
             ChannelFuture future = channelLocal.write(queuedMessage);
             future.addListener(f -> handleMessageFuture(f, queuedMessage));
