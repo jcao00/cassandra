@@ -89,8 +89,8 @@ class FlushHandler extends ChannelDuplexHandler
     {
         ctx.write(msg);
 
-//        if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
-//            ctx.flush();
+        if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
+            ctx.flush();
     }
 
     /**
@@ -125,7 +125,7 @@ class FlushHandler extends ChannelDuplexHandler
     @Override
     public void flush(ChannelHandlerContext ctx)
     {
-//        if (isCoalescing)
+        if (isCoalescing)
             ctx.flush();
     }
 
