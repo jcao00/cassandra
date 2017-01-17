@@ -60,15 +60,20 @@ public final class NettyFactory
     }
 
     private static final boolean useEpoll = NativeTransportService.useEpoll();
-    private static final EventLoopGroup ACCEPT_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors(), "MessagingService-NettyAcceptor-Threads");
-    private static final EventLoopGroup INBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyInbound-Threads");
-    private static final EventLoopGroup OUTBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyOutbound-Threads");
+    private static final EventLoopGroup ACCEPT_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors(), "MessagingService-NettyAcceptor-Threads", false);
+    private static final EventLoopGroup INBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyInbound-Threads", false);
+    private static final EventLoopGroup OUTBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyOutbound-Threads", true);
 
-    private static EventLoopGroup getEventLoopGroup(int threadCount, String threadNamePrefix)
+    private static EventLoopGroup getEventLoopGroup(int threadCount, String threadNamePrefix, boolean boostIoRatio)
     {
-        return useEpoll
-               ? new EpollEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix))
-               : new NioEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
+        if (useEpoll)
+        {
+            EpollEventLoopGroup eventLoopGroup = new EpollEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
+            if (boostIoRatio)
+                eventLoopGroup.setIoRatio(100);
+            return eventLoopGroup;
+        }
+        return new NioEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
     }
 
     private NettyFactory()
