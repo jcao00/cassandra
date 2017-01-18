@@ -230,15 +230,6 @@ public class OutboundMessagingConnection
     {
         pendingMessageCount.incrementAndGet();
         QueuedMessage queuedMessage = new QueuedMessage(msg, id);
-        ByteBuf buf = null;
-        try
-        {
-            buf = encode(queuedMessage);
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
 
         // grab a local referene to the member field, in case it changes while we execute -
         // mostly for the async coalesced flush
@@ -249,7 +240,7 @@ public class OutboundMessagingConnection
             {
                 assert scheduledFlushState == 0;
 
-                ChannelFuture future = channelLocal.writeAndFlush(buf);
+                ChannelFuture future = channelLocal.writeAndFlush(queuedMessage);
                 future.addListener(f -> handleMessageFuture(f, queuedMessage));
                 return;
             }
@@ -260,7 +251,7 @@ public class OutboundMessagingConnection
             // if we lost the race to set the state, simply write to the channel (no flush)
             if (!(scheduledFlushStateUpdater.compareAndSet(this, 0, 1)))
             {
-                ChannelFuture future = channelLocal.write(buf);
+                ChannelFuture future = channelLocal.write(queuedMessage);
                 future.addListener(f -> handleMessageFuture(f, queuedMessage));
                 return;
             }
@@ -270,14 +261,14 @@ public class OutboundMessagingConnection
             if (flushDelayNanos <= 0)
             {
                 scheduledFlushStateUpdater.set(this, 0);
-                ChannelFuture future = channelLocal.writeAndFlush(buf);
+                ChannelFuture future = channelLocal.writeAndFlush(queuedMessage);
                 future.addListener(f -> handleMessageFuture(f, queuedMessage));
                 return;
             }
 
 //            logger.info("gonna flush in {} nanos", flushDelayNanos);
 //            MessageOutHandler.flushDelayNanosHisto.update(flushDelayNanos);
-            ChannelFuture future = channelLocal.write(buf);
+            ChannelFuture future = channelLocal.write(queuedMessage);
             future.addListener(f -> handleMessageFuture(f, queuedMessage));
 
             // NOTE: the task is scheduled on a Executor that is *not* the netty event loop as
@@ -301,66 +292,6 @@ public class OutboundMessagingConnection
             connect();
         }
     }
-
-    protected ByteBuf encode(QueuedMessage msg) throws IOException
-    {
-        int size = MessageOutHandler.MESSAGE_PREFIX_SIZE + msg.message.serializedSize(MessagingService.current_version);
-        ByteBuf buf = ALLOCATOR.directBuffer(size, size);
-        captureTracingInfo(msg);
-        serializeMessage(msg, buf);
-        completedMessageCount.incrementAndGet();
-        return buf;
-    }
-
-    private void captureTracingInfo(QueuedMessage msg)
-    {
-        try
-        {
-            byte[] sessionBytes = msg.message.parameters.get(Tracing.TRACE_HEADER);
-            if (sessionBytes != null)
-            {
-                UUID sessionId = UUIDGen.getUUID(ByteBuffer.wrap(sessionBytes));
-                TraceState state = Tracing.instance.get(sessionId);
-                String message = String.format("Sending %s message to %s, size = %d bytes",
-                                               msg.message.verb, remoteAddr, msg.message.serializedSize(MessagingService.current_version) + MessageOutHandler.MESSAGE_PREFIX_SIZE);
-                // session may have already finished; see CASSANDRA-5668
-                if (state == null)
-                {
-                    byte[] traceTypeBytes = msg.message.parameters.get(Tracing.TRACE_TYPE);
-                    Tracing.TraceType traceType = traceTypeBytes == null ? Tracing.TraceType.QUERY : Tracing.TraceType.deserialize(traceTypeBytes[0]);
-                    Tracing.instance.trace(ByteBuffer.wrap(sessionBytes), message, traceType.getTTL());
-                }
-                else
-                {
-                    state.trace(message);
-                    if (msg.message.verb == MessagingService.Verb.REQUEST_RESPONSE)
-                        Tracing.instance.doneWithNonLocalSession(state);
-                }
-            }
-        }
-        catch (Exception e)
-        {
-            logger.warn("failed to capture the tracing info for an outbound message, ignoring", e);
-        }
-    }
-
-    private void serializeMessage(QueuedMessage msg, ByteBuf out) throws IOException
-    {
-        ByteBufOutputStream bbos = new ByteBufOutputStream(out);
-        bbos.writeInt(MessagingService.PROTOCOL_MAGIC);
-        bbos.writeInt(msg.id);
-
-        // int cast cuts off the high-order half of the timestamp, which we can assume remains
-        // the same between now and when the recipient reconstructs it.
-        bbos.writeInt((int) NanoTimeToCurrentTimeMillis.convert(msg.timestampNanos));
-        msg.message.serialize(new WrappedDataOutputStreamPlus(bbos), MessagingService.current_version);
-
-        // next few lines are for debugging ... massively helpful!!
-        int spaceRemaining = out.writableBytes();
-        if (spaceRemaining != 0)
-            logger.error("reported message size {}, actual message size {}, msg {}", out.capacity(), out.writerIndex(), msg.message);
-    }
-
 
     /**
      * Handles the result of attempting to send a message. If we've had an IOException, we typically want to create a new connection/channel.
@@ -578,17 +509,7 @@ public class OutboundMessagingConnection
             final QueuedMessage msg = backlog.poll();
             if (msg == null)
                 break;
-            // don't bother recording with the coalescing handler
-            ByteBuf buf = null;
-            try
-            {
-                buf = encode(msg);
-            }
-            catch (IOException e)
-            {
-                throw new RuntimeException(e);
-            }
-            ChannelFuture future = channel.write(buf);
+            ChannelFuture future = channel.write(msg);
             future.addListener(f -> handleMessageFuture(f, msg));
             wroteOnce = true;
         }

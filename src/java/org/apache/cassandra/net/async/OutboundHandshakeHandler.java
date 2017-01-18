@@ -39,13 +39,13 @@ import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.compression.Lz4FrameEncoder;
+import net.jpountz.lz4.LZ4Factory;
+import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionHandshakeResult;
 import org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionHandshakeResult.Result;
-import org.apache.cassandra.utils.CoalescingStrategies;
-import org.apache.cassandra.utils.CoalescingStrategies.CoalescingStrategy;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
@@ -81,6 +81,8 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
      * will be v4 or v6, go with the minimum requires bytes (5), and hope that if the address is v6, we'll have the extra 12 bytes in the packet.
      */
     static final int THIRD_MESSAGE_LENGTH_MIN = 9;
+
+    private static final int LZ4_HASH_SEED = 0x9747b28c;
 
     /**
      * The IP address to identify this node to the peer. Memoizing this value eliminates a dependency on {@link FBUtilities#getBroadcastAddress()}.
@@ -222,13 +224,14 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
     void setupPipeline(ChannelPipeline pipeline, int messagingVersion)
     {
         if (params.compress)
-            pipeline.addLast(NettyFactory.OUTBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameEncoder());
+            pipeline.addLast(NettyFactory.OUTBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameEncoder(LZ4Factory.fastestInstance(), false, 1 << 14,
+                                                                                                XXHashFactory.fastestInstance().newStreamingHash32(LZ4_HASH_SEED).asChecksum()));
 
         // only create an updated params instance if the messaging versions are different
         OutboundConnectionParams updatedParams = messagingVersion == params.protocolVersion ? params : params.updateProtocolVersion(messagingVersion);
         pipeline.addLast("flushHandler", new FlushHandler(updatedParams));
-//        pipeline.addLast("messageOutHandler", new MessageOutHandler(updatedParams));
-//        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
+        pipeline.addLast("messageOutHandler", new MessageOutHandler(updatedParams));
+        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
         pipeline.addLast("errorLogger", new ErrorLoggingHandler());
     }
 
