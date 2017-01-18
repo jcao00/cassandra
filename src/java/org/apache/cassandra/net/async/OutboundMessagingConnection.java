@@ -304,7 +304,7 @@ public class OutboundMessagingConnection
 
     protected ByteBuf encode(QueuedMessage msg) throws IOException
     {
-        int size = msg.message.serializedSize(MessagingService.current_version);
+        int size = MessageOutHandler.MESSAGE_PREFIX_SIZE + msg.message.serializedSize(MessagingService.current_version);
         ByteBuf buf = ALLOCATOR.directBuffer(size, size);
         captureTracingInfo(msg);
         serializeMessage(msg, buf);
