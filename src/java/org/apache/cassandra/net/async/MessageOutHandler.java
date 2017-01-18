@@ -60,7 +60,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     /**
      * The amount of prefix data, in bytes, before the serialized message.
      */
-    private static final int MESSAGE_PREFIX_SIZE = 12;
+    public static final int MESSAGE_PREFIX_SIZE = 12;
 
     private final InetSocketAddress remoteAddr;
     /**

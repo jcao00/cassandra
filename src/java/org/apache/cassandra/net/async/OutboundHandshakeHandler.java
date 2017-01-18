@@ -227,8 +227,8 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
         // only create an updated params instance if the messaging versions are different
         OutboundConnectionParams updatedParams = messagingVersion == params.protocolVersion ? params : params.updateProtocolVersion(messagingVersion);
         pipeline.addLast("flushHandler", new FlushHandler(updatedParams));
-        pipeline.addLast("messageOutHandler", new MessageOutHandler(updatedParams));
-        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
+//        pipeline.addLast("messageOutHandler", new MessageOutHandler(updatedParams));
+//        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
         pipeline.addLast("errorLogger", new ErrorLoggingHandler());
     }
 
