@@ -27,6 +27,7 @@ import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslHandler;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
@@ -151,7 +152,9 @@ public final class NettyFactory
             if (encryptionOptions != null)
             {
                 SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, true, true);
-                pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslContext.newHandler(channel.alloc()));
+                SslHandler sslHandler = sslContext.newHandler(channel.alloc());
+                logger.debug("creating inbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
+                pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
             }
 
             if (WIRETRACE)
@@ -209,7 +212,9 @@ public final class NettyFactory
             if (params.encryptionOptions != null)
             {
                 SslContext sslContext = SSLFactory.getSslContext(params.encryptionOptions, true, false);
-                pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslContext.newHandler(channel.alloc()));
+                SslHandler sslHandler = sslContext.newHandler(channel.alloc());
+                logger.debug("creating outbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
+                pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
             }
 
             if (NettyFactory.WIRETRACE)

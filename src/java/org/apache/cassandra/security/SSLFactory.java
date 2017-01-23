@@ -285,10 +285,9 @@ public final class SSLFactory
         }
         else
         {
-            builder = SslContextBuilder.forClient();
+            builder = SslContextBuilder.forClient().sslProvider(useOpenSsl ? SslProvider.OPENSSL : SslProvider.JDK);
         }
 
-        // TODO:JEB fix this!!!!
         SslContext ctx = builder.ciphers(Arrays.asList(options.cipher_suites), SupportedCipherSuiteFilter.INSTANCE)
                         .trustManager(tmf)
                         .build();
