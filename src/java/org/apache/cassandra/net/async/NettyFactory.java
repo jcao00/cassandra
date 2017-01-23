@@ -25,6 +25,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
+import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.internal.logging.InternalLoggerFactory;
@@ -85,9 +86,10 @@ public final class NettyFactory
      */
     public static Channel createInboundChannel(InetSocketAddress localAddr, InboundInitializer initializer, int receiveBufferSize) throws ConfigurationException
     {
-
         String nic = FBUtilities.getNetworkInterface(localAddr.getAddress());
-        logger.info("Starting Messaging Service on {} {}", localAddr, nic == null ? "" : String.format(" (%s)", nic));
+        logger.info("Starting Messaging Service on {} {}, encryption: {}",
+                    localAddr, nic == null ? "" : String.format(" (%s)", nic), encryptionLogStatement(initializer.encryptionOptions));
+
         Class<? extends ServerChannel> transport = useEpoll ? EpollServerSocketChannel.class : NioServerSocketChannel.class;
         ServerBootstrap bootstrap = new ServerBootstrap().group(ACCEPT_GROUP, INBOUND_GROUP)
                                                          .channel(transport)
@@ -159,12 +161,23 @@ public final class NettyFactory
         }
     }
 
+    private static String encryptionLogStatement(ServerEncryptionOptions options)
+    {
+        if (options == null)
+            return "disabled";
+
+        String encryptionType = OpenSsl.isAvailable() ? "openssl" : "jdk";
+        return "enabled (" + encryptionType + ')';
+    }
+
     /**
      * Create the {@link Bootstrap} for connecting to a remote peer. This method does <b>not</b> attempt to connect to the peer,
      * and thus does not block.
      */
     static Bootstrap createOutboundBootstrap(OutboundChannelInitializer initializer, int sendBufferSize, boolean tcpNoDelay)
     {
+        logger.info("creating outbound bootstrap to peer {}, encryption: {}", initializer.params.remoteAddr,
+                    encryptionLogStatement(initializer.params.encryptionOptions));
         Class<? extends Channel>  transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
         return new Bootstrap().group(OUTBOUND_GROUP)
                                              .channel(transport)
