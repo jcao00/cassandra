@@ -289,7 +289,7 @@ public final class SSLFactory
         }
 
         // TODO:JEB fix this!!!!
-        SslContext ctx = builder.ciphers(null)//Arrays.asList(options.cipher_suites))//, SupportedCipherSuiteFilter.INSTANCE)
+        SslContext ctx = builder.ciphers(Arrays.asList(options.cipher_suites))//, SupportedCipherSuiteFilter.INSTANCE)
                         .trustManager(tmf)
                         .build();
 
