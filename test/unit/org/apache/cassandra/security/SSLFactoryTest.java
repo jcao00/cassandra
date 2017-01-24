@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.security.cert.CertificateException;
 import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 
 import com.google.common.base.Predicates;
@@ -106,6 +107,21 @@ public class SSLFactoryTest
                                                 String.class);
             assertArrayEquals(wanted, enabled);
         }
+    }
+
+    // using the default JDK ciphers, make sure we correctly filter out, without throwing an exception,
+    // those ciphers that are not legit for openssl use.
+    @Test
+    public void getSslContext_defaultJdkCiphersForOpenSsl() throws IOException
+    {
+        encryptionOptions.keystore = "test/conf/keystore.jks";
+        encryptionOptions.keystore_password = "cassandra";
+        encryptionOptions.cipher_suites = ((SSLSocketFactory)SSLSocketFactory.getDefault()).getDefaultCipherSuites();
+        SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, true, true);
+        Assert.assertNotNull(sslContext);
+
+        // as netty's openssl converts the cipher names, just make sure the lengths look legit
+        Assert.assertTrue(encryptionOptions.cipher_suites.length >= sslContext.cipherSuites().size());
     }
 
     @Test
