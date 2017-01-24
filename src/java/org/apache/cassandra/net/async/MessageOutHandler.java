@@ -147,10 +147,16 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         // frame size includes the magic and and other values *before* the actaul serialized message
         int currentFrameSize = MESSAGE_PREFIX_SIZE + msg.message.serializedSize(targetMessagingVersion);
 
+        ByteBuf buf;
         if (preferDirect)
-            return ctx.alloc().ioBuffer(currentFrameSize, currentFrameSize);
+            buf = ctx.alloc().ioBuffer(currentFrameSize, currentFrameSize);
         else
-            return ctx.alloc().heapBuffer(currentFrameSize, currentFrameSize);
+            buf = ctx.alloc().heapBuffer(currentFrameSize, currentFrameSize);
+
+        if (buf.maxCapacity() != currentFrameSize || buf.capacity() != currentFrameSize)
+            logger.warn("ByteBuf not quite legit: expected size={}, buf={}", currentFrameSize, buf);
+
+        return buf;
     }
 
     @Override
@@ -220,20 +226,26 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
             super(buffer);
         }
 
+        @Override
         public void write(ByteBuffer buffer) throws IOException
         {
             buffer().writeBytes(buffer);
         }
 
+        @Override
         public void write(Memory memory, long offset, long length) throws IOException
         {
-            buffer().writeBytes(memory.asByteBuffer(offset, (int)length));
+            for (ByteBuffer buffer : memory.asByteBuffers(offset, length))
+                write(buffer);
         }
 
+        @Override
         public <R> R applyToChannel(com.google.common.base.Function<WritableByteChannel, R> c) throws IOException
         {
             // currently, only called in streaming code
             throw new UnsupportedOperationException();
         }
     }
+
+
 }
