@@ -21,6 +21,7 @@ package org.apache.cassandra.net.async;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.channels.WritableByteChannel;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -39,6 +40,8 @@ import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.SingleThreadEventExecutor;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
+import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.io.util.Memory;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
 import org.apache.cassandra.metrics.DefaultNameFactory;
 import org.apache.cassandra.metrics.MetricNameFactory;
@@ -195,18 +198,42 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
 
     private void serializeMessage(QueuedMessage msg, ByteBuf out) throws IOException
     {
-        ByteBufOutputStream bbos = new ByteBufOutputStream(out);
+        ByteBufDataOutputPlus bbos = new ByteBufDataOutputPlus(out);
         bbos.writeInt(MessagingService.PROTOCOL_MAGIC);
         bbos.writeInt(msg.id);
 
         // int cast cuts off the high-order half of the timestamp, which we can assume remains
         // the same between now and when the recipient reconstructs it.
         bbos.writeInt((int) NanoTimeToCurrentTimeMillis.convert(msg.timestampNanos));
-        msg.message.serialize(new WrappedDataOutputStreamPlus(bbos), targetMessagingVersion);
+        msg.message.serialize(bbos, targetMessagingVersion);
 
         // next few lines are for debugging ... massively helpful!!
         int spaceRemaining = out.writableBytes();
         if (spaceRemaining != 0)
             logger.error("reported message size {}, actual message size {}, msg {}", out.capacity(), out.writerIndex(), msg.message);
+    }
+
+    public class ByteBufDataOutputPlus extends ByteBufOutputStream implements DataOutputPlus
+    {
+        ByteBufDataOutputPlus(ByteBuf buffer)
+        {
+            super(buffer);
+        }
+
+        public void write(ByteBuffer buffer) throws IOException
+        {
+            buffer().writeBytes(buffer);
+        }
+
+        public void write(Memory memory, long offset, long length) throws IOException
+        {
+            buffer().writeBytes(memory.asByteBuffer(offset, (int)length));
+        }
+
+        public <R> R applyToChannel(com.google.common.base.Function<WritableByteChannel, R> c) throws IOException
+        {
+            // currently, only called in streaming code
+            throw new UnsupportedOperationException();
+        }
     }
 }
