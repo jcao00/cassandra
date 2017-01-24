@@ -205,7 +205,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         // int cast cuts off the high-order half of the timestamp, which we can assume remains
         // the same between now and when the recipient reconstructs it.
         bbos.writeInt((int) NanoTimeToCurrentTimeMillis.convert(msg.timestampNanos));
-        msg.message.serialize(bbos, targetMessagingVersion);
+        msg.message.serialize(new WrappedDataOutputStreamPlus(bbos), targetMessagingVersion);
 
         // next few lines are for debugging ... massively helpful!!
         int spaceRemaining = out.writableBytes();
