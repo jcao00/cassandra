@@ -16,6 +16,7 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.ServerChannel;
 import io.netty.channel.WriteBufferWaterMark;
+import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.epoll.EpollSocketChannel;
@@ -63,6 +64,13 @@ public final class NettyFactory
     }
 
     private static final boolean useEpoll = NativeTransportService.useEpoll();
+
+    static
+    {
+        if (!useEpoll)
+            logger.warn("epoll not availble! {}", Epoll.unavailabilityCause());
+    }
+
     private static final EventLoopGroup ACCEPT_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors(), "MessagingService-NettyAcceptor-Threads", false);
     private static final EventLoopGroup INBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyInbound-Threads", false);
     private static final EventLoopGroup OUTBOUND_GROUP = getEventLoopGroup(FBUtilities.getAvailableProcessors() * 4, "MessagingService-NettyOutbound-Threads", true);
@@ -77,8 +85,10 @@ public final class NettyFactory
             EpollEventLoopGroup eventLoopGroup = new EpollEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
             if (boostIoRatio)
                 eventLoopGroup.setIoRatio(100);
+            logger.debug("using netty epoll event loop for pool prefix {}", threadNamePrefix);
             return eventLoopGroup;
         }
+        logger.debug("using netty nio event loop for pool prefix {}", threadNamePrefix);
         return new NioEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
     }
 
