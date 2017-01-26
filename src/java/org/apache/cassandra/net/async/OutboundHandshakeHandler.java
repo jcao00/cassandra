@@ -231,8 +231,8 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
         OutboundConnectionParams updatedParams = messagingVersion == params.protocolVersion ? params : params.updateProtocolVersion(messagingVersion);
         pipeline.addLast("flushHandler", new FlushHandler(updatedParams));
         pipeline.addLast("messageOutHandler", new MessageOutHandler(updatedParams));
-        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
-        pipeline.addLast("errorLogger", new ErrorLoggingHandler());
+//        pipeline.addLast("messageTimeoutHandler", new MessageOutTimeoutHandler(updatedParams));
+//        pipeline.addLast("errorLogger", new ErrorLoggingHandler());
     }
 
     private class ErrorLoggingHandler extends ChannelDuplexHandler
