@@ -921,7 +921,7 @@ dynamic_snitch_badness_threshold: 0.1
 # http://download.oracle.com/javase/6/docs/technotes/guides/security/jsse/JSSERefGuide.html#CreateKeystore
 #
 server_encryption_options:
-    internode_encryption: all
+    internode_encryption: none
     keystore: test/conf/cassandra_ssl_test.keystore
     keystore_password: cassandra
     truststore: test/conf/cassandra_ssl_test.truststore

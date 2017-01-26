@@ -72,14 +72,14 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     private final int targetMessagingVersion;
 
     private final AtomicLong completedMessageCount;
-/*
+
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
     private static final MetricNameFactory factory = new DefaultNameFactory("Messaging");
     private static final Timer serializationDelay = Metrics.timer(factory.createMetricName("MOH-SerializationLatency"));
 
     static
     {
-        //startTimerDump();
+        startTimerDump();
     }
 
     private static void startTimerDump()
@@ -125,7 +125,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
             return sb;
         }
     }
-*/
+
     MessageOutHandler(OutboundConnectionParams params)
     {
         this (params.remoteAddr, params.protocolVersion, params.completedMessageCount);
@@ -138,14 +138,17 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         this.completedMessageCount = completedMessageCount;
     }
 
+
+    private int currentFrameSize;
+
     @Override
     protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, QueuedMessage msg, boolean preferDirect) throws Exception
     {
-//        long now = System.nanoTime();
-//        serializationDelay.update(now - msg.timestampNanos(), TimeUnit.NANOSECONDS);
+        long now = System.nanoTime();
+        serializationDelay.update(now - msg.timestampNanos(), TimeUnit.NANOSECONDS);
 
         // frame size includes the magic and and other values *before* the actaul serialized message
-        int currentFrameSize = MESSAGE_PREFIX_SIZE + msg.message.serializedSize(targetMessagingVersion);
+        currentFrameSize = MESSAGE_PREFIX_SIZE + msg.message.serializedSize(targetMessagingVersion);
 
         ByteBuf buf;
         if (preferDirect)
@@ -217,6 +220,8 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         int spaceRemaining = out.writableBytes();
         if (spaceRemaining != 0)
             logger.error("reported message size {}, actual message size {}, msg {}", out.capacity(), out.writerIndex(), msg.message);
+        if (currentFrameSize != out.writerIndex() || currentFrameSize != out.capacity())
+            logger.error("currentFrameSize {} is not the same as bytesWritten {}, or buf capacity: {}", currentFrameSize, out.writerIndex(), out.capacity());
     }
 
     public class ByteBufDataOutputPlus extends ByteBufOutputStream implements DataOutputPlus
