@@ -29,14 +29,15 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.codahale.metrics.Snapshot;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufOutputStream;
+import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.MessageToByteEncoder;
+import io.netty.channel.ChannelInboundHandler;
+import io.netty.channel.ChannelPromise;
+import io.netty.handler.codec.ByteToMessageDecoder;
 import org.HdrHistogram.Histogram;
-import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.Memory;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
@@ -48,8 +49,11 @@ import org.apache.cassandra.utils.UUIDGen;
 
 /**
  * A Netty {@link ChannelHandler} for serializing outbound messages.
+ *
+ * This class extends {@link ByteToMessageDecoder}, which is a {@link ChannelInboundHandler}, because we
+ * want to intercept the {@link #channelWritabilityChanged(ChannelHandlerContext)} call.
  */
-class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
+class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEncoder<QueuedMessage>
 {
     private static final Logger logger = LoggerFactory.getLogger(MessageOutHandler.class);
 
@@ -66,28 +70,35 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
 
     private final AtomicLong completedMessageCount;
 
+    private final AtomicLong pendingMessages;
+    private final boolean isCoalescing;
+    private int messageSinceFlush;
+
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
-    private final Histogram serializationDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
+    private final Histogram dequeueDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
+    private final Histogram flushMessagesCount = new Histogram(100_000, 3);
 
     MessageOutHandler(OutboundConnectionParams params)
     {
-        this (params.remoteAddr, params.protocolVersion, params.completedMessageCount);
+        this (params.remoteAddr, params.protocolVersion, params.completedMessageCount, params.pendingMessageCount, params.coalesce);
     }
 
-    MessageOutHandler(InetSocketAddress remoteAddr, int targetMessagingVersion, AtomicLong completedMessageCount)
+    MessageOutHandler(InetSocketAddress remoteAddr, int targetMessagingVersion, AtomicLong completedMessageCount,
+                     AtomicLong pendingMessageCount, boolean isCoalescing)
     {
         this.remoteAddr = remoteAddr;
         this.targetMessagingVersion = targetMessagingVersion;
         this.completedMessageCount = completedMessageCount;
+        this.pendingMessages = pendingMessageCount;
+        this.isCoalescing = isCoalescing;
     }
-
 
     private int currentFrameSize;
 
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception
     {
-        ctx.executor().scheduleWithFixedDelay(() -> log(), 10, 1, TimeUnit.SECONDS);
+        ctx.executor().scheduleWithFixedDelay(() -> log(), 10, 5, TimeUnit.SECONDS);
     }
 
     private long currentCount;
@@ -96,11 +107,12 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         try
         {
             long lastCount = currentCount;
-            currentCount = serializationDelay.getTotalCount();
+            currentCount = dequeueDelay.getTotalCount();
             if (lastCount + 10 > currentCount)
                 return;
 
-            logger.info("JEB::SERAILIZATION_DELAY: {}", serialize(serializationDelay));
+            logger.info("JEB::DEQUEUE_DELAY: {}", serialize(dequeueDelay));
+            logger.info("JEB::MESSAGES_PER_FLUSH: {}", serialize(flushMessagesCount));
         }
         catch (Exception e)
         {
@@ -124,32 +136,48 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     }
 
     @Override
-    protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, QueuedMessage msg, boolean preferDirect) throws Exception
+    public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise) throws IOException
     {
-        serializationDelay.recordValue(System.nanoTime() - msg.timestampNanos());
+        messageSinceFlush++;
+        if (message instanceof QueuedMessage)
+        {
+            QueuedMessage msg = (QueuedMessage) message;
+            dequeueDelay.recordValue(System.nanoTime() - msg.timestampNanos());
+            captureTracingInfo(msg);
+            ByteBuf buf = allocateBuffer(ctx, msg);
+            try
+            {
+                serializeMessage(msg, buf);
+                ctx.write(buf, promise);
+                // TODO:JEB better error handling here to make sure in the case of failure, we decrement the counts
+                completedMessageCount.incrementAndGet();
+                if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
+                    flush0(ctx);
+            }
+            catch (Exception e)
+            {
+                if (buf != null)
+                    buf.release();
+            }
+        }
+        else
+        {
+            ctx.write(message, promise);
+            if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
+                flush0(ctx);
+        }
+    }
 
+    private ByteBuf allocateBuffer(ChannelHandlerContext ctx, QueuedMessage msg)
+    {
         // frame size includes the magic and and other values *before* the actaul serialized message
         currentFrameSize = MESSAGE_PREFIX_SIZE + msg.message.serializedSize(targetMessagingVersion);
-
-        ByteBuf buf;
-        if (preferDirect)
-            buf = ctx.alloc().ioBuffer(currentFrameSize, currentFrameSize);
-        else
-            buf = ctx.alloc().heapBuffer(currentFrameSize, currentFrameSize);
+        ByteBuf buf = ctx.alloc().ioBuffer(currentFrameSize, currentFrameSize);
 
         if (buf.maxCapacity() != currentFrameSize || buf.capacity() != currentFrameSize)
             logger.warn("ByteBuf not quite legit: expected size={}, buf={}", currentFrameSize, buf);
 
         return buf;
-    }
-
-
-    @Override
-    protected void encode(ChannelHandlerContext ctx, QueuedMessage msg, ByteBuf out) throws IOException
-    {
-        captureTracingInfo(msg);
-        serializeMessage(msg, out);
-        completedMessageCount.incrementAndGet();
     }
 
     /**
@@ -206,7 +234,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
             logger.error("currentFrameSize {} is not the same as bytesWritten {}, or buf capacity: {}", currentFrameSize, out.writerIndex(), out.capacity());
     }
 
-    public class ByteBufDataOutputPlus extends ByteBufOutputStream implements DataOutputPlus
+    public static class ByteBufDataOutputPlus extends ByteBufOutputStream implements DataOutputPlus
     {
         ByteBufDataOutputPlus(ByteBuf buffer)
         {
@@ -234,5 +262,55 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * This method will be triggered when a producer thread writes a message the channel, and the size
+     * of that message pushes the "open" count of bytes in the channel over the high water mark. The mechanics
+     * of netty will wake up the event loop thread (if it's not already executing), trigger the
+     * "channelWritabilityChanged" function, which be invoked *after* executing any pending write tasks in the netty queue.
+     * Thus, when this method is invoked it's a great time to flush, to push all the written buffers to the kernel
+     * for sending.
+     *
+     * Note: it doesn't matter if coalescing is enabled or disabled, once this function is invoked we want to flush
+     * to free up memory.
+     */
+    @Override
+    public void channelWritabilityChanged(ChannelHandlerContext ctx)
+    {
+        if (!ctx.channel().isWritable())
+        {
+            logger.info("got channelWritabilityChanged, channel size = {} bytes", ctx.channel().unsafe().outboundBuffer().totalPendingWriteBytes());
+            flush0(ctx);
+        }
 
+        ctx.fireChannelWritabilityChanged();
+    }
+
+    private void flush0(ChannelHandlerContext ctx)
+    {
+        ctx.flush();
+        flushMessagesCount.recordValue(messageSinceFlush);
+        messageSinceFlush = 0;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * When coalese is enabled, we must respect this flush invocation. If coalesce is disabled, we only flush
+     * on the conditions stated in the class-level documentation (no more messages in queue, outbound buffer size
+     * over the configured limit).
+     */
+    @Override
+    public void flush(ChannelHandlerContext ctx)
+    {
+        if (isCoalescing)
+            flush0(ctx);
+    }
+
+    @Override
+    public void close(ChannelHandlerContext ctx, ChannelPromise promise)
+    {
+        flush0(ctx);
+    }
 }
