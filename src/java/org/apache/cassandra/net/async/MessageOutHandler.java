@@ -73,10 +73,13 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     private final AtomicLong pendingMessages;
     private final boolean isCoalescing;
     private int messageSinceFlush;
+    private long lastFlushNanos;
 
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
     private final Histogram dequeueDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
     private final Histogram flushMessagesCount = new Histogram(100_000, 3);
+    private final Histogram timeBetweenFlushed = new Histogram(TimeUnit.SECONDS.toNanos(30), 3);
+    private final Histogram serializeTime = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
 
     MessageOutHandler(OutboundConnectionParams params)
     {
@@ -113,6 +116,8 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
 
             logger.info("JEB::DEQUEUE_DELAY: {}", serialize(dequeueDelay));
             logger.info("JEB::MESSAGES_PER_FLUSH: {}", serialize(flushMessagesCount));
+            logger.info("JEB::NANOS_BETWEEN_FLUSHES: {}", serialize(timeBetweenFlushed));
+            logger.info("JEB::SERIALIZE_TIME: {}", serialize(serializeTime));
         }
         catch (Exception e)
         {
@@ -141,6 +146,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
         messageSinceFlush++;
         if (message instanceof QueuedMessage)
         {
+            long now = System.nanoTime();
             QueuedMessage msg = (QueuedMessage) message;
             dequeueDelay.recordValue(System.nanoTime() - msg.timestampNanos());
             captureTracingInfo(msg);
@@ -149,6 +155,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
             {
                 serializeMessage(msg, buf);
                 ctx.write(buf, promise);
+                serializeTime.recordValue(System.nanoTime() - now);
                 // TODO:JEB better error handling here to make sure in the case of failure, we decrement the counts
                 completedMessageCount.incrementAndGet();
                 if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
@@ -291,7 +298,13 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     {
         ctx.flush();
         flushMessagesCount.recordValue(messageSinceFlush);
+
+        long now = System.nanoTime();
+        if (lastFlushNanos > 0)
+            timeBetweenFlushed.recordValue(now - lastFlushNanos);
+
         messageSinceFlush = 0;
+        lastFlushNanos = now;
     }
 
     /**

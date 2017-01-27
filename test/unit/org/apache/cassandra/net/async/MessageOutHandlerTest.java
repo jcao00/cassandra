@@ -46,7 +46,7 @@ public class MessageOutHandlerTest
     public void serializeMessage() throws IOException
     {
         AtomicLong counter = new AtomicLong(0);
-        MessageOutHandler handler = new MessageOutHandler(new InetSocketAddress("127.0.0.1", 0), MESSAGING_VERSION, counter);
+        MessageOutHandler handler = new MessageOutHandler(new InetSocketAddress("127.0.0.1", 0), MESSAGING_VERSION, counter, new AtomicLong(), false);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
         QueuedMessage msg = new QueuedMessage(new MessageOut(MessagingService.Verb.INTERNAL_RESPONSE), 1);
         ChannelFuture future = channel.writeAndFlush(msg);
