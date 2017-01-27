@@ -67,7 +67,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     private final AtomicLong completedMessageCount;
 
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
-    private final Histogram serializationDelay = new Histogram(TimeUnit.SECONDS.toNanos(1), 3);
+    private final Histogram serializationDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
 
     MessageOutHandler(OutboundConnectionParams params)
     {
