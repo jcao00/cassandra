@@ -163,8 +163,9 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
             }
             catch (Exception e)
             {
-                if (buf != null)
-                    buf.release();
+                logger.error("failed to write message to buffer", e);
+                if (buf != null && buf.refCnt() > 0)
+                    buf.release(buf.refCnt());
             }
         }
         else
