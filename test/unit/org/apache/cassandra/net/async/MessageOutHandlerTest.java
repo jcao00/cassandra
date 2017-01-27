@@ -31,6 +31,7 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionType;
 
 public class MessageOutHandlerTest
 {
@@ -46,7 +47,7 @@ public class MessageOutHandlerTest
     public void serializeMessage() throws IOException
     {
         AtomicLong counter = new AtomicLong(0);
-        MessageOutHandler handler = new MessageOutHandler(new InetSocketAddress("127.0.0.1", 0), MESSAGING_VERSION, counter, new AtomicLong(), false);
+        MessageOutHandler handler = new MessageOutHandler(new InetSocketAddress("127.0.0.1", 0), MESSAGING_VERSION, counter, new AtomicLong(), false, ConnectionType.SMALL_MESSAGE);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
         QueuedMessage msg = new QueuedMessage(new MessageOut(MessagingService.Verb.INTERNAL_RESPONSE), 1);
         ChannelFuture future = channel.writeAndFlush(msg);

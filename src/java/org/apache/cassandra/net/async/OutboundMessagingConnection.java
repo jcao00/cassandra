@@ -83,6 +83,8 @@ public class OutboundMessagingConnection
 {
     static final Logger logger = LoggerFactory.getLogger(OutboundMessagingConnection.class);
 
+    enum ConnectionType { GOSSIP, LARGE_MESSAGE, SMALL_MESSAGE }
+
     private static final String INTRADC_TCP_NODELAY_PROPERTY = Config.PROPERTY_PREFIX + "otc_intradc_tcp_nodelay";
     /**
      * Enabled/disable TCP_NODELAY for intradc connections. Defaults to enabled.
@@ -101,6 +103,8 @@ public class OutboundMessagingConnection
      * Backlog to hold messages passed by upstream threads while the Netty {@link Channel} is being set up or recreated.
      */
     private final Queue<QueuedMessage> backlog;
+
+    private final ConnectionType connectionType;
 
     private final ScheduledExecutorService scheduledExecutor;
 
@@ -172,16 +176,17 @@ public class OutboundMessagingConnection
     private static final ByteBufAllocator ALLOCATOR = PooledByteBufAllocator.DEFAULT;
 
 
-    OutboundMessagingConnection(InetSocketAddress remoteAddr, InetSocketAddress localAddr, ServerEncryptionOptions encryptionOptions,
-                                CoalescingStrategy coalescingStrategy)
+    OutboundMessagingConnection(ConnectionType connectionType, InetSocketAddress remoteAddr, InetSocketAddress localAddr,
+                                ServerEncryptionOptions encryptionOptions, CoalescingStrategy coalescingStrategy)
     {
-        this(remoteAddr, localAddr, encryptionOptions, coalescingStrategy, ScheduledExecutors.scheduledFastTasks);
+        this(connectionType, remoteAddr, localAddr, encryptionOptions, coalescingStrategy, ScheduledExecutors.scheduledFastTasks);
     }
 
     @VisibleForTesting
-    OutboundMessagingConnection(InetSocketAddress remoteAddr, InetSocketAddress localAddr, ServerEncryptionOptions encryptionOptions,
-                                CoalescingStrategy coalescingStrategy, ScheduledExecutorService sceduledExecutor)
+    OutboundMessagingConnection(ConnectionType connectionType, InetSocketAddress remoteAddr, InetSocketAddress localAddr,
+                                ServerEncryptionOptions encryptionOptions, CoalescingStrategy coalescingStrategy, ScheduledExecutorService sceduledExecutor)
     {
+        this.connectionType = connectionType;
         this.localAddr = localAddr;
         this.remoteAddr = remoteAddr;
         preferredConnectAddress = remoteAddr;
@@ -397,7 +402,7 @@ public class OutboundMessagingConnection
         OutboundConnectionParams params = new OutboundConnectionParams(localAddr, preferredConnectAddress, messagingVersion,
                                                                        this::finishHandshake, encryptionOptions, Mode.MESSAGING,
                                                                        compress, coalescingStrategy.isCoalescing(), droppedMessageCount,
-                                                                       completedMessageCount, pendingMessageCount);
+                                                                       completedMessageCount, pendingMessageCount, connectionType);
         OutboundChannelInitializer initializer = new OutboundChannelInitializer(params);
 
         boolean tcpNoDelay = isLocalDC(remoteAddr.getAddress()) ? INTRADC_TCP_NODELAY : DatabaseDescriptor.getInterDCTcpNoDelay();

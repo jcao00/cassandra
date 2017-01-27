@@ -42,6 +42,7 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.Memory;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.net.async.OutboundMessagingConnection.ConnectionType;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.NanoTimeToCurrentTimeMillis;
@@ -72,28 +73,32 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
 
     private final AtomicLong pendingMessages;
     private final boolean isCoalescing;
+    private final ConnectionType connectionType;
+
     private int messageSinceFlush;
     private long lastFlushNanos;
 
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
     private final Histogram dequeueDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
     private final Histogram flushMessagesCount = new Histogram(100_000, 3);
-    private final Histogram timeBetweenFlushes = new Histogram(TimeUnit.MINUTES.toNanos(30), 3);
+    private final Histogram timeBetweenFlushes = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
     private final Histogram serializeTime = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
 
     MessageOutHandler(OutboundConnectionParams params)
     {
-        this (params.remoteAddr, params.protocolVersion, params.completedMessageCount, params.pendingMessageCount, params.coalesce);
+        this (params.remoteAddr, params.protocolVersion, params.completedMessageCount,
+              params.pendingMessageCount, params.coalesce, params.connectionType);
     }
 
     MessageOutHandler(InetSocketAddress remoteAddr, int targetMessagingVersion, AtomicLong completedMessageCount,
-                     AtomicLong pendingMessageCount, boolean isCoalescing)
+                     AtomicLong pendingMessageCount, boolean isCoalescing, ConnectionType connectionType)
     {
         this.remoteAddr = remoteAddr;
         this.targetMessagingVersion = targetMessagingVersion;
         this.completedMessageCount = completedMessageCount;
         this.pendingMessages = pendingMessageCount;
         this.isCoalescing = isCoalescing;
+        this.connectionType = connectionType;
     }
 
     private int currentFrameSize;
@@ -101,7 +106,8 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception
     {
-        ctx.executor().scheduleWithFixedDelay(() -> log(), 10, 5, TimeUnit.SECONDS);
+        if (connectionType != ConnectionType.GOSSIP)
+            ctx.executor().scheduleWithFixedDelay(() -> log(), 10, 5, TimeUnit.SECONDS);
     }
 
     private long currentCount;
@@ -302,12 +308,10 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
         messageSinceFlush = 0;
 
         long now = System.nanoTime();
-        long diff = now - lastFlushNanos;
-        if (diff > 0)
-        {
-            timeBetweenFlushes.recordValue(diff);
+        if (lastFlushNanos > 0)
+            timeBetweenFlushes.recordValue(now - lastFlushNanos);
+        else
             lastFlushNanos = now;
-        }
     }
 
     /**
