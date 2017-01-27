@@ -29,29 +29,22 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.codahale.metrics.Histogram;
 import com.codahale.metrics.Snapshot;
-import com.codahale.metrics.Timer;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufOutputStream;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
-import io.netty.util.ReferenceCountUtil;
-import io.netty.util.concurrent.SingleThreadEventExecutor;
+import org.HdrHistogram.Histogram;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.Memory;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
-import org.apache.cassandra.metrics.DefaultNameFactory;
-import org.apache.cassandra.metrics.MetricNameFactory;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.NanoTimeToCurrentTimeMillis;
 import org.apache.cassandra.utils.UUIDGen;
-
-import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 
 /**
  * A Netty {@link ChannelHandler} for serializing outbound messages.
@@ -74,57 +67,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     private final AtomicLong completedMessageCount;
 
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
-    private static final MetricNameFactory factory = new DefaultNameFactory("Messaging");
-    private static final Timer serializationDelay = Metrics.timer(factory.createMetricName("MOH-SerializationLatency"));
-
-    static
-    {
-        startTimerDump();
-    }
-
-    private static void startTimerDump()
-    {
-        ScheduledExecutors.scheduledTasks.scheduleWithFixedDelay(new TimerDumper(), 1, 1, TimeUnit.SECONDS);
-    }
-
-    static class TimerDumper implements Runnable
-    {
-        long currentCount;
-
-        public void run()
-        {
-            try
-            {
-                Snapshot snapshot = serializationDelay.getSnapshot();
-
-                long lastCount = currentCount;
-                currentCount = serializationDelay.getCount();
-                if (lastCount + 10 > currentCount)
-                    return;
-
-                logger.info("JEB::SERAILIZATION_DELAY: {}", serialize(snapshot));
-            }
-            catch (Exception e)
-            {
-                logger.error("error", e);
-            }
-        }
-
-        private StringBuilder serialize(Snapshot snapshot)
-        {
-            StringBuilder sb = new StringBuilder(256);
-            sb.append(currentCount).append("::");
-            sb.append(snapshot.getMin()).append(',');
-            sb.append((long)snapshot.getMedian()).append(',');
-            sb.append((long)snapshot.get75thPercentile()).append(',');
-            sb.append((long)snapshot.get95thPercentile()).append(',');
-            sb.append((long)snapshot.get98thPercentile()).append(',');
-            sb.append((long)snapshot.get99thPercentile()).append(',');
-            sb.append((long)snapshot.get999thPercentile()).append(',');
-            sb.append(snapshot.getMax());
-            return sb;
-        }
-    }
+    private final Histogram serializationDelay = new Histogram(TimeUnit.SECONDS.toNanos(1), 3);
 
     MessageOutHandler(OutboundConnectionParams params)
     {
@@ -142,10 +85,48 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
     private int currentFrameSize;
 
     @Override
+    public void handlerAdded(ChannelHandlerContext ctx) throws Exception
+    {
+        ctx.executor().scheduleWithFixedDelay(() -> log(), 10, 1, TimeUnit.SECONDS);
+    }
+
+    private long currentCount;
+    public void log()
+    {
+        try
+        {
+            long lastCount = currentCount;
+            currentCount = serializationDelay.getTotalCount();
+            if (lastCount + 10 > currentCount)
+                return;
+
+            logger.info("JEB::SERAILIZATION_DELAY: {}", serialize(serializationDelay));
+        }
+        catch (Exception e)
+        {
+            logger.error("error", e);
+        }
+    }
+
+    private StringBuilder serialize(Histogram histogram)
+    {
+        StringBuilder sb = new StringBuilder(256);
+        sb.append(currentCount).append("::");
+        sb.append(histogram.getMinNonZeroValue()).append(',');
+        sb.append((long)histogram.getMean()).append(',');
+        sb.append(histogram.getValueAtPercentile(75)).append(',');
+        sb.append(histogram.getValueAtPercentile(95)).append(',');
+        sb.append(histogram.getValueAtPercentile(98)).append(',');
+        sb.append(histogram.getValueAtPercentile(99)).append(',');
+        sb.append(histogram.getValueAtPercentile(99.9)).append(',');
+        sb.append(histogram.getMaxValue());
+        return sb;
+    }
+
+    @Override
     protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, QueuedMessage msg, boolean preferDirect) throws Exception
     {
-        long now = System.nanoTime();
-        serializationDelay.update(now - msg.timestampNanos(), TimeUnit.NANOSECONDS);
+        serializationDelay.recordValue(System.nanoTime() - msg.timestampNanos());
 
         // frame size includes the magic and and other values *before* the actaul serialized message
         currentFrameSize = MESSAGE_PREFIX_SIZE + msg.message.serializedSize(targetMessagingVersion);
@@ -161,6 +142,7 @@ class MessageOutHandler extends MessageToByteEncoder<QueuedMessage>
 
         return buf;
     }
+
 
     @Override
     protected void encode(ChannelHandlerContext ctx, QueuedMessage msg, ByteBuf out) throws IOException
