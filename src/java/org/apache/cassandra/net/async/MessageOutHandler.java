@@ -78,7 +78,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
     private final Histogram dequeueDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
     private final Histogram flushMessagesCount = new Histogram(100_000, 3);
-    private final Histogram timeBetweenFlushed = new Histogram(TimeUnit.SECONDS.toNanos(30), 3);
+    private final Histogram timeBetweenFlushes = new Histogram(TimeUnit.MINUTES.toNanos(30), 3);
     private final Histogram serializeTime = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
 
     MessageOutHandler(OutboundConnectionParams params)
@@ -116,7 +116,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
 
             logger.info("JEB::DEQUEUE_DELAY: {}", serialize(dequeueDelay));
             logger.info("JEB::MESSAGES_PER_FLUSH: {}", serialize(flushMessagesCount));
-            logger.info("JEB::NANOS_BETWEEN_FLUSHES: {}", serialize(timeBetweenFlushed));
+            logger.info("JEB::NANOS_BETWEEN_FLUSHES: {}", serialize(timeBetweenFlushes));
             logger.info("JEB::SERIALIZE_TIME: {}", serialize(serializeTime));
         }
         catch (Exception e)
@@ -299,13 +299,15 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     {
         ctx.flush();
         flushMessagesCount.recordValue(messageSinceFlush);
+        messageSinceFlush = 0;
 
         long now = System.nanoTime();
-        if (lastFlushNanos > 0)
-            timeBetweenFlushed.recordValue(now - lastFlushNanos);
-
-        messageSinceFlush = 0;
-        lastFlushNanos = now;
+        long diff = now - lastFlushNanos;
+        if (diff > 0)
+        {
+            timeBetweenFlushes.recordValue(diff);
+            lastFlushNanos = now;
+        }
     }
 
     /**
