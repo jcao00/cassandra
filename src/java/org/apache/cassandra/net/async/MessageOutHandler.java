@@ -160,7 +160,6 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
         boolean captureHistogram = this.captureHistogram;
 //        if (message instanceof QueuedMessage)
         {
-            long now = System.nanoTime();
             QueuedMessage msg = (QueuedMessage) message;
             if (captureHistogram)
                 dequeueDelay.recordValue(System.nanoTime() - msg.timestampNanos());
@@ -171,7 +170,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
                 serializeMessage(msg, buf);
                 ctx.write(buf, promise);
                 if (captureHistogram)
-                    serializeTime.recordValue(System.nanoTime() - now);
+                    serializeTime.recordValue(System.nanoTime() - msg.timestampNanos());
                 // TODO:JEB better error handling here to make sure in the case of failure, we decrement the counts
                 completedMessageCount.incrementAndGet();
                 if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
