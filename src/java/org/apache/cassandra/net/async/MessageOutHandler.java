@@ -74,6 +74,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     private final AtomicLong pendingMessages;
     private final boolean isCoalescing;
     private final boolean captureHistogram;
+    private final ConnectionType connectionType;
 
     private int messageSinceFlush;
     private long lastFlushNanos;
@@ -98,6 +99,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
         this.completedMessageCount = completedMessageCount;
         this.pendingMessages = pendingMessageCount;
         this.isCoalescing = isCoalescing;
+        this.connectionType = connectionType;
         captureHistogram = connectionType != ConnectionType.GOSSIP;
 
         if (captureHistogram)
@@ -190,7 +192,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
             }
             catch (Exception e)
             {
-                logger.error("failed to write message to buffer", e);
+                logger.error("[{}] failed to write message to buffer", connectionType, e);
                 if (buf != null && buf.refCnt() > 0)
                     buf.release(buf.refCnt());
             }
