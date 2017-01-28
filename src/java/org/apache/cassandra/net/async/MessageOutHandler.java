@@ -76,13 +76,8 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     private final boolean captureHistogram;
     private final ConnectionType connectionType;
 
-    private int messageSinceFlush;
-    private long lastFlushNanos;
-
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
     private final Histogram dequeueDelay;
-    private final Histogram flushMessagesCount;
-    private final Histogram timeBetweenFlushes;
     private final Histogram serializeTime;
 
     MessageOutHandler(OutboundConnectionParams params)
@@ -105,15 +100,11 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
         if (captureHistogram)
         {
             dequeueDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
-            flushMessagesCount = new Histogram(100_000, 3);
-            timeBetweenFlushes = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
             serializeTime = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
         }
         else
         {
             dequeueDelay = null;
-            flushMessagesCount = null;
-            timeBetweenFlushes = null;
             serializeTime = null;
         }
     }
@@ -125,7 +116,6 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     {
         if (captureHistogram)
         {
-            lastFlushNanos = System.nanoTime();
             ctx.executor().scheduleWithFixedDelay(() -> log(), 10, 5, TimeUnit.SECONDS);
         }
     }
@@ -141,8 +131,6 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
                 return;
 
             logger.info("JEB::DEQUEUE_DELAY: {}", serialize(dequeueDelay));
-            logger.info("JEB::MESSAGES_PER_FLUSH: {}", serialize(flushMessagesCount));
-//            logger.info("JEB::NANOS_BETWEEN_FLUSHES: {}", serialize(timeBetweenFlushes));
             logger.info("JEB::SERIALIZE_TIME: {}", serialize(serializeTime));
         }
         catch (Exception e)
@@ -170,8 +158,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise) throws IOException
     {
         boolean captureHistogram = this.captureHistogram;
-        messageSinceFlush++;
-        if (message instanceof QueuedMessage)
+//        if (message instanceof QueuedMessage)
         {
             long now = System.nanoTime();
             QueuedMessage msg = (QueuedMessage) message;
@@ -188,7 +175,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
                 // TODO:JEB better error handling here to make sure in the case of failure, we decrement the counts
                 completedMessageCount.incrementAndGet();
                 if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
-                    flush0(ctx);
+                    ctx.flush();
             }
             catch (Exception e)
             {
@@ -197,12 +184,12 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
                     buf.release(buf.refCnt());
             }
         }
-        else
-        {
-            ctx.write(message, promise);
-            if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
-                flush0(ctx);
-        }
+//        else
+//        {
+//            ctx.write(message, promise);
+//            if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
+//                flush0(ctx);
+//        }
     }
 
     private ByteBuf allocateBuffer(ChannelHandlerContext ctx, QueuedMessage msg)
@@ -318,25 +305,10 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
         if (!ctx.channel().isWritable())
         {
             logger.info("got channelWritabilityChanged, channel size = {} bytes", ctx.channel().unsafe().outboundBuffer().totalPendingWriteBytes());
-            flush0(ctx);
+            ctx.flush();
         }
 
         ctx.fireChannelWritabilityChanged();
-    }
-
-    private void flush0(ChannelHandlerContext ctx)
-    {
-        ctx.flush();
-
-        if (captureHistogram)
-        {
-            flushMessagesCount.recordValue(messageSinceFlush);
-            messageSinceFlush = 0;
-
-//            long now = System.nanoTime();
-//            timeBetweenFlushes.recordValue(now - lastFlushNanos);
-//            lastFlushNanos = now;
-        }
     }
 
     /**
@@ -350,12 +322,12 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     public void flush(ChannelHandlerContext ctx)
     {
         if (isCoalescing)
-            flush0(ctx);
+            ctx.flush();
     }
 
     @Override
     public void close(ChannelHandlerContext ctx, ChannelPromise promise)
     {
-        flush0(ctx);
+        ctx.flush();
     }
 }
