@@ -73,16 +73,16 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
 
     private final AtomicLong pendingMessages;
     private final boolean isCoalescing;
-    private final ConnectionType connectionType;
+    private final boolean captureHistogram;
 
     private int messageSinceFlush;
     private long lastFlushNanos;
 
     // TODO:JEB there's metrics capturing code in here that, while handy for short-term perf testing, will need to be removed before commit
-    private final Histogram dequeueDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
-    private final Histogram flushMessagesCount = new Histogram(100_000, 3);
-    private final Histogram timeBetweenFlushes = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
-    private final Histogram serializeTime = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
+    private final Histogram dequeueDelay;
+    private final Histogram flushMessagesCount;
+    private final Histogram timeBetweenFlushes;
+    private final Histogram serializeTime;
 
     MessageOutHandler(OutboundConnectionParams params)
     {
@@ -98,7 +98,22 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
         this.completedMessageCount = completedMessageCount;
         this.pendingMessages = pendingMessageCount;
         this.isCoalescing = isCoalescing;
-        this.connectionType = connectionType;
+        captureHistogram = connectionType != ConnectionType.GOSSIP;
+
+        if (captureHistogram)
+        {
+            dequeueDelay = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
+            flushMessagesCount = new Histogram(100_000, 3);
+            timeBetweenFlushes = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
+            serializeTime = new Histogram(TimeUnit.SECONDS.toNanos(10), 3);
+        }
+        else
+        {
+            dequeueDelay = null;
+            flushMessagesCount = null;
+            timeBetweenFlushes = null;
+            serializeTime = null;
+        }
     }
 
     private int currentFrameSize;
@@ -106,8 +121,11 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception
     {
-        if (connectionType != ConnectionType.GOSSIP)
+        if (captureHistogram)
+        {
+            lastFlushNanos = System.nanoTime();
             ctx.executor().scheduleWithFixedDelay(() -> log(), 10, 5, TimeUnit.SECONDS);
+        }
     }
 
     private long currentCount;
@@ -149,19 +167,22 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     @Override
     public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise) throws IOException
     {
+        boolean captureHistogram = this.captureHistogram;
         messageSinceFlush++;
         if (message instanceof QueuedMessage)
         {
             long now = System.nanoTime();
             QueuedMessage msg = (QueuedMessage) message;
-            dequeueDelay.recordValue(System.nanoTime() - msg.timestampNanos());
+            if (captureHistogram)
+                dequeueDelay.recordValue(System.nanoTime() - msg.timestampNanos());
             captureTracingInfo(msg);
             ByteBuf buf = allocateBuffer(ctx, msg);
             try
             {
                 serializeMessage(msg, buf);
                 ctx.write(buf, promise);
-                serializeTime.recordValue(System.nanoTime() - now);
+                if (captureHistogram)
+                    serializeTime.recordValue(System.nanoTime() - now);
                 // TODO:JEB better error handling here to make sure in the case of failure, we decrement the counts
                 completedMessageCount.incrementAndGet();
                 if (pendingMessages.decrementAndGet() == 0 && !isCoalescing)
@@ -304,14 +325,16 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
     private void flush0(ChannelHandlerContext ctx)
     {
         ctx.flush();
-        flushMessagesCount.recordValue(messageSinceFlush);
-        messageSinceFlush = 0;
 
-        long now = System.nanoTime();
-        if (lastFlushNanos > 0)
+        if (captureHistogram)
+        {
+            flushMessagesCount.recordValue(messageSinceFlush);
+            messageSinceFlush = 0;
+
+            long now = System.nanoTime();
             timeBetweenFlushes.recordValue(now - lastFlushNanos);
-        else
             lastFlushNanos = now;
+        }
     }
 
     /**
