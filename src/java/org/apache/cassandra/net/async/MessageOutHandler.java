@@ -142,7 +142,7 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
 
             logger.info("JEB::DEQUEUE_DELAY: {}", serialize(dequeueDelay));
             logger.info("JEB::MESSAGES_PER_FLUSH: {}", serialize(flushMessagesCount));
-            logger.info("JEB::NANOS_BETWEEN_FLUSHES: {}", serialize(timeBetweenFlushes));
+//            logger.info("JEB::NANOS_BETWEEN_FLUSHES: {}", serialize(timeBetweenFlushes));
             logger.info("JEB::SERIALIZE_TIME: {}", serialize(serializeTime));
         }
         catch (Exception e)
@@ -333,9 +333,9 @@ class MessageOutHandler extends ChannelDuplexHandler // extends MessageToByteEnc
             flushMessagesCount.recordValue(messageSinceFlush);
             messageSinceFlush = 0;
 
-            long now = System.nanoTime();
-            timeBetweenFlushes.recordValue(now - lastFlushNanos);
-            lastFlushNanos = now;
+//            long now = System.nanoTime();
+//            timeBetweenFlushes.recordValue(now - lastFlushNanos);
+//            lastFlushNanos = now;
         }
     }
 
