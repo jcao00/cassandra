@@ -161,8 +161,10 @@ public class OutboundTcpConnection extends Thread
 
     void closeSocket(boolean destroyThread)
     {
-        backlog.clear();
         isStopped = destroyThread; // Exit loop to stop the thread
+        backlog.clear();
+        //  in the "destroyThread = true" case, this is important mostly to unblock the backlog.take()
+        // (via the CoalescingStrategy) in case there's a data race between this method and
         enqueue(CLOSE_SENTINEL, -1);
     }
 
@@ -183,7 +185,7 @@ public class OutboundTcpConnection extends Thread
         final List<QueuedMessage> drainedMessages = new ArrayList<>(drainedMessageSize);
 
         outer:
-        while (true)
+        while (!isStopped)
         {
             try
             {
@@ -199,6 +201,7 @@ public class OutboundTcpConnection extends Thread
             int count = drainedMessages.size();
             //The timestamp of the first message has already been provided to the coalescing strategy
             //so skip logging it.
+            inner:
             for (QueuedMessage qm : drainedMessages)
             {
                 try
@@ -217,8 +220,12 @@ public class OutboundTcpConnection extends Thread
                     else if (socket != null || connect())
                         writeConnected(qm, count == 1 && backlog.isEmpty());
                     else
+                    {
                         // clear out the queue, else gossip messages back up.
+                        drainedMessages.clear();
                         backlog.clear();
+                        break inner;
+                    }
                 }
                 catch (Exception e)
                 {
