@@ -45,7 +45,6 @@ import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
-import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions.InternodeEncryption;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.security.SSLFactory;
@@ -53,7 +52,6 @@ import org.apache.cassandra.service.NativeTransportService;
 import org.apache.cassandra.utils.ChecksumType;
 import org.apache.cassandra.utils.CoalescingStrategies;
 import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.NativeLibrary;
 
 /**
  * A factory for building Netty {@link Channel}s. Channels here are setup with a pipeline to participate
@@ -70,17 +68,13 @@ public final class NettyFactory
 
     private static final int LZ4_HASH_SEED = 0x9747b28c;
 
-    /**
-     * Default seed value for xxhash.
-     */
-    public static final int XXHASH_DEFAULT_SEED = 0x9747b28c;
-
     public enum Mode { MESSAGING, STREAMING }
 
-    private static final String SSL_CHANNEL_HANDLER_NAME = "ssl";
-    public static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
-    public static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
-    public static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
+    static final String SSL_CHANNEL_HANDLER_NAME = "ssl";
+    private static final String OPTIONAL_SSL_CHANNEL_HANDLER_NAME = "optionalSsl";
+    static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
+    static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
+    private static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
     public static final String INBOUND_STREAM_HANDLER_NAME = "inboundStreamHandler";
 
     /** a useful addition for debugging; simply set to true to get more data in your logs */
@@ -125,7 +119,7 @@ public final class NettyFactory
     NettyFactory(boolean useEpoll)
     {
         this.useEpoll = useEpoll;
-        acceptGroup = getEventLoopGroup(useEpoll, determineAcceptGroupSize(DatabaseDescriptor.getServerEncryptionOptions().internode_encryption),
+        acceptGroup = getEventLoopGroup(useEpoll, determineAcceptGroupSize(DatabaseDescriptor.getServerEncryptionOptions()),
                                         "MessagingService-NettyAcceptor-Thread", false);
         inboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyInbound-Thread", false);
         outboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyOutbound-Thread", true);
@@ -134,16 +128,11 @@ public final class NettyFactory
 
     /**
      * Determine the number of accept threads we need, which is based upon the number of listening sockets we will have.
-     * We'll have either 1 or 2 listen sockets, depending on if we use SSL or not in combination with non-SSL. If we have both,
-     * we'll have two sockets, and thus need two threads; else one socket and one thread.
-     *
-     * If the operator has configured multiple IP addresses (both {@link org.apache.cassandra.config.Config#broadcast_address}
-     * and {@link org.apache.cassandra.config.Config#listen_address} are configured), then we listen on another set of sockets
-     * - basically doubling the count. See CASSANDRA-9748 for more details.
+     * We'll have either 1 or 2 listen sockets, depending on if we use SSL or not.
      */
-    static int determineAcceptGroupSize(InternodeEncryption internode_encryption)
+    static int determineAcceptGroupSize(ServerEncryptionOptions serverEncryptionOptions)
     {
-        int listenSocketCount = internode_encryption == InternodeEncryption.dc || internode_encryption == InternodeEncryption.rack ? 2 : 1;
+        int listenSocketCount = serverEncryptionOptions.enabled ? 2 : 1;
 
         if (MessagingService.shouldListenOnBroadcastAddress())
             listenSocketCount *= 2;
@@ -256,12 +245,19 @@ public final class NettyFactory
             ChannelPipeline pipeline = channel.pipeline();
 
             // order of handlers: ssl -> logger -> handshakeHandler
-            if (encryptionOptions != null)
+            if (encryptionOptions.enabled)
             {
-                SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, true, true);
-                SslHandler sslHandler = sslContext.newHandler(channel.alloc());
-                logger.trace("creating inbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
-                pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
+                if (encryptionOptions.optional)
+                {
+                    pipeline.addFirst(OPTIONAL_SSL_CHANNEL_HANDLER_NAME, new OptionalSslHandler(encryptionOptions));
+                }
+                else
+                {
+                    SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, true, true);
+                    SslHandler sslHandler = sslContext.newHandler(channel.alloc());
+                    logger.trace("creating inbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
+                    pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
+                }
             }
 
             if (WIRETRACE)
@@ -271,7 +267,7 @@ public final class NettyFactory
         }
     }
 
-    private String encryptionLogStatement(ServerEncryptionOptions options)
+    private static String encryptionLogStatement(ServerEncryptionOptions options)
     {
         if (options == null)
             return "disabled";
@@ -287,9 +283,11 @@ public final class NettyFactory
     @VisibleForTesting
     public Bootstrap createOutboundBootstrap(OutboundConnectionParams params)
     {
-        logger.debug("creating outbound bootstrap to peer {}, compression: {}, encryption: {}, coalesce: {}", params.connectionId.connectionAddress(),
+        logger.debug("creating outbound bootstrap to peer {}, compression: {}, encryption: {}, coalesce: {}, protocolVersion: {}",
+                     params.connectionId.connectionAddress(),
                      params.compress, encryptionLogStatement(params.encryptionOptions),
-                     params.coalescingStrategy.isPresent() ? params.coalescingStrategy.get() : CoalescingStrategies.Strategy.DISABLED);
+                     params.coalescingStrategy.isPresent() ? params.coalescingStrategy.get() : CoalescingStrategies.Strategy.DISABLED,
+                     params.protocolVersion);
         Class<? extends Channel> transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
         Bootstrap bootstrap = new Bootstrap().group(params.mode == Mode.MESSAGING ? outboundGroup : streamingGroup)
                               .channel(transport)

@@ -750,27 +750,25 @@ public final class MessagingService implements MessagingServiceMBean
     {
         IInternodeAuthenticator authenticator = DatabaseDescriptor.getInternodeAuthenticator();
         int receiveBufferSize = DatabaseDescriptor.getInternodeRecvBufferSize();
+        ServerEncryptionOptions serverEncryptionOptions = DatabaseDescriptor.getServerEncryptionOptions();
 
-        if (DatabaseDescriptor.getServerEncryptionOptions().internode_encryption != ServerEncryptionOptions.InternodeEncryption.none)
+        // this is the legacy socket, for letting peer nodes that haven't upgrade yet connect to this node.
+        // should only occur during cluster upgrade. we can remove this block at 5.0!
+        if (serverEncryptionOptions.enabled)
         {
             InetSocketAddress localAddr = new InetSocketAddress(localEp, DatabaseDescriptor.getSSLStoragePort());
-            ChannelGroup channelGroup = new DefaultChannelGroup("EncryptedInternodeMessagingGroup", NettyFactory.executorForChannelGroups());
-            InboundInitializer initializer = new InboundInitializer(authenticator, DatabaseDescriptor.getServerEncryptionOptions(), channelGroup);
+            ChannelGroup channelGroup = new DefaultChannelGroup("LegacyEncryptedInternodeMessagingGroup", NettyFactory.executorForChannelGroups());
+            InboundInitializer initializer = new InboundInitializer(authenticator, serverEncryptionOptions, channelGroup);
             Channel encryptedChannel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
             serverChannels.add(new ServerChannel(encryptedChannel, channelGroup));
         }
 
-        if (DatabaseDescriptor.getServerEncryptionOptions().internode_encryption != ServerEncryptionOptions.InternodeEncryption.all)
-        {
-            InetSocketAddress localAddr = new InetSocketAddress(localEp, DatabaseDescriptor.getStoragePort());
-            ChannelGroup channelGroup = new DefaultChannelGroup("InternodeMessagingGroup", NettyFactory.executorForChannelGroups());
-            InboundInitializer initializer = new InboundInitializer(authenticator, null, channelGroup);
-            Channel channel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
-            serverChannels.add(new ServerChannel(channel, channelGroup));
-        }
-
-        if (serverChannels.isEmpty())
-            throw new IllegalStateException("no listening channels set up in MessagingService!");
+        // this is for the socket that can be plain, only ssl, or optional plain/ssl
+        InetSocketAddress localAddr = new InetSocketAddress(localEp, DatabaseDescriptor.getStoragePort());
+        ChannelGroup channelGroup = new DefaultChannelGroup("InternodeMessagingGroup", NettyFactory.executorForChannelGroups());
+        InboundInitializer initializer = new InboundInitializer(authenticator, serverEncryptionOptions, channelGroup);
+        Channel channel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
+        serverChannels.add(new ServerChannel(channel, channelGroup));
     }
 
     /**
@@ -801,6 +799,7 @@ public final class MessagingService implements MessagingServiceMBean
             channel.close().syncUninterruptibly();
             connectedChannels.close().syncUninterruptibly();
         }
+
         int size()
 
         {
@@ -1442,7 +1441,7 @@ public final class MessagingService implements MessagingServiceMBean
         if (pool == null)
         {
             final boolean secure = isEncryptedConnection(to);
-            final int port = portFor(secure);
+            final int port = portFor(to, secure);
             if (!DatabaseDescriptor.getInternodeAuthenticator().authenticate(to, port))
                 return null;
 
@@ -1462,15 +1461,25 @@ public final class MessagingService implements MessagingServiceMBean
         return pool;
     }
 
-    public static int portFor(InetAddress addr)
+    public int portFor(InetAddress addr)
     {
         final boolean secure = isEncryptedConnection(addr);
-        return portFor(secure);
+        return portFor(addr, secure);
     }
 
-    private static int portFor(boolean secure)
+    private int portFor(InetAddress address, boolean secure)
     {
-        return secure ? DatabaseDescriptor.getSSLStoragePort() : DatabaseDescriptor.getStoragePort();
+        if (!secure)
+            return DatabaseDescriptor.getStoragePort();
+
+        Integer v = versions.get(address);
+        // if we don't know the version of the peer, assume it is 4.0 (or higher) as the only time is would be lower
+        // (as in a 3.x version) is during a cluster upgrade (from 3.x to 4.0). In that case the outbound connection will
+        // unfortunately fail - however the peer should connect to this node (at some point), and once we learn it's version, it'll be
+        // in versions map. thus, when we attempt to reconnect to that node, we'll have the version and we can get the correct port.
+        // we will be able to remove this logic at 5.0.
+        int version = v != null ? v.intValue() : VERSION_40;
+        return version < VERSION_40 ? DatabaseDescriptor.getSSLStoragePort() : DatabaseDescriptor.getStoragePort();
     }
 
     @VisibleForTesting

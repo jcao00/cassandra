@@ -152,6 +152,12 @@ public class OutboundConnectionIdentifier
         return remoteConnectionAddr;
     }
 
+    public OutboundConnectionIdentifier withUpdatedRemotePort(int port)
+    {
+        return new OutboundConnectionIdentifier(localAddr, new InetSocketAddress(remoteAddr.getAddress(), port),
+                                                new InetSocketAddress(remoteConnectionAddr.getAddress(), port), connectionType);
+    }
+
     /**
      * The type of this connection.
      */
