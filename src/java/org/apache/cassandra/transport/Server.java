@@ -24,7 +24,6 @@ import java.net.UnknownHostException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 
 import org.slf4j.Logger;
@@ -32,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.*;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
@@ -40,6 +40,7 @@ import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
+import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.Version;
 import io.netty.util.concurrent.EventExecutor;
@@ -334,31 +335,29 @@ public class Server implements CassandraDaemon.Server
 
     protected abstract static class AbstractSecureIntializer extends Initializer
     {
-        private final SSLContext sslContext;
         private final EncryptionOptions encryptionOptions;
 
         protected AbstractSecureIntializer(Server server, EncryptionOptions encryptionOptions)
         {
             super(server);
             this.encryptionOptions = encryptionOptions;
+        }
+
+        protected final SslHandler createSslHandler(ByteBufAllocator allocator)
+        {
             try
             {
-                this.sslContext = SSLFactory.createSSLContext(encryptionOptions, encryptionOptions.require_client_auth);
+                SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, encryptionOptions.require_client_auth, true);
+                SslHandler handler = sslContext.newHandler(allocator);
+                SSLEngine sslEngine = handler.engine();
+                sslEngine.setUseClientMode(false);
+                sslEngine.setNeedClientAuth(encryptionOptions.require_client_auth);
+                return handler;
             }
             catch (IOException e)
             {
                 throw new RuntimeException("Failed to setup secure pipeline", e);
             }
-        }
-
-        protected final SslHandler createSslHandler()
-        {
-            SSLEngine sslEngine = sslContext.createSSLEngine();
-            sslEngine.setUseClientMode(false);
-            String[] suites = SSLFactory.filterCipherSuites(sslEngine.getSupportedCipherSuites(), encryptionOptions.cipher_suites);
-            sslEngine.setEnabledCipherSuites(suites);
-            sslEngine.setNeedClientAuth(encryptionOptions.require_client_auth);
-            return new SslHandler(sslEngine);
         }
     }
 
@@ -387,7 +386,7 @@ public class Server implements CassandraDaemon.Server
                     {
                         // Connection uses SSL/TLS, replace the detection handler with a SslHandler and so use
                         // encryption.
-                        SslHandler sslHandler = createSslHandler();
+                        SslHandler sslHandler = createSslHandler(channelHandlerContext.alloc());
                         channelHandlerContext.pipeline().replace(this, "ssl", sslHandler);
                     }
                     else
@@ -410,7 +409,7 @@ public class Server implements CassandraDaemon.Server
 
         protected void initChannel(Channel channel) throws Exception
         {
-            SslHandler sslHandler = createSslHandler();
+            SslHandler sslHandler = createSslHandler(channel.alloc());
             super.initChannel(channel);
             channel.pipeline().addFirst("ssl", sslHandler);
         }

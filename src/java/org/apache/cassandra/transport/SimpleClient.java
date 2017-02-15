@@ -40,8 +40,10 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.handler.ssl.SslContext;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
+import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.security.SSLFactory;
@@ -287,21 +289,13 @@ public class SimpleClient implements Closeable
 
     private class SecureInitializer extends Initializer
     {
-        private final SSLContext sslContext;
-
-        public SecureInitializer() throws IOException
-        {
-            this.sslContext = SSLFactory.createSSLContext(encryptionOptions, true);
-        }
-
         protected void initChannel(Channel channel) throws Exception
         {
-            super.initChannel(channel);
-            SSLEngine sslEngine = sslContext.createSSLEngine();
+            SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, encryptionOptions.require_client_auth, true);
+            SslHandler handler = sslContext.newHandler(channel.alloc());
+            SSLEngine sslEngine = handler.engine();
             sslEngine.setUseClientMode(true);
-            String[] suites = SSLFactory.filterCipherSuites(sslEngine.getSupportedCipherSuites(), encryptionOptions.cipher_suites);
-            sslEngine.setEnabledCipherSuites(suites);
-            channel.pipeline().addFirst("ssl", new SslHandler(sslEngine));
+            channel.pipeline().addFirst("ssl", handler);
         }
     }
 
