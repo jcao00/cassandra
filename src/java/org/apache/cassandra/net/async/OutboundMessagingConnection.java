@@ -47,6 +47,7 @@ import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.NettyFactory.Mode;
 import org.apache.cassandra.net.async.OutboundHandshakeHandler.HandshakeResult;
+import org.apache.cassandra.utils.CoalescingStrategies;
 import org.apache.cassandra.utils.CoalescingStrategies.CoalescingStrategy;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.NoSpamLogger;
@@ -411,7 +412,8 @@ public class OutboundMessagingConnection
         {
             case SUCCESS:
                 assert result.channelWriter != null;
-                logger.debug("successfully connected to {}, coalescing = {}", connectionId, coalescingStrategy != null);
+                logger.debug("successfully connected to {}, coalescing = {}", connectionId,
+                             coalescingStrategy.isPresent() ? coalescingStrategy.get() : CoalescingStrategies.Strategy.DISABLED);
                 if (state.get() == State.CLOSED)
                 {
                     result.channelWriter.close();

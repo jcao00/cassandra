@@ -182,6 +182,14 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
         return channelWriter;
     }
 
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
+    {
+        logger.error("Failed to properly handshake with peer {}. Closing the channel.", connectionId, cause);
+        ctx.close();
+        callback.accept(HandshakeResult.failed());
+    }
+
     /**
      * The result of the handshake. Handshake has 3 possible outcomes:
      *  1) it can be successful, in which case the channel and version to used is returned in this result.

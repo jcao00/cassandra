@@ -3,6 +3,9 @@ package org.apache.cassandra.net.async;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLParameters;
+
 import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -291,6 +294,15 @@ public final class NettyFactory
             {
                 SslContext sslContext = SSLFactory.getSslContext(params.encryptionOptions, true, false);
                 SslHandler sslHandler = sslContext.newHandler(channel.alloc());
+
+                if (params.encryptionOptions.require_endpoint_verification)
+                {
+                    SSLEngine engine = sslHandler.engine();
+                    SSLParameters sslParameters = engine.getSSLParameters();
+                    sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+                    engine.setSSLParameters(sslParameters);
+                }
+
                 logger.trace("creating outbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
                 pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
             }
