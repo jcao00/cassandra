@@ -373,6 +373,8 @@ public class OutboundMessagingConnection
 
         if (initialState != State.READY)
         {
+            logger.debug("timed out while trying to connect to {}", connectionId);
+
             channelFuture.channel().close();
             // a last-ditch attempt to let finishHandshake() win the race
             if (state.compareAndSet(initialState, State.NOT_READY))
