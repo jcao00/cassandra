@@ -68,7 +68,14 @@ public final class SSLFactory
     @VisibleForTesting
     static volatile boolean checkedExpiry = false;
 
+    /**
+     * A cached reference of the {@link SslContext} for client-facing connections.
+     */
     private static final AtomicReference<SslContext> clientSslContext = new AtomicReference<>();
+
+    /**
+     * A cached reference of the {@link SslContext} for peer-to-peer, internode messaging connections.
+     */
     private static final AtomicReference<SslContext> serverSslContext = new AtomicReference<>();
 
     /** Create a socket and connect */
@@ -234,10 +241,6 @@ public final class SSLFactory
         if (forServer || options.require_client_auth)
             kmf = buildKeyManagerFactory(options);
 
-        TrustManagerFactory tmf = null;
-        if (buildTruststore)
-            tmf = buildTrustManagerFactory(options);
-
         SslContextBuilder builder;
         if (forServer)
         {
@@ -249,11 +252,17 @@ public final class SSLFactory
             builder = SslContextBuilder.forClient().keyManager(kmf);
         }
 
-        SslContext ctx = builder.ciphers(Arrays.asList(options.cipher_suites), SupportedCipherSuiteFilter.INSTANCE)
-                                .sslProvider(useOpenSsl ? SslProvider.OPENSSL : SslProvider.JDK)
-                                .trustManager(tmf)
-                                .build();
+        builder.sslProvider(useOpenSsl ? SslProvider.OPENSSL : SslProvider.JDK);
 
+        // only set the cipher suites if the opertor has explicity configured values for it; else, use the default
+        // for each ssl implemention (jdk or openssl)
+        if (options.cipher_suites != null && options.cipher_suites.length > 0)
+            builder.ciphers(Arrays.asList(options.cipher_suites), SupportedCipherSuiteFilter.INSTANCE);
+
+        if (buildTruststore)
+            builder.trustManager(buildTrustManagerFactory(options));
+
+        SslContext ctx = builder.build();
         AtomicReference<SslContext> ref = forServer ? serverSslContext : clientSslContext;
         if (ref.compareAndSet(null, ctx))
             return ctx;

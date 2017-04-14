@@ -21,6 +21,7 @@ package org.apache.cassandra.security;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.security.cert.CertificateException;
+import java.util.Arrays;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.TrustManagerFactory;
 
@@ -106,6 +107,7 @@ public class SSLFactoryTest
         EncryptionOptions options = addKeystoreOptions(encryptionOptions);
         SslContext sslContext = SSLFactory.getSslContext(options, true, true, false);
         Assert.assertNotNull(sslContext);
+        Assert.assertEquals(Arrays.asList(encryptionOptions.cipher_suites), sslContext.cipherSuites());
     }
 
     private EncryptionOptions addKeystoreOptions(EncryptionOptions options)
