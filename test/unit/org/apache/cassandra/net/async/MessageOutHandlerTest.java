@@ -20,7 +20,6 @@ package org.apache.cassandra.net.async;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Optional;
 import java.util.UUID;
@@ -31,10 +30,13 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.DefaultChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.UnsupportedMessageTypeException;
+import io.netty.handler.timeout.IdleStateEvent;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
@@ -204,5 +206,54 @@ public class MessageOutHandlerTest
         Tracing.instance.newSession(new HashMap<>());
         MessageOut message = new MessageOut(MessagingService.Verb.REQUEST_RESPONSE);
         handler.captureTracingInfo(new QueuedMessage(message, 42));
+    }
+
+    @Test
+    public void userEventTriggered_RandomObject()
+    {
+        Assert.assertTrue(channel.isOpen());
+        ChannelUserEventSender sender = new ChannelUserEventSender();
+        channel.pipeline().addFirst(sender);
+        sender.sendEvent("ThisIsAFakeEvent");
+        Assert.assertTrue(channel.isOpen());
+    }
+
+    @Test
+    public void userEventTriggered_Idle_NoPendingBytes()
+    {
+        Assert.assertTrue(channel.isOpen());
+        ChannelUserEventSender sender = new ChannelUserEventSender();
+        channel.pipeline().addFirst(sender);
+        sender.sendEvent(IdleStateEvent.WRITER_IDLE_STATE_EVENT);
+        Assert.assertTrue(channel.isOpen());
+    }
+
+    @Test
+    public void userEventTriggered_Idle_WithPendingBytes()
+    {
+        Assert.assertTrue(channel.isOpen());
+        ChannelUserEventSender sender = new ChannelUserEventSender();
+        channel.pipeline().addFirst(sender);
+
+        MessageOut message = new MessageOut(MessagingService.Verb.INTERNAL_RESPONSE);
+        channel.writeOutbound(new QueuedMessage(message, 42));
+        sender.sendEvent(IdleStateEvent.WRITER_IDLE_STATE_EVENT);
+        Assert.assertFalse(channel.isOpen());
+    }
+
+    private static class ChannelUserEventSender extends ChannelOutboundHandlerAdapter
+    {
+        private ChannelHandlerContext ctx;
+
+        @Override
+        public void handlerAdded(final ChannelHandlerContext ctx) throws Exception
+        {
+            this.ctx = ctx;
+        }
+
+        private void sendEvent(Object event)
+        {
+            ctx.fireUserEventTriggered(event);
+        }
     }
 }

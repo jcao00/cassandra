@@ -19,6 +19,7 @@
 package org.apache.cassandra.net.async;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -33,6 +34,7 @@ import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.compression.Lz4FrameEncoder;
+import io.netty.handler.timeout.IdleStateHandler;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -40,7 +42,6 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.HandshakeProtocol.FirstHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.SecondHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.ThirdHandshakeMessage;
-import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
  * A {@link ChannelHandler} to execute the send-side of the internode communication handshake protocol.
@@ -60,6 +61,12 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
     private static final Logger logger = LoggerFactory.getLogger(OutboundHandshakeHandler.class);
 
     private static final int LZ4_HASH_SEED = 0x9747b28c;
+
+    /**
+     * The number of milliseconds to wait before closing a channel if there has been no progress.
+     * See {@link IdleStateHandler} and {@link MessageOutHandler#userEventTriggered(ChannelHandlerContext, Object)}.
+     */
+    private static final long WRITE_IDLE_MS = TimeUnit.SECONDS.toMillis(10);
 
     private final OutboundConnectionIdentifier connectionId;
 
@@ -172,6 +179,7 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
     ChannelWriter setupPipeline(Channel channel, int messagingVersion)
     {
         ChannelPipeline pipeline = channel.pipeline();
+        pipeline.addLast("idleWriteHandler", new IdleStateHandler(true, 0, WRITE_IDLE_MS, 0, TimeUnit.MILLISECONDS));
         if (params.compress)
             pipeline.addLast(NettyFactory.OUTBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameEncoder(LZ4Factory.fastestInstance(), false, 1 << 14,
                                                                                                 XXHashFactory.fastestInstance().newStreamingHash32(LZ4_HASH_SEED).asChecksum()));

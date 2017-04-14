@@ -31,8 +31,11 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundBuffer;
 import io.netty.channel.ChannelPromise;
 import io.netty.handler.codec.UnsupportedMessageTypeException;
+import io.netty.handler.timeout.IdleState;
+import io.netty.handler.timeout.IdleStateEvent;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
@@ -223,6 +226,25 @@ class MessageOutHandler extends ChannelDuplexHandler
     public void flush(ChannelHandlerContext ctx)
     {
         channelWriter.onTriggeredFlush(ctx);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * If we get an {@link IdleStateEvent} for the write path, we want to close the channel as we can't make progress.
+     * That assumes, of course, that there's any outstanding bytes in the channel to write. We don't necesarrily care
+     * about idleness (for example, gossip channels will be idle most of the time), but instead our concern is
+     * the ability to make progress when there's work to be done.
+     */
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt)
+    {
+        if (evt instanceof IdleStateEvent && ((IdleStateEvent)evt).state() == IdleState.WRITER_IDLE)
+        {
+            ChannelOutboundBuffer cob = ctx.channel().unsafe().outboundBuffer();
+            if (cob != null && cob.totalPendingWriteBytes() > 0)
+                ctx.close();
+        }
     }
 
     @Override
