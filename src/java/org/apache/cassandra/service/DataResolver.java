@@ -411,10 +411,17 @@ public class DataResolver extends ResponseResolver
 
         private class ShortReadRowProtection extends Transformation implements MoreRows<UnfilteredRowIterator>
         {
+            // why this value? seems like a decent enough SWAG, lacking any better insight ....
+            private static final int MAX_EXECUTION_COUNT = 8;
+
             final CFMetaData metadata;
             final DecoratedKey partitionKey;
             Clustering lastClustering;
-            int lastCount = 0;
+
+            /**
+             * Counter of the number of time we've sent a request to get more content.
+             */
+            int moreContentsCount = 8;
 
             private ShortReadRowProtection(CFMetaData metadata, DecoratedKey partitionKey)
             {
@@ -442,9 +449,9 @@ public class DataResolver extends ResponseResolver
                 // Also note that we only get here once all the results for this node have been returned, and so
                 // if the node had returned the requested number but we still get there, it imply some results were
                 // skipped during reconciliation.
-                if (lastCount == counter.counted() || !counter.isDoneForPartition())
+                if (moreContentsCount == MAX_EXECUTION_COUNT || !counter.isDoneForPartition())
                     return null;
-                lastCount = counter.counted();
+                moreContentsCount++;
 
                 assert !postReconciliationCounter.isDoneForPartition();
 
