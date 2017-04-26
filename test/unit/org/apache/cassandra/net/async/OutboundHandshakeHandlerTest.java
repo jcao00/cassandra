@@ -73,6 +73,7 @@ public class OutboundHandshakeHandlerTest
                                          .connectionId(connectionId)
                                          .callback(handshakeResult -> callbackHandler.receive(handshakeResult))
                                          .mode(NettyFactory.Mode.MESSAGING)
+                                         .protocolVersion(MessagingService.current_version)
                                          .coalescingStrategy(Optional.empty())
                                          .build();
         handler = new OutboundHandshakeHandler(params);
@@ -157,7 +158,7 @@ public class OutboundHandshakeHandlerTest
     {
         EmbeddedChannel chan = new EmbeddedChannel(new ChannelOutboundHandlerAdapter());
         ChannelPipeline pipeline =  chan.pipeline();
-        params = OutboundConnectionParams.builder(params).compress(true).build();
+        params = OutboundConnectionParams.builder(params).compress(true).protocolVersion(MessagingService.current_version).build();
         handler = new OutboundHandshakeHandler(params);
         pipeline.addFirst(handler);
         handler.setupPipeline(chan, MESSAGING_VERSION);
@@ -171,7 +172,7 @@ public class OutboundHandshakeHandlerTest
     {
         EmbeddedChannel chan = new EmbeddedChannel(new ChannelOutboundHandlerAdapter());
         ChannelPipeline pipeline =  chan.pipeline();
-        params = OutboundConnectionParams.builder(params).compress(false).build();
+        params = OutboundConnectionParams.builder(params).compress(false).protocolVersion(MessagingService.current_version).build();
         handler = new OutboundHandshakeHandler(params);
         pipeline.addFirst(handler);
         handler.setupPipeline(chan, MESSAGING_VERSION);

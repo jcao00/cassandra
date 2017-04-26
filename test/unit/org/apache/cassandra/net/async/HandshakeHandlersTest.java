@@ -77,6 +77,7 @@ public class HandshakeHandlersTest
                                                                   .connectionId(connectionId)
                                                                   .callback(imc::finishHandshake)
                                                                   .mode(NettyFactory.Mode.MESSAGING)
+                                                                  .protocolVersion(MessagingService.current_version)
                                                                   .coalescingStrategy(Optional.empty())
                                                                   .build();
         OutboundHandshakeHandler outboundHandshakeHandler = new OutboundHandshakeHandler(params);
@@ -165,6 +166,7 @@ public class HandshakeHandlersTest
                                                                   .mode(NettyFactory.Mode.MESSAGING)
                                                                   .compress(compress)
                                                                   .coalescingStrategy(Optional.empty())
+                                                                  .protocolVersion(MessagingService.current_version)
                                                                   .build();
         OutboundHandshakeHandler outboundHandshakeHandler = new OutboundHandshakeHandler(params);
         EmbeddedChannel outboundChannel = new EmbeddedChannel(outboundHandshakeHandler);

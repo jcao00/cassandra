@@ -239,6 +239,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
                                                                   .connectionId(connectionId)
                                                                   .encryptionOptions(encryptionOptions)
                                                                   .mode(NettyFactory.Mode.STREAMING)
+                                                                  .protocolVersion(StreamMessage.CURRENT_VERSION)
                                                                   .sendBufferSize(sendBufferSize)
                                                                   .waterMark(waterMark)
                                                                   .build();

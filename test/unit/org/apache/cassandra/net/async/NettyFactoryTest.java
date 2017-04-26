@@ -41,6 +41,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions.InternodeEncryption;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.NettyFactory.InboundInitializer;
 import org.apache.cassandra.net.async.NettyFactory.OutboundInitializer;
 import org.apache.cassandra.utils.NativeLibrary;
@@ -204,6 +205,7 @@ public class NettyFactoryTest
         OutboundConnectionParams params = OutboundConnectionParams.builder()
                                                                   .connectionId(id)
                                                                   .coalescingStrategy(Optional.empty())
+                                                                  .protocolVersion(MessagingService.current_version)
                                                                   .build();
         return factory.createOutboundBootstrap(params, true);
     }
@@ -254,6 +256,7 @@ public class NettyFactoryTest
         OutboundConnectionParams params = OutboundConnectionParams.builder()
                                                                   .connectionId(id)
                                                                   .encryptionOptions(encOptions())
+                                                                  .protocolVersion(MessagingService.current_version)
                                                                   .build();
         OutboundInitializer outboundInitializer = new OutboundInitializer(params, true);
         NioSocketChannel channel = new NioSocketChannel();

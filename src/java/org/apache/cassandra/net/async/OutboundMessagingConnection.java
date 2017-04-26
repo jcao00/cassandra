@@ -293,6 +293,7 @@ public class OutboundMessagingConnection
                                                                   .coalescingStrategy(coalescingStrategy)
                                                                   .sendBufferSize(sendBufferSize)
                                                                   .tcpNoDelay(tcpNoDelay)
+                                                                  .protocolVersion(MessagingService.instance().getVersion(connectionId.remote()))
                                                                   .build();
 
         return NettyFactory.instance.createOutboundBootstrap(params, true);

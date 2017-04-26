@@ -44,6 +44,7 @@ public class OutboundConnectionParams
     final int sendBufferSize;
     final boolean tcpNoDelay;
     final WriteBufferWaterMark waterMark;
+    final int protocolVersion;
 
     private OutboundConnectionParams(OutboundConnectionIdentifier connectionId,
                                      Consumer<HandshakeResult> callback,
@@ -53,7 +54,8 @@ public class OutboundConnectionParams
                                      Optional<CoalescingStrategy> coalescingStrategy,
                                      int sendBufferSize,
                                      boolean tcpNoDelay,
-                                     WriteBufferWaterMark waterMark)
+                                     WriteBufferWaterMark waterMark,
+                                     int protocolVersion)
     {
         this.connectionId = connectionId;
         this.callback = callback;
@@ -64,6 +66,7 @@ public class OutboundConnectionParams
         this.sendBufferSize = sendBufferSize;
         this.tcpNoDelay = tcpNoDelay;
         this.waterMark = waterMark;
+        this.protocolVersion = protocolVersion;
     }
 
     public static Builder builder()
@@ -87,6 +90,7 @@ public class OutboundConnectionParams
         private int sendBufferSize = DEFAULT_SEND_BUFFER_SIZE;
         private boolean tcpNoDelay;
         private WriteBufferWaterMark waterMark = WriteBufferWaterMark.DEFAULT;
+        int protocolVersion;
 
         private Builder()
         {   }
@@ -157,12 +161,19 @@ public class OutboundConnectionParams
             return this;
         }
 
+        public Builder protocolVersion(int protocolVersion)
+        {
+            this.protocolVersion = protocolVersion;
+            return this;
+        }
+
         public OutboundConnectionParams build()
         {
+            Preconditions.checkArgument(protocolVersion != 0, "illegal protocol version: " + protocolVersion);
             Preconditions.checkArgument(sendBufferSize > 0 && sendBufferSize < 1 << 20, "illegal send buffer size: " + sendBufferSize);
 
             return new OutboundConnectionParams(connectionId, callback, encryptionOptions, mode, compress,
-                                                coalescingStrategy, sendBufferSize, tcpNoDelay, waterMark);
+                                                coalescingStrategy, sendBufferSize, tcpNoDelay, waterMark, protocolVersion);
         }
     }
 }

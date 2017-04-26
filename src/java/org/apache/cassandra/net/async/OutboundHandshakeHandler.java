@@ -71,7 +71,7 @@ public class OutboundHandshakeHandler extends ByteToMessageDecoder
 
     OutboundHandshakeHandler(OutboundConnectionParams params)
     {
-        this(params, MessagingService.instance().getVersion(params.connectionId.remote()));
+        this(params, params.protocolVersion);
     }
 
     @VisibleForTesting
