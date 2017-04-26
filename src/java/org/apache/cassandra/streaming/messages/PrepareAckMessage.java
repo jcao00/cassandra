@@ -24,8 +24,6 @@ import java.util.UUID;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.Pair;
 
 public class PrepareAckMessage extends StreamMessage
@@ -55,16 +53,12 @@ public class PrepareAckMessage extends StreamMessage
     }
 
     @Override
-    public MessageOut<PrepareAckMessage> createMessageOut()
-    {
-        return new MessageOut<>(MessagingService.Verb.STREAM_PREPARE_ACK, this, serializer);
-    }
-
     public Type getType()
     {
         return Type.PREPARE_ACK;
     }
 
+    @Override
     public IVersionedSerializer<? extends StreamMessage> getSerializer()
     {
         return serializer;

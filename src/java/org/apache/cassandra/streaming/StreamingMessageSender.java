@@ -18,23 +18,13 @@
 
 package org.apache.cassandra.streaming;
 
-import java.io.IOException;
-
-import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 
 public interface StreamingMessageSender
 {
-    /**
-     * Invoked when a node wants to start a stream session with a peer.
-     */
-    void initialize() throws IOException;
-
-    void close();
-
     void sendMessage(StreamMessage message);
 
-    void streamFile(OutgoingFileMessage message);
-
     boolean connected();
+
+    void close();
 }

@@ -19,8 +19,11 @@
 package org.apache.cassandra.streaming.async;
 
 import java.io.IOException;
+import java.nio.channels.ClosedChannelException;
+import java.util.Comparator;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.UUID;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
@@ -45,6 +48,7 @@ import org.apache.cassandra.net.async.OutboundConnectionParams;
 import org.apache.cassandra.streaming.StreamRateLimiter;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingMessageSender;
+import org.apache.cassandra.streaming.messages.KeepAliveMessage;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
@@ -67,9 +71,9 @@ import org.apache.cassandra.streaming.messages.StreamMessage;
  * (we acquire the permits from the rate limiter, or the socket drains). However, we need to ensure that
  * no other messages are submitted to the same channel while the current file is still being processed.
  * Hence, the use of an internal {@link #queue} to hold pending outbound messages. When a {@link OutgoingFileMessage} is
- * streamed to a peer, it's promise will be fulfilled, and listeners invoked. We attach {@link #onMessageComplete(Future)}
- * as a promise listener, and on success of a message the {@link #queue} is checked for more messages to send (on the
- * same channel).
+ * streamed to a peer, it's promise will be fulfilled, and listeners invoked. We attach
+ * {@link #onMessageComplete(Future, StreamMessage)} as a promise listener, and on success of a message
+ * the {@link #queue} is checked for more messages to send (on the same channel).
  *
  * We use a netty channel {@link Attribute}, specifically {@link #CHANNEL_BUSY_ATTR} to indicate if a channel
  * is currently processing a file transfer. While a channel attribute is not the highest performing, our needs
@@ -84,8 +88,6 @@ import org.apache.cassandra.streaming.messages.StreamMessage;
 public class NettyStreamingMessageSender implements StreamingMessageSender
 {
     private static final Logger logger = LoggerFactory.getLogger(NettyStreamingMessageSender.class);
-
-    public static final String OUTBOUND_STREAM_HANDLER_NAME = "outboundStreamHandler";
 
     /**
      *
@@ -109,7 +111,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     /**
      * A queue to use for backlogging messages is there is already a message being processed.
      */
-    private final Queue<OutgoingFileMessage> queue = new ConcurrentLinkedQueue<>();
+    private final Queue<StreamMessage> queue;
 
     private final AtomicReferenceArray<Channel> transferChannels;
     private volatile boolean closed;
@@ -127,42 +129,39 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
 
         // set size from ctor param
         transferChannels = new AtomicReferenceArray<>(new Channel[DEFAULT_MAX_PARALLEL_TRANSFERS]);
+        queue = new PriorityBlockingQueue<>(8, MessageComparator.INSTANCE);
     }
-
-    @Override
-    public void initialize()
-    {
-        // this message is sent over the normal internode messaging (MessagingService),
-        // not a netty channel, so it's ok if we don't have any channels established yet
-        sendMessage(new StreamInitMessage(connectionId.local(),
-                                          session.sessionIndex(),
-                                          session.planId(),
-                                          session.description(),
-                                          session.keepSSTableLevel(),
-                                          session.isIncremental(),
-                                          session.getPendingRepair()));
-    }
-
 
     /**
-     * Submit a {@link StreamMessage} to be sent to the peer via normal internode messaging.
+     * Note: this comparator imposes orderings that are inconsistent with equals().
+     */
+    private static class MessageComparator implements Comparator<StreamMessage>
+    {
+        private static final MessageComparator INSTANCE = new MessageComparator();
+
+        @Override
+        public int compare(StreamMessage message1, StreamMessage message2)
+        {
+            if (message1.getType().isTransfer())
+                return -1;
+            if (message2.getType().isTransfer())
+                return 1;
+            return 0;
+        }
+    }
+
+    /**
+     * Submit a {@link StreamMessage} to be sent to the peer via a netty channel. If there is a slot open in
+     * {@link #transferChannels}, create a new {@link Channel} and publish the message to it; else, enqueue the message
+     * for future consumption.
      */
     @Override
     public void sendMessage(StreamMessage message)
     {
         logger.debug("[Stream #{}] Sending {}", session.planId(), message);
-        MessagingService.instance().sendOneWay(message.createMessageOut(), connectionId.remote());
-    }
-
-    /**
-     * Submit the {@link OutgoingFileMessage} to transfer a file via a netty channel. If there is a slot open in
-     * {@link #transferChannels}, create a new {@link Channel} and publish the message to it; else, enqueue the message
-     * for future consumption.
-     */
-    public void streamFile(OutgoingFileMessage message)
-    {
         if (closed)
-            throw new IllegalStateException("Outgoing streaming channel has been closed");
+            throw new IllegalStateException(String.format("[Stream #%s] not sending outbound message for the stream session " +
+                                                          "as the session is closed", session.planId()));
 
         queue.offer(message);
         Channel channel = getNewTransferChannel();
@@ -268,10 +267,58 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
 
         channel.writeAndFlush(new FirstHandshakeMessage(protocolVersion, NettyFactory.Mode.STREAMING, false));
         ChannelPipeline pipeline = channel.pipeline();
-        StreamingOutboundHandler handler = new StreamingOutboundHandler(session, protocolVersion, StreamRateLimiter.instance);
-        pipeline.addLast(OUTBOUND_STREAM_HANDLER_NAME, handler);
+        pipeline.addLast(NettyFactory.instance.streamingInboundGroup, NettyFactory.INBOUND_STREAM_HANDLER_NAME, new StreamingInboundHandler(connectionId.remoteAddress(), protocolVersion));
+        pipeline.addLast(NettyFactory.OUTBOUND_STREAM_HANDLER_NAME, new StreamingOutboundHandler(session, protocolVersion, StreamRateLimiter.instance));
+
+        int keepAlivePeriod = DatabaseDescriptor.getStreamingKeepAlivePeriod();
+        logger.trace("[Stream #{}] Scheduling keep-alive task with {}s period.", session.planId(), keepAlivePeriod);
+        channel.eventLoop().scheduleAtFixedRate(new KeepAliveTask(channel), 0, keepAlivePeriod, TimeUnit.SECONDS);
+
         return channel;
     }
+
+    private class KeepAliveTask implements Runnable
+    {
+        private final Channel channel;
+
+        private KeepAliveMessage last = null;
+
+        private KeepAliveTask(Channel channel)
+        {
+            this.channel = channel;
+        }
+
+        public void run()
+        {
+            // if the channel has been closed, or the channel is currently processing a stream transfer,
+            // skip this execution.
+            if (!channel.isOpen() || !channel.attr(CHANNEL_BUSY_ATTR).get())
+                return;
+
+            UUID planId = session.planId();
+            //to avoid jamming the message queue, we only send if the last one was sent
+            if (last == null || last.wasSent())
+            {
+                logger.trace("[Stream #{}] Sending keep-alive to {}.", planId, session.peer);
+                last = new KeepAliveMessage(planId, session.sessionIndex());
+                channel.writeAndFlush(last).addListener(future -> keepAliveListener(future));
+            }
+            else
+            {
+                logger.trace("[Stream #{}] Skip sending keep-alive to {} (previous was not yet sent).", planId, session.peer);
+            }
+        }
+
+        private void keepAliveListener(Future<? super Void> future)
+        {
+            if (future.isSuccess() || future.isCancelled())
+                return;
+
+            logger.debug("[Stream #{}] Could not send keep-alive message (perhaps stream session is finished?).",
+                         session.planId(), future.cause());
+        }
+    }
+
 
     /**
      * Attempts to pull a message off the {@link #queue} and publish it to the provided netty channel.
@@ -280,12 +327,12 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
      *
      * This method handles the tricky race conditions that could arise between threads
      * adding new messages to the queue versus the netty event loop thread that executes
-     * {@code {@link #onMessageComplete(Future)}} upon completing the previous message.
+     * {@code {@link #onMessageComplete(Future, StreamMessage)}} upon completing the previous message.
      *
      * We need to be careful about concurrency as we get here from several paths:
      *
      * 1) {@link StreamSession#startStreamingFiles()}, which is only called once in the life of the session (at the beginning),
-     * 2) {@link #onMessageComplete(Future)}, the callback from the netty event loop
+     * 2) {@link #onMessageComplete(Future, StreamMessage)}, the callback from the netty event loop
      *
      * @return true if a message was sent to the netty channel; else, false.
      */
@@ -293,11 +340,11 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     {
         if (!queue.isEmpty() && channel.attr(CHANNEL_BUSY_ATTR).compareAndSet(false, true))
         {
-            OutgoingFileMessage msg = queue.poll();
+            StreamMessage msg = queue.poll();
             if (msg != null)
             {
                 ChannelFuture future = channel.writeAndFlush(msg);
-                future.addListener(f -> onMessageComplete(f));
+                future.addListener(f -> onMessageComplete(f, msg));
                 return true;
             }
             // we won the race to mark this channel as busy (and the queue was not empty when we first checked),
@@ -319,13 +366,14 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
      *
      * @return true if the message was processed sucessfully; else, false.
      */
-    private boolean onMessageComplete(Future<? super Void> future)
+    private boolean onMessageComplete(Future<? super Void> future, StreamMessage msg)
     {
         ChannelFuture channelFuture = (ChannelFuture)future;
         Channel channel = channelFuture.channel();
         Throwable cause = future.cause();
         if (cause != null)
         {
+            msg.sent();
             channel.attr(CHANNEL_BUSY_ATTR).set(false);
             tryPublishFromQueue(channel);
             return true;

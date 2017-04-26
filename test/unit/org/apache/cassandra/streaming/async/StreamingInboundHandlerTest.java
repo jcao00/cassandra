@@ -25,6 +25,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -66,6 +67,7 @@ import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.async.StreamingInboundHandler.FileTransferContext;
 import org.apache.cassandra.streaming.async.StreamingInboundHandler.State;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.ChecksumType;
 import org.apache.cassandra.utils.Pair;
 
@@ -122,12 +124,12 @@ public class StreamingInboundHandlerTest extends CQLTester
     {
         StreamResultFuture future = StreamResultFuture.initReceivingSide(SESSION_INDEX, UUID.randomUUID(), "testStream",
                                                                          REMOTE_ADDR.getAddress(), REMOTE_ADDR.getAddress(),
-                                                                         true, false, UUID.randomUUID());
+                                                                         ctx.channel(), true, false, UUID.randomUUID());
         FileMessageHeader header = createHeader(future, table);
-        buf = StreamingOutboundHandler.serializeHeader(UnpooledByteBufAllocator.DEFAULT, header, VERSION);
+        buf = StreamingOutboundHandler.serializeHeader(UnpooledByteBufAllocator.DEFAULT, header, StreamMessage.Type.FILE, VERSION);
         inputPlus.append(buf);
         handler.parseBufferedBytes(ctx);
-        Assert.assertEquals(State.PAYLOAD, handler.getState());
+        Assert.assertEquals(State.FILE_TRANSFER_PAYLOAD, handler.getState());
         FileTransferContext ctx = handler.getCurrentTransferContext();
         Assert.assertEquals(header, ctx.header);
     }
@@ -149,9 +151,9 @@ public class StreamingInboundHandlerTest extends CQLTester
     {
         StreamResultFuture future = StreamResultFuture.initReceivingSide(SESSION_INDEX, UUID.randomUUID(), "testStream",
                                                                          REMOTE_ADDR.getAddress(), REMOTE_ADDR.getAddress(),
-                                                                         true, false, UUID.randomUUID());
+                                                                         ctx.channel(), true, false, UUID.randomUUID());
         FileMessageHeader header = createHeader(future, table);
-        buf = StreamingOutboundHandler.serializeHeader(UnpooledByteBufAllocator.DEFAULT, header, VERSION);
+        buf = StreamingOutboundHandler.serializeHeader(UnpooledByteBufAllocator.DEFAULT, header, StreamMessage.Type.FILE, VERSION);
 
         Assert.assertEquals(State.START, handler.getState());
         inputPlus.append(buf.readRetainedSlice(MESSAGE_PREFIX_LENGTH - 1));
@@ -160,11 +162,11 @@ public class StreamingInboundHandlerTest extends CQLTester
 
         inputPlus.append(buf.readRetainedSlice(5));
         handler.parseBufferedBytes(ctx);
-        Assert.assertEquals(State.HEADER_PAYLOAD, handler.getState());
+        Assert.assertEquals(State.FILE_TRANSFER_HEADER_PAYLOAD, handler.getState());
 
         inputPlus.append(buf);
         handler.parseBufferedBytes(ctx);
-        Assert.assertEquals(State.PAYLOAD, handler.getState());
+        Assert.assertEquals(State.FILE_TRANSFER_PAYLOAD, handler.getState());
         FileTransferContext ctx = handler.getCurrentTransferContext();
         Assert.assertEquals(header, ctx.header);
     }
@@ -174,7 +176,8 @@ public class StreamingInboundHandlerTest extends CQLTester
     {
         buf = Unpooled.buffer(MESSAGE_PREFIX_LENGTH, MESSAGE_PREFIX_LENGTH);
         buf.writeInt(MessagingService.PROTOCOL_MAGIC);
-        int length = 42;
+        buf.writeByte(1);
+        final int length = 42;
         buf.writeInt(length);
         int positionToCorrupt = buf.writerIndex() - 2;
         int b = buf.getByte(positionToCorrupt);
@@ -191,9 +194,9 @@ public class StreamingInboundHandlerTest extends CQLTester
     {
         StreamResultFuture future = StreamResultFuture.initReceivingSide(SESSION_INDEX, UUID.randomUUID(), "testStream",
                                                                          REMOTE_ADDR.getAddress(), REMOTE_ADDR.getAddress(),
-                                                                         true, false, UUID.randomUUID());
+                                                                         ctx.channel(), true, false, UUID.randomUUID());
         FileMessageHeader header = createHeader(future, table);
-        buf = StreamingOutboundHandler.serializeHeader(UnpooledByteBufAllocator.DEFAULT, header, VERSION);
+        buf = StreamingOutboundHandler.serializeHeader(UnpooledByteBufAllocator.DEFAULT, header, StreamMessage.Type.FILE, VERSION);
         int positionToCorrupt = buf.writerIndex() - 2;
         int b = buf.getByte(positionToCorrupt);
         b = (b & 0x01) == 0 ? b + 1 : b - 1;
@@ -201,10 +204,6 @@ public class StreamingInboundHandlerTest extends CQLTester
         inputPlus.append(buf);
         handler.parseBufferedBytes(ctx);
     }
-
-    // drainCompressedSstableData
-
-    // drainStreamCompressedData
 
     private static class TestChannelHandlerContext implements ChannelHandlerContext
     {
@@ -418,11 +417,14 @@ public class StreamingInboundHandlerTest extends CQLTester
 
     private static class TestChannel implements Channel
     {
+        private static final AtomicInteger idGenerator = new AtomicInteger();
+
         ChannelConfig config = new TestChannelConfig();
+        private ChannelId channelId = new TestChannelId(idGenerator.getAndIncrement());
 
         public ChannelId id()
         {
-            return null;
+            return channelId;
         }
 
         public EventLoop eventLoop()
@@ -633,6 +635,33 @@ public class StreamingInboundHandlerTest extends CQLTester
         public int compareTo(Channel o)
         {
             return 0;
+        }
+    }
+
+    private static class TestChannelId implements ChannelId
+    {
+        private final int id;
+
+        private TestChannelId(int id)
+        {
+            this.id = id;
+        }
+
+        public String asShortText()
+        {
+            return String.valueOf(id);
+        }
+
+        public String asLongText()
+        {
+            return String.valueOf(id);
+        }
+
+        public int compareTo(ChannelId o)
+        {
+            if (o instanceof TestChannelId)
+                return this.id - ((TestChannelId)o).id;
+            return 1;
         }
     }
 }

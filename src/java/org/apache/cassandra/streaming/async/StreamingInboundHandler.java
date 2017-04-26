@@ -50,10 +50,15 @@ import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.streaming.StreamManager;
 import org.apache.cassandra.streaming.StreamReader;
+import org.apache.cassandra.streaming.StreamResultFuture;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingUtils;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
+import org.apache.cassandra.streaming.messages.StreamInitAckMessage;
+import org.apache.cassandra.streaming.messages.StreamInitMessage;
+import org.apache.cassandra.streaming.messages.StreamMessage;
+import org.apache.cassandra.streaming.messages.StreamMessage.Type;
 import org.apache.cassandra.utils.ChecksumType;
 
 import static org.apache.cassandra.streaming.async.StreamingOutboundHandler.MESSAGE_PREFIX_LENGTH;
@@ -86,13 +91,12 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
     private static final int AUTO_READ_LOW_WATER_MARK = 1 << 19; // 1 << 19 = 512Kb
     private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 21; // 1 << 22 = 4Mb
 
-    enum State { START, HEADER_PAYLOAD, PAYLOAD, CLOSED }
+    enum State { START, MESSAGE_PAYLOAD, FILE_TRANSFER_HEADER_PAYLOAD, FILE_TRANSFER_PAYLOAD, CLOSED }
 
     private final byte[] intByteBuffer = new byte[Integer.BYTES];
 
     private final InetSocketAddress remoteAddress;
     private final int protocolVersion;
-
 
     private State state;
     private FileTransferContext currentTransferContext;
@@ -169,32 +173,68 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
     void parseBufferedBytes(ChannelHandlerContext ctx) throws IOException
     {
         ChecksumType checksum = ChecksumType.CRC32;
-        switch (state)
+        while (true)
         {
-            case START:
-                if (pendingBuffers.available() < MESSAGE_PREFIX_LENGTH)
-                    return;
-                MessagingService.validateMagic(pendingBuffers.readInt());
-                currentTransferContext = new FileTransferContext(ctx.channel().config());
-                currentTransferContext.headerLength = pendingBuffers.readInt();
-                int headerLengthChecksum = pendingBuffers.readInt();
-                int derivedLengthChecksum = (int) checksum.of(ByteBuffer.allocate(4).putInt(0, currentTransferContext.headerLength));
-                if (headerLengthChecksum != derivedLengthChecksum)
-                    throw new ChecksumMismatchException("checksum mismatch on header length checksum");
-                state = State.HEADER_PAYLOAD;
-                // fall-through
-            case HEADER_PAYLOAD:
-                if (pendingBuffers.available() < currentTransferContext.headerLength)
-                    return;
-                handleHeader(checksum);
-                state = State.PAYLOAD;
-                // fall-through
-            case PAYLOAD:
-                handlePayload(ctx);
-                break;
-            default:
-                throw new IllegalStateException("unhandled state: " + state);
+            switch (state)
+            {
+                case START:
+                    if (pendingBuffers.available() < MESSAGE_PREFIX_LENGTH)
+                        return;
+                    MessagingService.validateMagic(pendingBuffers.readInt());
+                    Type type = Type.getById(pendingBuffers.readByte());
+                    currentTransferContext = new FileTransferContext(ctx.channel().config(), type);
+                    currentTransferContext.headerLength = pendingBuffers.readInt();
+                    int headerLengthChecksum = pendingBuffers.readInt();
+                    int derivedLengthChecksum = (int) checksum.of(ByteBuffer.allocate(4).putInt(0, currentTransferContext.headerLength));
+                    if (headerLengthChecksum != derivedLengthChecksum)
+                        throw new ChecksumMismatchException("checksum mismatch on header length checksum");
+
+                    state = type.isTransfer() ? State.FILE_TRANSFER_HEADER_PAYLOAD : State.MESSAGE_PAYLOAD;
+                    continue;
+                case MESSAGE_PAYLOAD:
+                    if (pendingBuffers.available() < currentTransferContext.headerLength)
+                        return;
+                    handleControlMessage(ctx);
+                    state = State.START;
+                    continue;
+                case FILE_TRANSFER_HEADER_PAYLOAD:
+                    if (pendingBuffers.available() < currentTransferContext.headerLength)
+                        return;
+                    handleHeader(checksum);
+                    currentTransferContext.session.attach(ctx.channel());
+                    state = State.FILE_TRANSFER_PAYLOAD;
+                    continue;
+                case FILE_TRANSFER_PAYLOAD:
+                    if (handlePayload(ctx) == 0)
+                        return;
+                    if (currentTransferContext.remaingPayloadBytesToReceive == 0)
+                        state = State.START;
+                    continue;
+                default:
+                    throw new IllegalStateException("unhandled state: " + state);
+            }
         }
+    }
+
+    /**
+     * Deserialize a control {@link StreamMessage} and process it.
+     */
+    private void handleControlMessage(ChannelHandlerContext ctx) throws IOException
+    {
+        StreamMessage message = currentTransferContext.type.getSerializer().deserialize(pendingBuffers, protocolVersion);
+
+        if (message instanceof StreamInitMessage)
+        {
+            StreamInitMessage init = (StreamInitMessage)message;
+            StreamResultFuture.initReceivingSide(init.sessionIndex, init.planId, init.description, init.from, init.from,
+                                                 ctx.channel(), init.keepSSTableLevel, init.isIncremental, init.pendingRepair);
+        }
+
+        StreamSession session = StreamManager.instance.findSession(remoteAddress.getAddress(), message.planId, message.sessionIndex);
+        // this may attempt to re-add a channel that's already been added to the session, but it's safe operation
+        // and we don't send many control messages
+        session.attach(ctx.channel());
+        session.receive(message);
     }
 
     /**
@@ -232,10 +272,10 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
         transferQueue.add(currentTransferContext);
     }
 
-    private void handlePayload(ChannelHandlerContext ctx) throws IOException
+    private int handlePayload(ChannelHandlerContext ctx) throws IOException
     {
         if (pendingBuffers.available() == 0)
-            return;
+            return 0;
 
         final int consumedBytes;
         if (currentTransferContext.header.isCompressed())
@@ -243,19 +283,8 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
         else
             consumedBytes = drainStreamCompressedData(pendingBuffers, currentTransferContext.inputStream);
 
-        if (consumedBytes == 0)
-            return;
-
         currentTransferContext.remaingPayloadBytesToReceive -= consumedBytes;
-
-        if (currentTransferContext.remaingPayloadBytesToReceive == 0)
-        {
-            state = State.START;
-
-            // if we've reached the end of the current file transfer, and there's leftover bytes,
-            // it means we've already started receiving the next file
-            parseBufferedBytes(ctx);
-        }
+        return consumedBytes;
     }
 
     /**
@@ -404,6 +433,7 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
          * live longer than {@link StreamingInboundHandler#pendingBuffers}, and hence we set the low/high water marks from this instance.
          */
         final AppendingByteBufInputPlus inputStream;
+        private final Type type;
 
         int headerLength;
         FileMessageHeader header;
@@ -417,9 +447,13 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
          */
         private int currentCompressionChunk;
 
-        private FileTransferContext(ChannelConfig config)
+        private FileTransferContext(ChannelConfig config, Type type)
         {
-            inputStream = new AppendingByteBufInputPlus(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, config);
+            this.type = type;
+            if (type.isTransfer())
+                inputStream = new AppendingByteBufInputPlus(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, config);
+            else
+                inputStream = null;
         }
     }
 

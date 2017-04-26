@@ -23,8 +23,6 @@ import java.util.UUID;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.utils.Pair;
 
@@ -65,19 +63,6 @@ public class ReceivedMessage extends StreamMessage
     }
 
     @Override
-    public String toString()
-    {
-        final StringBuilder sb = new StringBuilder("Received (");
-        sb.append(tableId).append(", #").append(sequenceNumber).append(')');
-        return sb.toString();
-    }
-
-    @Override
-    public MessageOut<ReceivedMessage> createMessageOut()
-    {
-        return new MessageOut<>(MessagingService.Verb.STREAM_RECEIVED, this, serializer);
-    }
-
     public Type getType()
     {
         return Type.RECEIVED;
@@ -89,6 +74,15 @@ public class ReceivedMessage extends StreamMessage
         return serializer;
     }
 
+    @Override
+    public String toString()
+    {
+        final StringBuilder sb = new StringBuilder("Received (");
+        sb.append(tableId).append(", #").append(sequenceNumber).append(')');
+        return sb.toString();
+    }
+
+    @Override
     public boolean equals(Object o)
     {
         if (!super.equals(o) || !(o instanceof ReceivedMessage))

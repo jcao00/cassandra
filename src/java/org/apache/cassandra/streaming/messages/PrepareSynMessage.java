@@ -25,8 +25,6 @@ import java.util.UUID;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.streaming.StreamRequest;
 import org.apache.cassandra.streaming.StreamSummary;
 import org.apache.cassandra.utils.Pair;
@@ -92,6 +90,18 @@ public class PrepareSynMessage extends StreamMessage
     }
 
     @Override
+    public Type getType()
+    {
+        return Type.PREPARE_SYN;
+    }
+
+    @Override
+    public IVersionedSerializer<? extends StreamMessage> getSerializer()
+    {
+        return serializer;
+    }
+
+    @Override
     public String toString()
     {
         final StringBuilder sb = new StringBuilder("Prepare SYN (");
@@ -102,21 +112,5 @@ public class PrepareSynMessage extends StreamMessage
         sb.append(" ").append(totalFile).append(" files");
         sb.append('}');
         return sb.toString();
-    }
-
-    @Override
-    public MessageOut<PrepareSynMessage> createMessageOut()
-    {
-        return new MessageOut<>(MessagingService.Verb.STREAM_PREPARE_SYN, this, serializer);
-    }
-
-    public Type getType()
-    {
-        return Type.PREPARE_SYN;
-    }
-
-    public IVersionedSerializer<? extends StreamMessage> getSerializer()
-    {
-        return serializer;
     }
 }

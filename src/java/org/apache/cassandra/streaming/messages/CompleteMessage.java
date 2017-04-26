@@ -23,8 +23,6 @@ import java.util.UUID;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.Pair;
 
 public class CompleteMessage extends StreamMessage
@@ -54,24 +52,20 @@ public class CompleteMessage extends StreamMessage
     }
 
     @Override
-    public String toString()
-    {
-        return "Complete";
-    }
-
-    @Override
-    public MessageOut<CompleteMessage> createMessageOut()
-    {
-        return new MessageOut<>(MessagingService.Verb.STREAM_COMPLETE, this, serializer);
-    }
-
     public Type getType()
     {
         return Type.COMPLETE;
     }
 
+    @Override
     public IVersionedSerializer<? extends StreamMessage> getSerializer()
     {
         return serializer;
+    }
+
+    @Override
+    public String toString()
+    {
+        return "Complete";
     }
 }

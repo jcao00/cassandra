@@ -20,6 +20,8 @@ package org.apache.cassandra.streaming.messages;
 import java.io.IOException;
 import java.util.UUID;
 
+import com.carrotsearch.hppc.IntObjectMap;
+import com.carrotsearch.hppc.IntObjectOpenHashMap;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
@@ -27,6 +29,7 @@ import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.UUIDGen;
 import org.apache.cassandra.utils.UUIDSerializer;
+import org.stringtemplate.v4.misc.STMessage;
 
 /**
  * StreamMessage is an abstract base class that every messages in streaming protocol inherit.
@@ -39,20 +42,68 @@ public abstract class StreamMessage
 
     public enum Type
     {
-        STREAM_INIT,
-        STREAM_INIT_ACK,
-        PREPARE_SYN,
-        PREPARE_SYNACK,
-        PREPARE_ACK,
-        FILE,
-        COMPLETE,
-        RECEIVED,
-        RETRY,
-        SESSION_FAILED
+        STREAM_INIT(0, false, StreamInitMessage.serializer),
+        STREAM_INIT_ACK(1, false, StreamInitAckMessage.serializer),
+        PREPARE_SYN(2, false, PrepareSynMessage.serializer),
+        PREPARE_SYNACK(3, false, PrepareSynAckMessage.serializer),
+        PREPARE_ACK(4, false, PrepareAckMessage.serializer),
+        FILE(5, true, null),
+        COMPLETE(6, false, CompleteMessage.serializer),
+        RECEIVED(7, false, ReceivedMessage.serializer),
+        SESSION_FAILED(8, false, SessionFailedMessage.serializer),
+        KEEP_ALIVE(9, false, KeepAliveMessage.serializer);
+
+        private static final IntObjectMap<Type> idToTypeMap = new IntObjectOpenHashMap<>(values().length);
+        static
+        {
+            for (Type v : values())
+                idToTypeMap.put(v.getId(), v);
+        }
+
+        private final int id;
+
+        /**
+         * Indicates if this {@link Type} represents a file transfer message.
+         */
+        private final boolean transfer;
+
+        private final IVersionedSerializer<? extends StreamMessage> serializer;
+
+        Type(int id, boolean transfer, IVersionedSerializer<? extends StreamMessage> serializer)
+        {
+            this.id = id;
+            this.transfer = transfer;
+            this.serializer = serializer;
+        }
+
+        public int getId()
+        {
+            return id;
+        }
+
+        public boolean isTransfer()
+        {
+            return transfer;
+        }
+
+        public IVersionedSerializer<? extends StreamMessage> getSerializer()
+        {
+            return serializer;
+        }
+
+        public static Type getById(int id) throws IllegalArgumentException
+        {
+            Type t = idToTypeMap.get(id);
+            if (t != null)
+                return t;
+            throw new IllegalArgumentException("unknown streamng message type id: " + id);
+        }
     }
 
     public final UUID planId;
     public final int sessionIndex;
+
+    private transient volatile boolean sent = false;
 
     protected StreamMessage(UUID planId, int sessionIndex)
     {
@@ -60,11 +111,19 @@ public abstract class StreamMessage
         this.sessionIndex = sessionIndex;
     }
 
-    public abstract IVersionedSerializer<? extends StreamMessage> getSerializer();
+    public void sent()
+    {
+        sent = true;
+    }
 
-    public abstract MessageOut<? extends StreamMessage> createMessageOut();
+    public boolean wasSent()
+    {
+        return sent;
+    }
 
     public abstract Type getType();
+
+    public abstract IVersionedSerializer<? extends StreamMessage> getSerializer();
 
     /**
      * To be invoked by {@link IVersionedSerializer}s of derived classes.

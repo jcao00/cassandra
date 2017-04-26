@@ -21,6 +21,7 @@ import java.util.List;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.utils.Pair;
@@ -29,7 +30,7 @@ import org.apache.cassandra.utils.concurrent.Ref;
 /**
  * OutgoingFileMessage is used to transfer the part(or whole) of a SSTable data file.
  */
-public class OutgoingFileMessage
+public class OutgoingFileMessage extends StreamMessage
 {
     public final FileMessageHeader header;
     public final Ref<SSTableReader> ref;
@@ -39,6 +40,7 @@ public class OutgoingFileMessage
 
     public OutgoingFileMessage(Ref<SSTableReader> ref, StreamSession session, int sequenceNumber, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt)
     {
+        super(session.planId(), session.sessionIndex());
         this.ref = ref;
 
         SSTableReader sstable = ref.get();
@@ -60,6 +62,7 @@ public class OutgoingFileMessage
     @VisibleForTesting
     public OutgoingFileMessage(FileMessageHeader header, Ref<SSTableReader> ref, String filename)
     {
+        super(header.planId, header.sessionIndex);
         this.ref = ref;
         this.header = header;
         this.filename = filename;
@@ -71,6 +74,7 @@ public class OutgoingFileMessage
     @VisibleForTesting
     public OutgoingFileMessage()
     {
+        super(null, 0);
         this.ref = null;
         this.header = null;
         this.filename = null;
@@ -107,6 +111,18 @@ public class OutgoingFileMessage
                 ref.release();
             }
         }
+    }
+
+    @Override
+    public Type getType()
+    {
+        return Type.FILE;
+    }
+
+    @Override
+    public IVersionedSerializer<StreamMessage> getSerializer()
+    {
+        return null;
     }
 
     @Override

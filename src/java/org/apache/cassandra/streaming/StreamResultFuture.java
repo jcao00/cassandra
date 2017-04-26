@@ -27,6 +27,7 @@ import com.google.common.util.concurrent.Futures;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.netty.channel.Channel;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
@@ -103,6 +104,7 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
                                                                     String description,
                                                                     InetAddress from,
                                                                     InetAddress connecting,
+                                                                    Channel channel,
                                                                     boolean keepSSTableLevel,
                                                                     boolean isIncremental,
                                                                     UUID pendingRepair)
@@ -116,7 +118,7 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
             future = new StreamResultFuture(planId, description, keepSSTableLevel, isIncremental, pendingRepair);
             StreamManager.instance.registerReceiving(future);
         }
-        future.attach(from, sessionIndex, connecting);
+        future.attachConnection(from, sessionIndex, connecting, channel);
         logger.info("[Stream #{}, ID#{}] Received streaming plan from {} for {}", planId, sessionIndex, from, description);
         return future;
     }
@@ -133,10 +135,11 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
         return coordinator;
     }
 
-    private void attach(InetAddress from, int sessionIndex, InetAddress connecting)
+    private void attachConnection(InetAddress from, int sessionIndex, InetAddress connecting, Channel channel)
     {
         StreamSession session = coordinator.getOrCreateSessionById(from, sessionIndex, connecting);
         session.init(this);
+        session.attach(channel);
     }
 
     public void addEventListener(StreamEventHandler listener)

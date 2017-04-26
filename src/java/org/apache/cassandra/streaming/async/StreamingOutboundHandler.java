@@ -42,6 +42,7 @@ import io.netty.handler.codec.UnsupportedMessageTypeException;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.ScheduledFuture;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.net.MessagingService;
@@ -54,6 +55,7 @@ import org.apache.cassandra.streaming.StreamingUtils;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.ChecksumType;
 
 /**
@@ -65,7 +67,7 @@ import org.apache.cassandra.utils.ChecksumType;
  * will have changed), and thus we can back off reading bytes from disk/writing them to the channel. The high water mark
  * functionality affects only non zero-copy transfers; see the package-level documentation for more details.
  */
-class StreamingOutboundHandler extends ChannelDuplexHandler
+public class StreamingOutboundHandler extends ChannelDuplexHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamingOutboundHandler.class);
 
@@ -80,10 +82,10 @@ class StreamingOutboundHandler extends ChannelDuplexHandler
     enum State { READY, PROCESSING, CLOSED }
 
     /**
-     * The length of the first bytes of each new message/file transfer (the bytes before the serialized
-     * {@link FileMessageHeader}). Includes magic, header length, and checksum of the length.
+     * The length of the first bytes of each new message/file transfer. Includes magic, stream message type id,
+     * header length, and checksum of the length.
      */
-    static final int MESSAGE_PREFIX_LENGTH = 12;
+    static final int MESSAGE_PREFIX_LENGTH = 13;
 
     /**
      * If a chunk cannot be sent immediately due to failure to acquire the permits from the {@link StreamRateLimiter},
@@ -118,7 +120,7 @@ class StreamingOutboundHandler extends ChannelDuplexHandler
 
     private ScheduledFuture<?> scheduledWrite;
 
-    StreamingOutboundHandler(StreamSession session, int protocolVersion, StreamRateLimiter rateLimiter)
+    public StreamingOutboundHandler(StreamSession session, int protocolVersion, StreamRateLimiter rateLimiter)
     {
         this (session, protocolVersion, rateLimiter, update -> session.progress(update.filename, update.direction, update.bytes, update.total));
     }
@@ -158,49 +160,12 @@ class StreamingOutboundHandler extends ChannelDuplexHandler
         if (!canProcessMessage(message, promise))
             return;
 
-        OutgoingFileMessage ofm = (OutgoingFileMessage) message;
         try
         {
-            logger.debug("[Stream #{}] Sending {}", session.planId(), ofm);
-            state = State.PROCESSING;
-            ofm.startTransfer();
-
-            ByteBuf buf = null;
-            try
-            {
-                buf = serializeHeader(ctx.alloc(), ofm.header, protocolVersion);
-                ChannelFuture channelFuture = ctx.writeAndFlush(buf);
-                channelFuture.addListener(future -> onHeaderSendComplete(future, ctx, promise));
-            }
-            catch (Exception e)
-            {
-                if (buf != null)
-                    buf.release();
-                throw e;
-            }
-
-            CompressionInfo compressionInfo = ofm.header.getCompressionInfo();
-
-            if (compressionInfo == null)
-            {
-                SstableChunker chunker = UncompressedSstableChunker.create(ctx.alloc(), ofm);
-                long totalSize = StreamingUtils.totalSize(ofm.header.sections);
-                currentMessage = new CurrentMessage(ofm, chunker, totalSize, promise, true);
-            }
+            if (message instanceof OutgoingFileMessage)
+                sendFile(ctx, promise, (OutgoingFileMessage)message);
             else
-            {
-                SstableChunker chunker;
-                if (isSecure)
-                    chunker = new SecureCompressedSstableChunker(ofm, compressionInfo, ctx.alloc());
-                else
-                    chunker = new CompressedSstableChunker(ofm, compressionInfo);
-                long totalSize = StreamingUtils.totalSize(compressionInfo.chunks);
-                currentMessage = new CurrentMessage(ofm, chunker, totalSize, promise, false);
-            }
-
-            logger.debug("[Stream #{}] Start streaming file {} to {}, repairedAt = {}, totalSize = {}", session.planId(),
-                         ofm.ref.get().getFilename(), session.peer, ofm.ref.get().getSSTableMetadata().repairedAt, currentMessage.totalSize);
-            transferFile(ctx);
+                sendMessage(ctx, promise, (StreamMessage)message);
         }
         catch (Throwable t)
         {
@@ -216,6 +181,33 @@ class StreamingOutboundHandler extends ChannelDuplexHandler
         }
     }
 
+    /**
+     * Serializes and sends a control {@link StreamMessage} down the channel.
+     */
+    @SuppressWarnings("unchecked")
+    private void sendMessage(ChannelHandlerContext ctx, ChannelPromise promise, StreamMessage message) throws IOException
+    {
+        // we anticipate that the control messages are rather small, so allocating a ByteBuf shouldn't
+        // blow out of memory.
+        final IVersionedSerializer serializer = message.getSerializer();
+        long messageSize = serializer.serializedSize(message, protocolVersion);
+        if (messageSize > 1 << 30)
+        {
+            logger.error("something is seriously wrong with the calculated stream control message's size: {} bytes, type is {}", messageSize, message.getType());
+            return;
+        }
+
+        int bufSize = (int)messageSize + MESSAGE_PREFIX_LENGTH;
+        ByteBuf buf = ctx.alloc().buffer(bufSize, bufSize);
+        buf.writeInt(MessagingService.PROTOCOL_MAGIC);
+        buf.writeByte(message.getType().getId());
+        buf.writeInt((int)messageSize);
+        buf.writeInt((int)ChecksumType.CRC32.of(ByteBuffer.allocate(4).putInt(0, (int)messageSize)));
+        serializer.serialize(message, new ByteBufDataOutputPlus(buf), protocolVersion);
+
+        ctx.writeAndFlush(buf, promise);
+    }
+
     @VisibleForTesting
     boolean canProcessMessage(Object message, ChannelPromise promise)
     {
@@ -229,13 +221,58 @@ class StreamingOutboundHandler extends ChannelDuplexHandler
             promise.tryFailure(new IllegalStateException("currently processing a outbound message, but got another"));
             return false;
         }
-        else if (!(message instanceof OutgoingFileMessage))
+        else if (!(message instanceof StreamMessage))
         {
             promise.tryFailure(new UnsupportedMessageTypeException("message must be instance of OutgoingFileMessage"));
             return false;
         }
 
         return true;
+    }
+
+    private void sendFile(ChannelHandlerContext ctx, ChannelPromise promise, OutgoingFileMessage ofm) throws IOException
+    {
+        logger.debug("[Stream #{}] Sending {}", session.planId(), ofm);
+        state = State.PROCESSING;
+        ofm.startTransfer();
+
+        ByteBuf buf = null;
+        try
+        {
+            buf = serializeHeader(ctx.alloc(), ofm.header, ofm.getType(), protocolVersion);
+            ChannelFuture channelFuture = ctx.writeAndFlush(buf);
+            channelFuture.addListener(future -> onHeaderSendComplete(future, ctx, promise));
+        }
+        catch (Exception e)
+        {
+            if (buf != null)
+                buf.release();
+            throw e;
+        }
+
+        CompressionInfo compressionInfo = ofm.header.getCompressionInfo();
+
+        if (compressionInfo == null)
+        {
+            SstableChunker chunker = UncompressedSstableChunker.create(ctx.alloc(), ofm);
+            long totalSize = StreamingUtils.totalSize(ofm.header.sections);
+            currentMessage = new CurrentMessage(ofm, chunker, totalSize, promise, true);
+        }
+        else
+        {
+            SstableChunker chunker;
+            if (isSecure)
+                chunker = new SecureCompressedSstableChunker(ofm, compressionInfo, ctx.alloc());
+            else
+                chunker = new CompressedSstableChunker(ofm, compressionInfo);
+            long totalSize = StreamingUtils.totalSize(compressionInfo.chunks);
+            currentMessage = new CurrentMessage(ofm, chunker, totalSize, promise, false);
+        }
+
+        logger.debug("[Stream #{}] Start streaming file {} to {}, repairedAt = {}, totalSize = {}", session.planId(),
+                     ofm.ref.get().getFilename(), session.peer, ofm.ref.get().getSSTableMetadata().repairedAt, currentMessage.totalSize);
+        transferFile(ctx);
+
     }
 
     /**
@@ -246,15 +283,16 @@ class StreamingOutboundHandler extends ChannelDuplexHandler
      * Checksums are added for the length of the payload as well as the payload itself.
      */
     @VisibleForTesting
-    static ByteBuf serializeHeader(ByteBufAllocator allocator, FileMessageHeader header, int protocolVersion) throws IOException
+    static ByteBuf serializeHeader(ByteBufAllocator allocator, FileMessageHeader header, StreamMessage.Type type, int protocolVersion) throws IOException
     {
         ChecksumType checksum = ChecksumType.CRC32;
         final int msgSize = (int) FileMessageHeader.serializer.serializedSize(header, protocolVersion);
         final int totalSize = MESSAGE_PREFIX_LENGTH + msgSize + 4;
         ByteBuf buf = allocator.buffer(totalSize, totalSize);
         buf.writeInt(MessagingService.PROTOCOL_MAGIC);
+        buf.writeByte(type.getId());
         buf.writeInt(msgSize);
-        buf.writeInt((int) checksum.of(ByteBuffer.allocate(4).putInt(0, msgSize)));
+        buf.writeInt((int)checksum.of(ByteBuffer.allocate(4).putInt(0, msgSize)));
 
         @SuppressWarnings("resource")
         ByteBufDataOutputPlus out = new ByteBufDataOutputPlus(buf);

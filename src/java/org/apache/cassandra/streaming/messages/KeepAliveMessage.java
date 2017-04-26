@@ -26,36 +26,36 @@ import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.Pair;
 
-public class StreamInitAckMessage extends StreamMessage
+public class KeepAliveMessage extends StreamMessage
 {
-    public static final IVersionedSerializer<StreamInitAckMessage> serializer = new IVersionedSerializer<StreamInitAckMessage>()
+    public static final IVersionedSerializer<KeepAliveMessage> serializer = new IVersionedSerializer<KeepAliveMessage>()
     {
-        public void serialize(StreamInitAckMessage msg, DataOutputPlus out, int version) throws IOException
+        public void serialize(KeepAliveMessage keepAliveMessage, DataOutputPlus out, int version) throws IOException
         {
-            StreamMessage.serialize(msg, out, version);
+            StreamMessage.serialize(keepAliveMessage, out, version);
         }
 
-        public StreamInitAckMessage deserialize(DataInputPlus in, int version) throws IOException
+        public KeepAliveMessage deserialize(DataInputPlus in, int version) throws IOException
         {
             Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
-            return new StreamInitAckMessage(header.left, header.right);
+            return new KeepAliveMessage(header.left, header.right);
         }
 
-        public long serializedSize(StreamInitAckMessage msg, int version)
+        public long serializedSize(KeepAliveMessage keepAliveMessage, int version)
         {
-            return StreamMessage.serializedSize(msg, version);
+            return StreamMessage.serializedSize(keepAliveMessage, version);
         }
     };
 
-    public StreamInitAckMessage(UUID planId, int sessionIndex)
+    public KeepAliveMessage(UUID planId, int sessionIndex)
     {
         super(planId, sessionIndex);
     }
 
     @Override
-    public Type getType()
+    public StreamMessage.Type getType()
     {
-        return Type.STREAM_INIT_ACK;
+        return StreamMessage.Type.KEEP_ALIVE;
     }
 
     @Override
@@ -63,4 +63,11 @@ public class StreamInitAckMessage extends StreamMessage
     {
         return serializer;
     }
+
+    @Override
+    public String toString()
+    {
+        return "keep-alive";
+    }
+
 }

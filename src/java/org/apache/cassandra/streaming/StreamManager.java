@@ -123,15 +123,6 @@ public class StreamManager implements StreamManagerMBean
         return notifier.getNotificationInfo();
     }
 
-    public void receiveMessage(InetAddress peer, StreamMessage streamMessage)
-    {
-        StreamSession session = findSession(peer, streamMessage.planId, streamMessage.sessionIndex);
-        if (session == null)
-            throw new IllegalStateException(String.format("cannot locate stream session with planId %s and index %d", streamMessage.planId, streamMessage.sessionIndex));
-
-        session.receive(streamMessage);
-    }
-
     public StreamSession findSession(InetAddress peer, UUID planId, int sessionIndex)
     {
         StreamSession session = findSession(initiatedStreams, peer, planId, sessionIndex);

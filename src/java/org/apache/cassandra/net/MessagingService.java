@@ -261,14 +261,6 @@ public final class MessagingService implements MessagingServiceMBean
                 return DatabaseDescriptor.getRangeRpcTimeout();
             }
         },
-        STREAM_COMPLETE,
-        STREAM_PREPARE_SYN,
-        STREAM_PREPARE_SYNACK,
-        STREAM_PREPARE_ACK,
-        STREAM_RECEIVED,
-        STREAM_FAILED,
-        STREAM_INIT,
-        STREAM_INIT_ACK,
         // remember to add new verbs at the end, since we serialize by ordinal
         UNUSED_1,
         UNUSED_2,
@@ -358,15 +350,6 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.SNAPSHOT, Stage.MISC);
         put(Verb.ECHO, Stage.GOSSIP);
 
-        put(Verb.STREAM_COMPLETE, Stage.INTERNAL_RESPONSE);
-        put(Verb.STREAM_FAILED, Stage.INTERNAL_RESPONSE);
-        put(Verb.STREAM_INIT, Stage.INTERNAL_RESPONSE);
-        put(Verb.STREAM_INIT_ACK, Stage.INTERNAL_RESPONSE);
-        put(Verb.STREAM_PREPARE_SYN, Stage.INTERNAL_RESPONSE);
-        put(Verb.STREAM_PREPARE_SYNACK, Stage.INTERNAL_RESPONSE);
-        put(Verb.STREAM_PREPARE_ACK, Stage.INTERNAL_RESPONSE);
-        put(Verb.STREAM_RECEIVED, Stage.INTERNAL_RESPONSE);
-
         put(Verb.UNUSED_1, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_2, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_3, Stage.INTERNAL_RESPONSE);
@@ -408,14 +391,6 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.HINT, HintMessage.serializer);
         put(Verb.BATCH_STORE, Batch.serializer);
         put(Verb.BATCH_REMOVE, UUIDSerializer.serializer);
-        put(Verb.STREAM_COMPLETE, CompleteMessage.serializer);
-        put(Verb.STREAM_FAILED, SessionFailedMessage.serializer);
-        put(Verb.STREAM_INIT, StreamInitMessage.serializer);
-        put(Verb.STREAM_INIT_ACK, StreamInitAckMessage.serializer);
-        put(Verb.STREAM_PREPARE_SYN, PrepareSynMessage.serializer);
-        put(Verb.STREAM_PREPARE_SYNACK, PrepareSynAckMessage.serializer);
-        put(Verb.STREAM_PREPARE_ACK, PrepareAckMessage.serializer);
-        put(Verb.STREAM_RECEIVED, ReceivedMessage.serializer);
     }};
 
     /**

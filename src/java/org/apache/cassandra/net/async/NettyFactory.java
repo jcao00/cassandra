@@ -68,6 +68,8 @@ public final class NettyFactory
     static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
     static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
     private static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
+    public static final String OUTBOUND_STREAM_HANDLER_NAME = "outboundStreamHandler";
+    public static final String INBOUND_STREAM_HANDLER_NAME = "inboundStreamHandler";
 
     /** a useful addition for debugging; simply set to true to get more data in your logs */
     private static final boolean WIRETRACE = false;
@@ -106,7 +108,7 @@ public final class NettyFactory
 
     private final EventLoopGroup inboundGroup;
     private final EventLoopGroup outboundGroup;
-    final EventLoopGroup streamingInboundGroup;
+    public final EventLoopGroup streamingInboundGroup;
     public final EventLoopGroup streamingOutboundGroup;
 
     private static final PooledByteBufAllocator INTERNODE_ALLOCATOR = new PooledByteBufAllocator(PlatformDependent.directBufferPreferred());

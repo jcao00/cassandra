@@ -29,7 +29,6 @@ import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
-import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.utils.Pair;
@@ -46,7 +45,7 @@ public class StreamInitMessage extends StreamMessage
     public final InetAddress from;
     public final String description;
 
-    final boolean keepSSTableLevel;
+    public final boolean keepSSTableLevel;
     public final boolean isIncremental;
     public final UUID pendingRepair;
 
@@ -103,11 +102,6 @@ public class StreamInitMessage extends StreamMessage
     }
 
     @Override
-    public MessageOut<? extends StreamMessage> createMessageOut()
-    {
-        return new MessageOut<>(MessagingService.Verb.STREAM_INIT, this, serializer);
-    }
-
     public Type getType()
     {
         return Type.STREAM_INIT;
