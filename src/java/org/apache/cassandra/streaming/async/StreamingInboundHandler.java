@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelConfig;
+import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.util.ReferenceCountUtil;
@@ -56,6 +57,7 @@ import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingUtils;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
+import org.apache.cassandra.streaming.messages.StreamInitAckMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage.Type;
@@ -322,18 +324,16 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     {
         final int dataLength = src.length - CHECKSUM_LENGTH;
         final byte[] dst;
-        final int compressedDataLen;
         // uncompress
         if (dataLength < compressionInfo.parameters.maxCompressedLength())
         {
             dst = new byte[compressionInfo.parameters.chunkLength()];
             ICompressor compressor = compressionInfo.parameters.getSstableCompressor();
-            compressedDataLen = compressor.uncompress(src, 0, dataLength, dst, 0);
+            compressor.uncompress(src, 0, dataLength, dst, 0);
         }
         else
         {
             dst = src;
-            compressedDataLen = src.length - CHECKSUM_LENGTH;
         }
 
         // validate crc randomly
@@ -341,8 +341,8 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
         if (crcCheckChance > 0d && crcCheckChance > ThreadLocalRandom.current().nextDouble())
         {
             // as of 4.0, checksum type is CRC32
-            int calculatedChecksum = (int) ChecksumType.CRC32.of(src, 0, compressedDataLen);
-            System.arraycopy(src, compressedDataLen, intByteBuffer, 0, CHECKSUM_LENGTH);
+            int calculatedChecksum = (int) ChecksumType.CRC32.of(src, 0, dataLength);
+            System.arraycopy(src, dataLength, intByteBuffer, 0, CHECKSUM_LENGTH);
 
             if (calculatedChecksum != Ints.fromByteArray(intByteBuffer))
                 throw new IOException("CRC unmatched");
