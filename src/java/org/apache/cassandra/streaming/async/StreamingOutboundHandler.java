@@ -397,13 +397,16 @@ public class StreamingOutboundHandler extends ChannelDuplexHandler
         ThrottleState throttleState = tryAcquire(initialThrottleState, size);
         if (throttleState != ThrottleState.ACQUIRED)
         {
-            logger.info("JEB::failed to acquire permits ({}); rescheduling", throttleState);
             currentMessage.setDealyedChunk(chunk, throttleState, isLastChunk);
             scheduledWrite = ctx.executor().schedule(() -> delayedTransfer(ctx), DELAY_TIME_MILLS, TimeUnit.MILLISECONDS);
             return false;
         }
 
         ChannelFuture channelFuture = ctx.writeAndFlush(chunk);
+
+        // release the reference to the sstable as fast as possible
+        if (isLastChunk)
+            currentMessage.ofm.finishTransfer();
         channelFuture.addListener((future) -> onChunkComplete(future, ctx, size, isLastChunk));
 
         // onChunkComplete() can be invoked on the last chunk before from the writeAndFlush() above, which sets to currentMessage null
@@ -498,7 +501,6 @@ public class StreamingOutboundHandler extends ChannelDuplexHandler
                 logger.debug("[Stream #{}] Finished streaming file {} to {}, repairedAt = {}, totalSize = {}", session.planId(),
                              reader.getFilename(), session.peer, reader.getSSTableMetadata().repairedAt, currentMessage.totalSize);
                 state = State.READY;
-                currentMessage.ofm.finishTransfer();
                 currentMessage.promise.trySuccess();
                 currentMessage = null;
             }
@@ -566,7 +568,7 @@ public class StreamingOutboundHandler extends ChannelDuplexHandler
 
         // TODO:JEB there's some file reference code to reconsider/clean up here
 //        if (currentMessage.ofm != null)
-            currentMessage.ofm.finishTransfer();
+//            currentMessage.ofm.finishTransfer();
         ChannelPromise promise = currentMessage.promise;
         currentMessage = null;
 
