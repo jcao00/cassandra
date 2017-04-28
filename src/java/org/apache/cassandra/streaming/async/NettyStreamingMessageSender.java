@@ -19,7 +19,6 @@
 package org.apache.cassandra.streaming.async;
 
 import java.io.IOException;
-import java.nio.channels.ClosedChannelException;
 import java.util.Comparator;
 import java.util.Queue;
 import java.util.UUID;
@@ -41,7 +40,6 @@ import io.netty.util.concurrent.Future;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.net.async.HandshakeProtocol.FirstHandshakeMessage;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.net.async.OutboundConnectionParams;
@@ -50,7 +48,6 @@ import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingMessageSender;
 import org.apache.cassandra.streaming.messages.KeepAliveMessage;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
-import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 
 /**
@@ -182,8 +179,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             Channel channel = transferChannels.get(i);
             if (channel != null && channel.isOpen())
             {
-                Attribute<Boolean> busy = channel.attr(CHANNEL_BUSY_ATTR);
-                if (busy.compareAndSet(false, true))
+                if (channel.attr(CHANNEL_BUSY_ATTR).compareAndSet(false, true))
                     return channel;
             }
             else
@@ -199,7 +195,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
                     return null;
                 }
 
-                channel.attr(CHANNEL_BUSY_ATTR).set(false);
+                channel.attr(CHANNEL_BUSY_ATTR).set(true);
 
                 // we went to the effort of creating the channel, so try to put that channel
                 // in any remaining, available slot.
@@ -239,12 +235,12 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
                                                                   .connectionId(connectionId)
                                                                   .encryptionOptions(encryptionOptions)
                                                                   .mode(NettyFactory.Mode.STREAMING)
-                                                                  .protocolVersion(StreamMessage.CURRENT_VERSION)
+                                                                  .protocolVersion(StreamSession.CURRENT_VERSION)
                                                                   .sendBufferSize(sendBufferSize)
                                                                   .waterMark(waterMark)
                                                                   .build();
 
-        Bootstrap bootstrap = NettyFactory.instance.createOutboundBootstrap(params, false);
+        Bootstrap bootstrap = NettyFactory.instance.createOutboundBootstrap(params);
 
         int connectionAttemptCount = 0;
         long now = System.nanoTime();
@@ -266,7 +262,6 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
                 throw new IOException("failed to connect to " + connectionId + " for streaming data", channelFuture.cause());
         }
 
-        channel.writeAndFlush(new FirstHandshakeMessage(protocolVersion, NettyFactory.Mode.STREAMING, false));
         ChannelPipeline pipeline = channel.pipeline();
         pipeline.addLast(NettyFactory.instance.streamingInboundGroup, NettyFactory.INBOUND_STREAM_HANDLER_NAME, new StreamingInboundHandler(connectionId.remoteAddress(), protocolVersion));
         pipeline.addLast(NettyFactory.OUTBOUND_STREAM_HANDLER_NAME, new StreamingOutboundHandler(session, protocolVersion, StreamRateLimiter.instance));
@@ -278,6 +273,11 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         return channel;
     }
 
+    /**
+     * Periodically sends the {@link KeepAliveMessage}.
+     *
+     * NOTE: this task, and the callback function {@link #keepAliveListener(Future)} is executes in the netty event loop.
+     */
     private class KeepAliveTask implements Runnable
     {
         private final Channel channel;
@@ -293,7 +293,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         {
             // if the channel has been closed, or the channel is currently processing a stream transfer,
             // skip this execution.
-            if (!channel.isOpen() || !channel.attr(CHANNEL_BUSY_ATTR).get())
+            if (!channel.isOpen() || channel.attr(CHANNEL_BUSY_ATTR).get())
                 return;
 
             UUID planId = session.planId();
@@ -320,7 +320,6 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         }
     }
 
-
     /**
      * Attempts to pull a message off the {@link #queue} and publish it to the provided netty channel.
      * Each channel should only process (transfer) one file at a time, so we need careful handling of how messages
@@ -339,7 +338,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
      */
     private boolean tryPublishFromQueue(Channel channel)
     {
-        if (!queue.isEmpty() && channel.attr(CHANNEL_BUSY_ATTR).compareAndSet(false, true))
+        assert channel.attr(CHANNEL_BUSY_ATTR).get();
+        if (!queue.isEmpty())
         {
             StreamMessage msg = queue.poll();
             if (msg != null)
@@ -348,15 +348,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
                 future.addListener(f -> onMessageComplete(f, msg));
                 return true;
             }
-            // we won the race to mark this channel as busy (and the queue was not empty when we first checked),
-            // but now the queue is empty (we lost the race to get a message), so set the channel back to not busy.
-            channel.attr(CHANNEL_BUSY_ATTR).set(false);
-
-            // Note: it's arguable that we could close the connection here if there's no work remaining to do, but we don't know the
-            // array index into {@link #transferChannels). further, an idle socket consumes virtually zero resources, and becasue
-            // it's a netty channel it's not necessarily a distinct thread - tl;dr skip the complexity of closing the channel here
-            // as we'll close all the channels at the end of the session.
         }
+        channel.attr(CHANNEL_BUSY_ATTR).set(false);
         return false;
     }
 
@@ -372,15 +365,14 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         ChannelFuture channelFuture = (ChannelFuture)future;
         Channel channel = channelFuture.channel();
         Throwable cause = future.cause();
-        if (cause != null)
+        if (cause == null)
         {
             msg.sent();
-            channel.attr(CHANNEL_BUSY_ATTR).set(false);
             tryPublishFromQueue(channel);
             return true;
         }
 
-        logger.error("failed to stream a file: future = {}, cause = {}", future, future.cause());
+        logger.error("failed to send a stream message/file: future = {}, msg = {}", future, msg, future.cause());
 
         // TODO:JEB double check this correct
         if (!channel.isOpen())

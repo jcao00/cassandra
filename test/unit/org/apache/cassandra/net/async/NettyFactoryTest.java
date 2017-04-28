@@ -207,7 +207,7 @@ public class NettyFactoryTest
                                                                   .coalescingStrategy(Optional.empty())
                                                                   .protocolVersion(MessagingService.current_version)
                                                                   .build();
-        return factory.createOutboundBootstrap(params, true);
+        return factory.createOutboundBootstrap(params);
     }
 
     @Test
@@ -258,7 +258,7 @@ public class NettyFactoryTest
                                                                   .encryptionOptions(encOptions())
                                                                   .protocolVersion(MessagingService.current_version)
                                                                   .build();
-        OutboundInitializer outboundInitializer = new OutboundInitializer(params, true);
+        OutboundInitializer outboundInitializer = new OutboundInitializer(params);
         NioSocketChannel channel = new NioSocketChannel();
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
         outboundInitializer.initChannel(channel);

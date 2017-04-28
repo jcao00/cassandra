@@ -169,7 +169,7 @@ public class OutboundConnectionParams
 
         public OutboundConnectionParams build()
         {
-            Preconditions.checkArgument(protocolVersion != 0, "illegal protocol version: " + protocolVersion);
+            Preconditions.checkArgument(protocolVersion > 0, "illegal protocol version: " + protocolVersion);
             Preconditions.checkArgument(sendBufferSize > 0 && sendBufferSize < 1 << 20, "illegal send buffer size: " + sendBufferSize);
 
             return new OutboundConnectionParams(connectionId, callback, encryptionOptions, mode, compress,

@@ -557,39 +557,46 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     {
         logger.debug("**** received stream message: {}", message);
 
-        switch (message.getType())
+        try
         {
-            case STREAM_INIT:
-                receive((StreamInitMessage)message);
-                break;
-            case STREAM_INIT_ACK:
-                onInitializationComplete();
-                break;
-            case PREPARE_SYN:
-                receive((PrepareSynMessage)message);
-                break;
-            case PREPARE_SYNACK:
-                receive((PrepareSynAckMessage)message);
-                break;
-            case PREPARE_ACK:
-                receive((PrepareAckMessage)message);
-                break;
-            case FILE:
-                break;
-            case COMPLETE:
-                receive((CompleteMessage) message);
-                break;
-            case RECEIVED:
-                receive((ReceivedMessage) message);
-                break;
-            case KEEP_ALIVE:
-                // NOP - we only send/receive the KEEP_ALIVE to force the TCP connection to remain open
-                break;
-            case SESSION_FAILED:
-                receive((SessionFailedMessage) message);
-                break;
-            default:
-                throw new AssertionError("unhandled StreamMessage type: " + message.getClass().getName());
+            switch (message.getType())
+            {
+                case STREAM_INIT:
+                    receive((StreamInitMessage) message);
+                    break;
+                case STREAM_INIT_ACK:
+                    onInitializationComplete();
+                    break;
+                case PREPARE_SYN:
+                    receive((PrepareSynMessage) message);
+                    break;
+                case PREPARE_SYNACK:
+                    receive((PrepareSynAckMessage) message);
+                    break;
+                case PREPARE_ACK:
+                    receive((PrepareAckMessage) message);
+                    break;
+                case FILE:
+                    break;
+                case COMPLETE:
+                    receive((CompleteMessage) message);
+                    break;
+                case RECEIVED:
+                    receive((ReceivedMessage) message);
+                    break;
+                case KEEP_ALIVE:
+                    // NOP - we only send/receive the KEEP_ALIVE to force the TCP connection to remain open
+                    break;
+                case SESSION_FAILED:
+                    receive((SessionFailedMessage) message);
+                    break;
+                default:
+                    throw new AssertionError("unhandled StreamMessage type: " + message.getClass().getName());
+            }
+        }
+        catch (Throwable t)
+        {
+            logger.error("failed to process a streaming message properly", t);
         }
     }
 

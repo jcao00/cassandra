@@ -36,10 +36,6 @@ import org.stringtemplate.v4.misc.STMessage;
  */
 public abstract class StreamMessage
 {
-    /** Streaming protocol version */
-    public static final int VERSION_40 = 5;
-    public static final int CURRENT_VERSION = VERSION_40;
-
     public enum Type
     {
         STREAM_INIT(0, false, StreamInitMessage.serializer),

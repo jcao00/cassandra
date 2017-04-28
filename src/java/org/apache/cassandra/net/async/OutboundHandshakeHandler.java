@@ -97,6 +97,10 @@ public class OutboundHandshakeHandler extends ByteToMessageDecoder
         FirstHandshakeMessage msg = new FirstHandshakeMessage(messagingVersion, mode, params.compress);
         logger.trace("starting handshake with peer {}, msg = {}", connectionId.connectionAddress(), msg);
         ctx.writeAndFlush(msg.encode(ctx.alloc()));
+
+        if (mode == NettyFactory.Mode.STREAMING)
+            ctx.pipeline().remove(this);
+
         ctx.fireChannelActive();
     }
 

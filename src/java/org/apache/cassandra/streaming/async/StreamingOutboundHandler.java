@@ -160,6 +160,8 @@ public class StreamingOutboundHandler extends ChannelDuplexHandler
         if (!canProcessMessage(message, promise))
             return;
 
+        state = State.PROCESSING;
+
         try
         {
             if (message instanceof OutgoingFileMessage)
@@ -179,6 +181,28 @@ public class StreamingOutboundHandler extends ChannelDuplexHandler
 //            else
 //                currentMessage.chunker.close();
         }
+    }
+
+    @VisibleForTesting
+    boolean canProcessMessage(Object message, ChannelPromise promise)
+    {
+        if (state == State.CLOSED)
+        {
+            promise.tryFailure(new ClosedChannelException());
+            return false;
+        }
+        if (state == State.PROCESSING)
+        {
+            promise.tryFailure(new IllegalStateException("currently processing an outbound message, but got another: " + message));
+            return false;
+        }
+        else if (!(message instanceof StreamMessage))
+        {
+            promise.tryFailure(new UnsupportedMessageTypeException("message must be instance of OutgoingFileMessage"));
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -205,35 +229,13 @@ public class StreamingOutboundHandler extends ChannelDuplexHandler
         buf.writeInt((int)ChecksumType.CRC32.of(ByteBuffer.allocate(4).putInt(0, (int)messageSize)));
         serializer.serialize(message, new ByteBufDataOutputPlus(buf), protocolVersion);
 
+        state = State.READY;
         ctx.writeAndFlush(buf, promise);
-    }
-
-    @VisibleForTesting
-    boolean canProcessMessage(Object message, ChannelPromise promise)
-    {
-        if (state == State.CLOSED)
-        {
-            promise.tryFailure(new ClosedChannelException());
-            return false;
-        }
-        if (state == State.PROCESSING)
-        {
-            promise.tryFailure(new IllegalStateException("currently processing a outbound message, but got another"));
-            return false;
-        }
-        else if (!(message instanceof StreamMessage))
-        {
-            promise.tryFailure(new UnsupportedMessageTypeException("message must be instance of OutgoingFileMessage"));
-            return false;
-        }
-
-        return true;
     }
 
     private void sendFile(ChannelHandlerContext ctx, ChannelPromise promise, OutgoingFileMessage ofm) throws IOException
     {
         logger.debug("[Stream #{}] Sending {}", session.planId(), ofm);
-        state = State.PROCESSING;
         ofm.startTransfer();
 
         ByteBuf buf = null;
@@ -495,9 +497,9 @@ public class StreamingOutboundHandler extends ChannelDuplexHandler
                 SSTableReader reader = currentMessage.ofm.ref.get();
                 logger.debug("[Stream #{}] Finished streaming file {} to {}, repairedAt = {}, totalSize = {}", session.planId(),
                              reader.getFilename(), session.peer, reader.getSSTableMetadata().repairedAt, currentMessage.totalSize);
+                state = State.READY;
                 currentMessage.ofm.finishTransfer();
                 currentMessage.promise.trySuccess();
-                state = State.READY;
                 currentMessage = null;
             }
             else

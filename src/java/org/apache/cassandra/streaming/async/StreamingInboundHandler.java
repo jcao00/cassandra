@@ -35,13 +35,14 @@ import org.slf4j.LoggerFactory;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelConfig;
-import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.FastThreadLocalThread;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.exceptions.ChecksumMismatchException;
 import org.apache.cassandra.io.compress.CompressionMetadata;
+import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.AppendingByteBufInputPlus;
@@ -55,7 +56,6 @@ import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingUtils;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
-import org.apache.cassandra.streaming.messages.StreamInitAckMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage.Type;
@@ -82,7 +82,7 @@ import static org.apache.cassandra.streaming.async.StreamingOutboundHandler.MESS
  * - netty low/high water marks & how it relates to our use of auto-read
  * - netty auto-read, and why we do it on the event loop (keeps things simple from the netty dispatch POV)
  */
-public class StreamingInboundHandler extends ChannelDuplexHandler
+public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamingInboundHandler.class);
 
@@ -327,7 +327,8 @@ public class StreamingInboundHandler extends ChannelDuplexHandler
         if (dataLength < compressionInfo.parameters.maxCompressedLength())
         {
             dst = new byte[compressionInfo.parameters.chunkLength()];
-            compressedDataLen = compressionInfo.parameters.getSstableCompressor().uncompress(src, 0, dataLength, dst, 0);
+            ICompressor compressor = compressionInfo.parameters.getSstableCompressor();
+            compressedDataLen = compressor.uncompress(src, 0, dataLength, dst, 0);
         }
         else
         {

@@ -296,7 +296,7 @@ public class OutboundMessagingConnection
                                                                   .protocolVersion(MessagingService.instance().getVersion(connectionId.remote()))
                                                                   .build();
 
-        return NettyFactory.instance.createOutboundBootstrap(params, true);
+        return NettyFactory.instance.createOutboundBootstrap(params);
     }
 
     static boolean isLocalDC(InetAddress localHost, InetAddress remoteHost)

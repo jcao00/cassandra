@@ -20,6 +20,7 @@ package org.apache.cassandra.net.async;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -44,6 +45,9 @@ public class OutboundMessagingPoolTest
     private static final InetSocketAddress LOCAL_ADDR = new InetSocketAddress("127.0.0.1", 9476);
     private static final InetSocketAddress REMOTE_ADDR = new InetSocketAddress("127.0.0.2", 9476);
     private static final InetSocketAddress RECONNECT_ADDR = new InetSocketAddress("127.0.0.3", 9476);
+    private static final List<ConnectionType> INTERNODE_MESSAGING_CONN_TYPES = new ArrayList<ConnectionType>()
+            {{ add(ConnectionType.GOSSIP); add(ConnectionType.LARGE_MESSAGE); add(ConnectionType.SMALL_MESSAGE); }};
+
     private OutboundMessagingPool pool;
 
     @BeforeClass
@@ -110,17 +114,17 @@ public class OutboundMessagingPoolTest
     @Test
     public void close()
     {
-        for (ConnectionType type : ConnectionType.values())
+        for (ConnectionType type : INTERNODE_MESSAGING_CONN_TYPES)
             Assert.assertNotSame(OutboundMessagingConnection.State.CLOSED, pool.getConnection(type).getState());
         pool.close(false);
-        for (ConnectionType type : ConnectionType.values())
+        for (ConnectionType type : INTERNODE_MESSAGING_CONN_TYPES)
             Assert.assertEquals(OutboundMessagingConnection.State.CLOSED, pool.getConnection(type).getState());
     }
 
     @Test
     public void reconnectWithNewIp()
     {
-        for (ConnectionType type : ConnectionType.values())
+        for (ConnectionType type : INTERNODE_MESSAGING_CONN_TYPES)
         {
             Assert.assertEquals(REMOTE_ADDR, pool.getPreferredRemoteAddr());
             Assert.assertEquals(REMOTE_ADDR, pool.getConnection(type).getConnectionId().connectionAddress());
@@ -128,7 +132,7 @@ public class OutboundMessagingPoolTest
 
         pool.reconnectWithNewIp(RECONNECT_ADDR);
 
-        for (ConnectionType type : ConnectionType.values())
+        for (ConnectionType type : INTERNODE_MESSAGING_CONN_TYPES)
         {
             Assert.assertEquals(RECONNECT_ADDR, pool.getPreferredRemoteAddr());
             Assert.assertEquals(RECONNECT_ADDR, pool.getConnection(type).getConnectionId().connectionAddress());

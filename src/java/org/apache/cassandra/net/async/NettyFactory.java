@@ -46,6 +46,7 @@ import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions.Int
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.NativeTransportService;
+import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.utils.CoalescingStrategies;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -67,7 +68,7 @@ public final class NettyFactory
     private static final String SSL_CHANNEL_HANDLER_NAME = "ssl";
     static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
     static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
-    private static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
+    public static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
     public static final String OUTBOUND_STREAM_HANDLER_NAME = "outboundStreamHandler";
     public static final String INBOUND_STREAM_HANDLER_NAME = "inboundStreamHandler";
 
@@ -195,26 +196,25 @@ public final class NettyFactory
 
         if (!channelFuture.awaitUninterruptibly().isSuccess())
         {
-            SocketAddress addr = channelFuture.channel().localAddress();
             if (channelFuture.channel().isOpen())
                 channelFuture.channel().close();
 
             Throwable failedChannelCause = channelFuture.cause();
             if (failedChannelCause.getMessage().contains("in use"))
             {
-                throw new ConfigurationException(addr + " is in use by another process.  Change listen_address:storage_port " +
+                throw new ConfigurationException(localAddr + " is in use by another process.  Change listen_address:storage_port " +
                                                  "in cassandra.yaml to values that do not conflict with other services");
             }
             // looking at the jdk source, solaris/windows bind failue messages both use the phrase "cannot assign requested address".
             // windows message uses "Cannot" (with a capital 'C'), and solaris (a/k/a *nux) doe not. hence we search for "annot" <sigh>
             else if (failedChannelCause.getMessage().contains("annot assign requested address"))
             {
-                throw new ConfigurationException("Unable to bind to address " + addr
+                throw new ConfigurationException("Unable to bind to address " + localAddr
                                                  + ". Set listen_address in cassandra.yaml to an interface you can bind to, e.g., your private IP address on EC2");
             }
             else
             {
-                throw new ConfigurationException("failed to bind to: " + addr, failedChannelCause);
+                throw new ConfigurationException("failed to bind to: " + localAddr, failedChannelCause);
             }
         }
 
@@ -266,7 +266,7 @@ public final class NettyFactory
      * and thus does not block.
      */
     @VisibleForTesting
-    public Bootstrap createOutboundBootstrap(OutboundConnectionParams params, boolean requiresHandshakeHandler)
+    public Bootstrap createOutboundBootstrap(OutboundConnectionParams params)
     {
         logger.debug("creating outbound bootstrap to peer {}, encryption: {}, coalesce: {}", params.connectionId.connectionAddress(),
                     encryptionLogStatement(params.encryptionOptions),
@@ -282,7 +282,7 @@ public final class NettyFactory
                               .option(ChannelOption.SO_RCVBUF, OUTBOUND_CHANNEL_RECEIVE_BUFFER_SIZE)
                               .option(ChannelOption.TCP_NODELAY, params.tcpNoDelay)
                               .option(ChannelOption.WRITE_BUFFER_WATER_MARK, params.waterMark)
-                              .handler(new OutboundInitializer(params, requiresHandshakeHandler));
+                              .handler(new OutboundInitializer(params));
         bootstrap.localAddress(params.connectionId.local(), 0);
         bootstrap.remoteAddress(params.connectionId.connectionAddress());
         return bootstrap;
@@ -291,12 +291,10 @@ public final class NettyFactory
     public static class OutboundInitializer extends ChannelInitializer<SocketChannel>
     {
         private final OutboundConnectionParams params;
-        private final boolean requiresHandshakeHandler;
 
-        OutboundInitializer(OutboundConnectionParams params, boolean requiresHandshakeHandler)
+        OutboundInitializer(OutboundConnectionParams params)
         {
             this.params = params;
-            this.requiresHandshakeHandler = requiresHandshakeHandler;
         }
 
         public void initChannel(SocketChannel channel) throws Exception
@@ -315,8 +313,7 @@ public final class NettyFactory
             if (NettyFactory.WIRETRACE)
                 pipeline.addLast("logger", new LoggingHandler(LogLevel.INFO));
 
-            if (requiresHandshakeHandler)
-                pipeline.addLast(HANDSHAKE_HANDLER_NAME, new OutboundHandshakeHandler(params));
+            pipeline.addLast(HANDSHAKE_HANDLER_NAME, new OutboundHandshakeHandler(params));
         }
     }
 

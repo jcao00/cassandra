@@ -74,7 +74,7 @@ public class HandshakeProtocol
      * UNU - unused bits lowest two bits; from a historical note: used to be "serializer type," which was always Binary
      * CMP - compression enabled bit
      * MOD - connection mode. If the bit is on, the connection is for streaming; if the bit is off, it is for inter-node messaging.
-     * VERSION - if a streaming connection, indicates the streaming protocol version {@link org.apache.cassandra.streaming.messages.StreamMessage#CURRENT_VERSION};
+     * VERSION - if a streaming connection, indicates the streaming protocol version {@link org.apache.cassandra.streaming.StreamSession#CURRENT_VERSION};
      * if a messaging connection, indicates the messaging protocol version the initiator *thinks* should be used.
      */
     public static class FirstHandshakeMessage
@@ -88,6 +88,7 @@ public class HandshakeProtocol
 
         public FirstHandshakeMessage(int messagingVersion, NettyFactory.Mode mode, boolean compressionEnabled)
         {
+            assert messagingVersion > 0;
             this.messagingVersion = messagingVersion;
             this.mode = mode;
             this.compressionEnabled = compressionEnabled;
