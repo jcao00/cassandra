@@ -28,7 +28,7 @@ import java.net.InetSocketAddress;
  * additional detail that in some case (typically public EC2 address across regions) the address to which we connect
  * to the remote is different from the address by which the node is known by the rest of the C*.
  */
-class OutboundConnectionIdentifier
+public class OutboundConnectionIdentifier
 {
     enum ConnectionType
     {
@@ -75,7 +75,7 @@ class OutboundConnectionIdentifier
      * Creates an identifier for a small message connection and using the remote "identifying" address as its connection
      * address.
      */
-    static OutboundConnectionIdentifier small(InetSocketAddress localAddr, InetSocketAddress remoteAddr)
+    public static OutboundConnectionIdentifier small(InetSocketAddress localAddr, InetSocketAddress remoteAddr)
     {
         return new OutboundConnectionIdentifier(localAddr, remoteAddr, ConnectionType.SMALL_MESSAGE);
     }
@@ -84,7 +84,7 @@ class OutboundConnectionIdentifier
      * Creates an identifier for a large message connection and using the remote "identifying" address as its connection
      * address.
      */
-    static OutboundConnectionIdentifier large(InetSocketAddress localAddr, InetSocketAddress remoteAddr)
+    public static OutboundConnectionIdentifier large(InetSocketAddress localAddr, InetSocketAddress remoteAddr)
     {
         return new OutboundConnectionIdentifier(localAddr, remoteAddr, ConnectionType.LARGE_MESSAGE);
     }
@@ -93,7 +93,7 @@ class OutboundConnectionIdentifier
      * Creates an identifier for a gossip connection and using the remote "identifying" address as its connection
      * address.
      */
-    static OutboundConnectionIdentifier gossip(InetSocketAddress localAddr, InetSocketAddress remoteAddr)
+    public static OutboundConnectionIdentifier gossip(InetSocketAddress localAddr, InetSocketAddress remoteAddr)
     {
         return new OutboundConnectionIdentifier(localAddr, remoteAddr, ConnectionType.GOSSIP);
     }

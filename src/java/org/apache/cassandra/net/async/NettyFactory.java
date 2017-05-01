@@ -25,6 +25,7 @@ import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.epoll.EpollSocketChannel;
+import io.netty.channel.group.ChannelGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -34,7 +35,9 @@ import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.util.concurrent.DefaultEventExecutor;
 import io.netty.util.concurrent.DefaultThreadFactory;
+import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
@@ -214,16 +217,19 @@ public final class NettyFactory
     {
         private final IInternodeAuthenticator authenticator;
         private final ServerEncryptionOptions encryptionOptions;
+        private final ChannelGroup channelGroup;
 
-        public InboundInitializer(IInternodeAuthenticator authenticator, ServerEncryptionOptions encryptionOptions)
+        public InboundInitializer(IInternodeAuthenticator authenticator, ServerEncryptionOptions encryptionOptions, ChannelGroup channelGroup)
         {
             this.authenticator = authenticator;
             this.encryptionOptions = encryptionOptions;
+            this.channelGroup = channelGroup;
         }
 
         @Override
         public void initChannel(SocketChannel channel) throws Exception
         {
+            channelGroup.add(channel);
             ChannelPipeline pipeline = channel.pipeline();
 
             // order of handlers: ssl -> logger -> handshakeHandler
@@ -254,7 +260,7 @@ public final class NettyFactory
      * Create the {@link Bootstrap} for connecting to a remote peer. This method does <b>not</b> attempt to connect to the peer,
      * and thus does not block.
      */
-    Bootstrap createOutboundBootstrap(OutboundConnectionParams params)
+    public Bootstrap createOutboundBootstrap(OutboundConnectionParams params)
     {
         logger.debug("creating outbound bootstrap to peer {}, encryption: {}, coalesce: {}", params.connectionId.connectionAddress(),
                     encryptionLogStatement(params.encryptionOptions),
@@ -319,5 +325,10 @@ public final class NettyFactory
         acceptGroup.shutdownGracefully();
         outboundGroup.shutdownGracefully();
         inboundGroup.shutdownGracefully();
+    }
+
+    public static EventExecutor executorForChannelGroups()
+    {
+        return new DefaultEventExecutor();
     }
 }

@@ -50,6 +50,8 @@ import org.slf4j.LoggerFactory;
 import com.carrotsearch.hppc.IntObjectMap;
 import com.carrotsearch.hppc.IntObjectOpenHashMap;
 import io.netty.channel.Channel;
+import io.netty.channel.group.ChannelGroup;
+import io.netty.channel.group.DefaultChannelGroup;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.batchlog.Batch;
 import org.apache.cassandra.concurrent.ExecutorLocals;
@@ -444,7 +446,7 @@ public final class MessagingService implements MessagingServiceMBean
 
     @VisibleForTesting
     public final ConcurrentMap<InetAddress, OutboundMessagingPool> channelManagers = new NonBlockingHashMap<>();
-    private final List<Channel> serverChannels = Lists.newArrayList();
+    final List<ServerChannel> serverChannels = Lists.newArrayList();
 
     private static final Logger logger = LoggerFactory.getLogger(MessagingService.class);
     private static final int LOG_DROPPED_INTERVAL_IN_MS = 5000;
@@ -744,20 +746,62 @@ public final class MessagingService implements MessagingServiceMBean
     {
         IInternodeAuthenticator authenticator = DatabaseDescriptor.getInternodeAuthenticator();
         int receiveBufferSize = DatabaseDescriptor.getInternodeRecvBufferSize();
+
         if (DatabaseDescriptor.getServerEncryptionOptions().internode_encryption != ServerEncryptionOptions.InternodeEncryption.none)
         {
             InetSocketAddress localAddr = new InetSocketAddress(localEp, DatabaseDescriptor.getSSLStoragePort());
-            serverChannels.add(NettyFactory.instance.createInboundChannel(localAddr, new InboundInitializer(authenticator, DatabaseDescriptor.getServerEncryptionOptions()), receiveBufferSize));
+            ChannelGroup channelGroup = new DefaultChannelGroup("EncryptedInternodeMessagingGroup", NettyFactory.executorForChannelGroups());
+            InboundInitializer initializer = new InboundInitializer(authenticator, DatabaseDescriptor.getServerEncryptionOptions(), channelGroup);
+            Channel encryptedChannel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
+            serverChannels.add(new ServerChannel(encryptedChannel, channelGroup));
         }
 
         if (DatabaseDescriptor.getServerEncryptionOptions().internode_encryption != ServerEncryptionOptions.InternodeEncryption.all)
         {
             InetSocketAddress localAddr = new InetSocketAddress(localEp, DatabaseDescriptor.getStoragePort());
-            serverChannels.add(NettyFactory.instance.createInboundChannel(localAddr, new InboundInitializer(authenticator, null), receiveBufferSize));
+            ChannelGroup channelGroup = new DefaultChannelGroup("InternodeMessagingGroup", NettyFactory.executorForChannelGroups());
+            InboundInitializer initializer = new InboundInitializer(authenticator, null, channelGroup);
+            Channel channel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
+            serverChannels.add(new ServerChannel(channel, channelGroup));
         }
 
         if (serverChannels.isEmpty())
             throw new IllegalStateException("no listening channels set up in MessagingService!");
+    }
+
+    /**
+     * A simple struct to wrap up the the components needed for each listening socket.
+     */
+    @VisibleForTesting
+    static class ServerChannel
+    {
+        /**
+         * The base {@link Channel} that is doing the spcket listen/accept.
+         */
+        private final Channel channel;
+
+        /**
+         * A group of the open, inbound {@link Channel}s connected to this node. This is mostly interesting so that all of
+         * the inbound connections/channels can be closed when the listening socket itself is being closed.
+         */
+        private final ChannelGroup connectedChannels;
+
+        private ServerChannel(Channel channel, ChannelGroup channelGroup)
+        {
+            this.channel = channel;
+            this.connectedChannels = channelGroup;
+        }
+
+        void close()
+        {
+            channel.close().syncUninterruptibly();
+            connectedChannels.close().syncUninterruptibly();
+        }
+        int size()
+
+        {
+            return connectedChannels.size();
+        }
     }
 
     public void waitUntilListening()
@@ -1001,8 +1045,8 @@ public final class MessagingService implements MessagingServiceMBean
         try
         {
             // first close the recieve channels
-            for (Channel channel : serverChannels)
-                channel.close().syncUninterruptibly();
+            for (ServerChannel serverChannel : serverChannels)
+                serverChannel.close();
 
             // now close the send channels
             for (OutboundMessagingPool pool : channelManagers.values())

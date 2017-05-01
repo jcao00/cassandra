@@ -30,7 +30,7 @@ import org.apache.cassandra.utils.CoalescingStrategies.CoalescingStrategy;
 /**
  * A collection of data points to be passed around for outbound connections.
  */
-class OutboundConnectionParams
+public class OutboundConnectionParams
 {
     static final int DEFAULT_SEND_BUFFER_SIZE = 1 << 16;
 
@@ -79,7 +79,7 @@ class OutboundConnectionParams
         private ServerEncryptionOptions encryptionOptions;
         private NettyFactory.Mode mode;
         private boolean compress;
-        private Optional<CoalescingStrategy> coalescingStrategy;
+        private Optional<CoalescingStrategy> coalescingStrategy = Optional.empty();
         private int sendBufferSize = DEFAULT_SEND_BUFFER_SIZE;
         private boolean tcpNoDelay;
 

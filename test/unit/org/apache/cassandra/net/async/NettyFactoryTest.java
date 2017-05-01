@@ -23,18 +23,23 @@ import java.util.Optional;
 
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
+import io.netty.channel.DefaultEventLoop;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
+import io.netty.channel.group.ChannelGroup;
+import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.util.concurrent.GlobalEventExecutor;
 import org.apache.cassandra.auth.AllowAllInternodeAuthenticator;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -52,13 +57,20 @@ public class NettyFactoryTest
     private static final int receiveBufferSize = 1 << 16;
     private static final IInternodeAuthenticator AUTHENTICATOR = new AllowAllInternodeAuthenticator();
 
+    private ChannelGroup channelGroup;
+    private NettyFactory factory;
+
     @BeforeClass
     public static void before()
     {
         DatabaseDescriptor.daemonInitialization();
     }
 
-    private NettyFactory factory;
+    @Before
+    public void setUp()
+    {
+        channelGroup = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
+    }
 
     @After
     public void tearDown()
@@ -79,7 +91,7 @@ public class NettyFactoryTest
 
     private Channel createServerChannel(boolean useEpoll)
     {
-        InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null);
+        InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null, channelGroup);
         factory = new NettyFactory(useEpoll);
 
         try
@@ -111,7 +123,7 @@ public class NettyFactoryTest
         try
         {
             InetSocketAddress addr = new InetSocketAddress("127.0.0.1", 9876);
-            InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null);
+            InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null, channelGroup);
             inboundChannel = NettyFactory.instance.createInboundChannel(LOCAL_ADDR, inboundInitializer, receiveBufferSize);
             NettyFactory.instance.createInboundChannel(LOCAL_ADDR, inboundInitializer, receiveBufferSize);
         }
@@ -126,7 +138,7 @@ public class NettyFactoryTest
     public void createServerChannel_UnbindableAddress()
     {
         InetSocketAddress addr = new InetSocketAddress("1.1.1.1", 9876);
-        InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null);
+        InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null, channelGroup);
         NettyFactory.instance.createInboundChannel(addr, inboundInitializer, receiveBufferSize);
     }
 
@@ -218,7 +230,7 @@ public class NettyFactoryTest
     @Test
     public void createInboundInitializer_WithoutSsl() throws Exception
     {
-        InboundInitializer initializer = new InboundInitializer(AUTHENTICATOR, null);
+        InboundInitializer initializer = new InboundInitializer(AUTHENTICATOR, null, channelGroup);
         NioSocketChannel channel = new NioSocketChannel();
         initializer.initChannel(channel);
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
@@ -240,7 +252,7 @@ public class NettyFactoryTest
     public void createInboundInitializer_WithSsl() throws Exception
     {
         ServerEncryptionOptions encryptionOptions = encOptions();
-        InboundInitializer initializer = new InboundInitializer(AUTHENTICATOR, encryptionOptions);
+        InboundInitializer initializer = new InboundInitializer(AUTHENTICATOR, encryptionOptions, channelGroup);
         NioSocketChannel channel = new NioSocketChannel();
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
         initializer.initChannel(channel);

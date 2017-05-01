@@ -56,7 +56,7 @@ import org.apache.cassandra.net.async.HandshakeProtocol.ThirdHandshakeMessage;
  * This class extends {@link ByteToMessageDecoder}, which is a {@link ChannelInboundHandler}, because this handler
  * waits for the peer's handshake response (the {@link SecondHandshakeMessage} of the internode messaging handshake protocol).
  */
-class OutboundHandshakeHandler extends ByteToMessageDecoder
+public class OutboundHandshakeHandler extends ByteToMessageDecoder
 {
     private static final Logger logger = LoggerFactory.getLogger(OutboundHandshakeHandler.class);
 
@@ -204,7 +204,7 @@ class OutboundHandshakeHandler extends ByteToMessageDecoder
      *  2) we may decide to disconnect to reconnect with another protocol version (namely, the version is passed in this result).
      *  3) we can have a negotiation failure for an unknown reason. (#sadtrombone)
      */
-    static class HandshakeResult
+    public static class HandshakeResult
     {
         static final int UNKNOWN_PROTOCOL_VERSION = -1;
 

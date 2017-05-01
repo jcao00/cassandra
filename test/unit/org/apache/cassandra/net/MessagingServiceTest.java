@@ -30,18 +30,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.collect.Iterables;
 
 import com.codahale.metrics.Timer;
 
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.monitoring.ApproximateTime;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.net.MessagingService.ServerChannel;
+import org.apache.cassandra.net.async.NettyFactory;
+import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
+import org.apache.cassandra.net.async.OutboundConnectionParams;
 import org.apache.cassandra.net.async.OutboundMessagingPool;
+import org.apache.cassandra.utils.FBUtilities;
 import org.caffinitas.ohc.histo.EstimatedHistogram;
 import org.junit.After;
 import org.junit.Assert;
@@ -439,4 +447,42 @@ public class MessagingServiceTest
         // recreate the pool/conn, and make sure the preferred ip addr is used
         Assert.assertEquals(privateIp, messagingService.getCurrentEndpoint(publicIp));
     }
+
+    @Test
+    public void testCloseInboundConnections() throws UnknownHostException, InterruptedException
+    {
+        messagingService.listen();
+        Assert.assertTrue(messagingService.isListening());
+        Assert.assertTrue(messagingService.serverChannels.size() > 0);
+        for (ServerChannel serverChannel : messagingService.serverChannels)
+            Assert.assertEquals(0, serverChannel.size());
+
+        // now, create a connection and make sure it's in a channel group
+        InetSocketAddress server = new InetSocketAddress(FBUtilities.getBroadcastAddress(), DatabaseDescriptor.getStoragePort());
+        OutboundConnectionIdentifier id = OutboundConnectionIdentifier.small(new InetSocketAddress(InetAddress.getByName("127.0.0.2"), 0), server);
+
+        CountDownLatch latch = new CountDownLatch(1);
+        OutboundConnectionParams params = OutboundConnectionParams.builder()
+                                                                  .mode(NettyFactory.Mode.MESSAGING)
+                                                                  .sendBufferSize(1 << 10)
+                                                                  .connectionId(id)
+                                                                  .callback(handshakeResult -> latch.countDown())
+                                                                  .build();
+        Bootstrap bootstrap = NettyFactory.instance.createOutboundBootstrap(params);
+        Channel channel = bootstrap.connect().awaitUninterruptibly().channel();
+        Assert.assertNotNull(channel);
+        latch.await(1, TimeUnit.SECONDS); // allow the netty pipeline/c* handshake to get set up
+
+        int connectCount = 0;
+        for (ServerChannel serverChannel : messagingService.serverChannels)
+            connectCount += serverChannel.size();
+        Assert.assertTrue(connectCount > 0);
+
+        // last, shutdown the MS and make sure connections are removed
+        messagingService.shutdown();
+        for (ServerChannel serverChannel : messagingService.serverChannels)
+            Assert.assertEquals(0, serverChannel.size());
+    }
+
+
 }
