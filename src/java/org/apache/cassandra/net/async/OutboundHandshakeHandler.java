@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandler;
@@ -35,6 +36,7 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
+import io.netty.util.concurrent.Future;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -107,8 +109,22 @@ public class OutboundHandshakeHandler extends ByteToMessageDecoder
     {
         FirstHandshakeMessage msg = new FirstHandshakeMessage(messagingVersion, mode, params.compress);
         logger.trace("starting handshake with peer {}, msg = {}", connectionId.connectionAddress(), msg);
-        ctx.writeAndFlush(msg.encode(ctx.alloc()));
+        ctx.writeAndFlush(msg.encode(ctx.alloc())).addListener(future -> firstHandshakeMessageListener(future, ctx));
         ctx.fireChannelActive();
+    }
+
+    /**
+     * A simple listener to make sure we could send the {@link FirstHandshakeMessage} to the socket,
+     * and fail the handshake attempt if we could not (for example, maybe we could create the TCP socket, but then
+     * the connection gets closed for some reason).
+     */
+    void firstHandshakeMessageListener(Future<? super Void> future, ChannelHandlerContext ctx)
+    {
+        if (future.isSuccess())
+            return;
+
+        ChannelFuture channelFuture = (ChannelFuture)future;
+        exceptionCaught(ctx, channelFuture.cause());
     }
 
     /**
