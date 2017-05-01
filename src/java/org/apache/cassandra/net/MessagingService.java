@@ -729,12 +729,15 @@ public final class MessagingService implements MessagingServiceMBean
     {
         callbacks.reset(); // hack to allow tests to stop/restart MS
         listen(FBUtilities.getLocalAddress());
-        if (DatabaseDescriptor.shouldListenOnBroadcastAddress()
-            && !FBUtilities.getLocalAddress().equals(FBUtilities.getBroadcastAddress()))
-        {
+        if (shouldListenOnBroadcastAddress())
             listen(FBUtilities.getBroadcastAddress());
-        }
         listenGate.signalAll();
+    }
+
+    public static boolean shouldListenOnBroadcastAddress()
+    {
+        return DatabaseDescriptor.shouldListenOnBroadcastAddress()
+               && !FBUtilities.getLocalAddress().equals(FBUtilities.getBroadcastAddress());
     }
 
     /**

@@ -46,6 +46,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions.InternodeEncryption;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.NativeTransportService;
 import org.apache.cassandra.utils.CoalescingStrategies;
@@ -125,10 +126,19 @@ public final class NettyFactory
      * Determine the number of accept threads we need, which is based upon the number of listening sockets we will have.
      * We'll have either 1 or 2 listen sockets, depending on if we use SSL or not in combination with non-SSL. If we have both,
      * we'll have two sockets, and thus need two threads; else one socket and one thread.
+     *
+     * If the operator has configured multiple IP addresses (both {@link org.apache.cassandra.config.Config#broadcast_address}
+     * and {@link org.apache.cassandra.config.Config#listen_address} are configured), then we listen on another set of sockets
+     * - basically doubling the count. See CASSANDRA-9748 for more details.
      */
     static int determineAcceptGroupSize(InternodeEncryption internode_encryption)
     {
-        return internode_encryption == InternodeEncryption.dc || internode_encryption == InternodeEncryption.rack ? 2 : 1;
+        int listenSocketCount = internode_encryption == InternodeEncryption.dc || internode_encryption == InternodeEncryption.rack ? 2 : 1;
+
+        if (MessagingService.shouldListenOnBroadcastAddress())
+            listenSocketCount *= 2;
+
+        return listenSocketCount;
     }
 
     /**

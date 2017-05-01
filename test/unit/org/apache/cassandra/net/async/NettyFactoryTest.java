@@ -18,9 +18,11 @@
 
 package org.apache.cassandra.net.async;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Optional;
 
+import com.google.common.net.InetAddresses;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -42,12 +44,14 @@ import io.netty.handler.ssl.SslHandler;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import org.apache.cassandra.auth.AllowAllInternodeAuthenticator;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
+import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions.InternodeEncryption;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.net.async.NettyFactory.InboundInitializer;
 import org.apache.cassandra.net.async.NettyFactory.OutboundInitializer;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.NativeLibrary;
 
 public class NettyFactoryTest
@@ -149,6 +153,23 @@ public class NettyFactoryTest
         Assert.assertEquals(1, NettyFactory.determineAcceptGroupSize(InternodeEncryption.all));
         Assert.assertEquals(2, NettyFactory.determineAcceptGroupSize(InternodeEncryption.rack));
         Assert.assertEquals(2, NettyFactory.determineAcceptGroupSize(InternodeEncryption.dc));
+
+        InetAddress originalBroadcastAddr = FBUtilities.getBroadcastAddress();
+        try
+        {
+            FBUtilities.setBroadcastInetAddress(InetAddresses.increment(FBUtilities.getLocalAddress()));
+            DatabaseDescriptor.setListenOnBroadcastAddress(true);
+
+            Assert.assertEquals(2, NettyFactory.determineAcceptGroupSize(InternodeEncryption.none));
+            Assert.assertEquals(2, NettyFactory.determineAcceptGroupSize(InternodeEncryption.all));
+            Assert.assertEquals(4, NettyFactory.determineAcceptGroupSize(InternodeEncryption.rack));
+            Assert.assertEquals(4, NettyFactory.determineAcceptGroupSize(InternodeEncryption.dc));
+        }
+        finally
+        {
+            FBUtilities.setBroadcastInetAddress(originalBroadcastAddr);
+            DatabaseDescriptor.setListenOnBroadcastAddress(false);
+        }
     }
 
     @Test

@@ -1533,6 +1533,11 @@ public class DatabaseDescriptor
         return conf.listen_on_broadcast_address;
     }
 
+    public static void setListenOnBroadcastAddress(boolean listen_on_broadcast_address)
+    {
+        conf.listen_on_broadcast_address = listen_on_broadcast_address;
+    }
+
     public static IInternodeAuthenticator getInternodeAuthenticator()
     {
         return internodeAuthenticator;
