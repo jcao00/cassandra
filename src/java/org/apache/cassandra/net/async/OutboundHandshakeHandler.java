@@ -132,11 +132,9 @@ public class OutboundHandshakeHandler extends ByteToMessageDecoder
      *
      * Invoked when we get the response back from the peer, which should contain the second message of the internode messaging handshake.
      * <p>
-     * If the peer's protocol version is less than what we were expecting, immediately close the channel (and socket); do *not* send out
-     * the third message of the internode messaging handshake (the higher protocol may have changed!).
-     * <p>
-     * If the peer's protocol version is greater than what we were expecting, send out the third message of the internode messaging handshake,
-     * but then close the connection. We will reconnect on the appropriate protocol version.
+     * If the peer's protocol version does not equal what we were expecting, immediately close the channel (and socket);
+     * do *not* send out the third message of the internode messaging handshake.
+     * We will reconnect on the appropriate protocol version.
      */
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception
