@@ -51,12 +51,14 @@ import org.apache.cassandra.utils.UUIDGen;
  * See the javadoc on {@link ChannelWriter} for more details about the callbacks as well as message timeouts.
  *<p>
  * Note: this class derives from {@link ChannelDuplexHandler} so we can intercept calls to
- * {@link #channelWritabilityChanged(ChannelHandlerContext)}.
+ * {@link #userEventTriggered(ChannelHandlerContext, Object)}.
  */
 class MessageOutHandler extends ChannelDuplexHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(MessageOutHandler.class);
     private static final NoSpamLogger errorLogger = NoSpamLogger.getLogger(logger, 1, TimeUnit.SECONDS);
+
+    static final int AUTO_FLUSH_THRESHOLD = 1 << 14;
 
     /**
      * The amount of prefix data, in bytes, before the serialized message.
@@ -70,13 +72,24 @@ class MessageOutHandler extends ChannelDuplexHandler
      */
     private final int targetMessagingVersion;
 
+    /**
+     * The minumum size at which we'll automatically flush the channel.
+     */
+    private final int flushSizeThreshold;
+
     private final ChannelWriter channelWriter;
 
     MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter)
     {
+        this (connectionId, targetMessagingVersion, channelWriter, AUTO_FLUSH_THRESHOLD);
+    }
+
+    MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter, int flushThreshold)
+    {
         this.connectionId = connectionId;
         this.targetMessagingVersion = targetMessagingVersion;
         this.channelWriter = channelWriter;
+        this.flushSizeThreshold = flushThreshold;
     }
 
     @Override
@@ -105,6 +118,8 @@ class MessageOutHandler extends ChannelDuplexHandler
             captureTracingInfo(msg);
             serializeMessage(msg, out);
             ctx.write(out, promise);
+            if (ctx.channel().unsafe().outboundBuffer().totalPendingWriteBytes() >= flushSizeThreshold)
+                ctx.flush();
         }
         catch(Exception e)
         {
@@ -198,28 +213,6 @@ class MessageOutHandler extends ChannelDuplexHandler
         if (out.isWritable())
             errorLogger.error("{} reported message size {}, actual message size {}, msg {}",
                          connectionId, out.capacity(), out.writerIndex(), msg.message);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * This method will be triggered when a producer thread writes a message to the channel, and the size
-     * of that message pushes the "open" count of bytes in the channel over the high water mark. The mechanics
-     * of netty will wake up the event loop thread (if it's not already executing), trigger the
-     * "channelWritabilityChanged" function, which is invoked *after* executing any pending write tasks in the netty queue.
-     * Thus, when this method is invoked it's a great time to flush, to push all the written buffers to the kernel
-     * for sending.
-     *
-     * Note: it doesn't matter if coalescing is enabled or disabled, once this function is invoked we want to flush
-     * to free up memory.
-     */
-    @Override
-    public void channelWritabilityChanged(ChannelHandlerContext ctx)
-    {
-        if (!ctx.channel().isWritable())
-            ctx.flush();
-
-        ctx.fireChannelWritabilityChanged();
     }
 
     @Override

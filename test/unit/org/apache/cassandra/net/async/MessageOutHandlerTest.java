@@ -23,12 +23,16 @@ import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
@@ -38,6 +42,7 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.UnsupportedMessageTypeException;
 import io.netty.handler.timeout.IdleStateEvent;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.gms.EchoMessage;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
@@ -63,11 +68,35 @@ public class MessageOutHandlerTest
     @Before
     public void setup()
     {
+        setup(MessageOutHandler.AUTO_FLUSH_THRESHOLD);
+    }
+
+    private void setup(int flushThreshold)
+    {
         OutboundConnectionIdentifier connectionId = OutboundConnectionIdentifier.small(new InetSocketAddress("127.0.0.1", 0),
                                                                                        new InetSocketAddress("127.0.0.2", 0));
         channelWriter = ChannelWriter.create(channel, Optional.empty());
-        handler = new MessageOutHandler(connectionId, MESSAGING_VERSION, channelWriter);
+        handler = new MessageOutHandler(connectionId, MESSAGING_VERSION, channelWriter, flushThreshold);
         channel = new EmbeddedChannel(handler);
+    }
+
+    @Test
+    public void write_NoFlush() throws ExecutionException, InterruptedException, TimeoutException
+    {
+        MessageOut message = new MessageOut(MessagingService.Verb.ECHO);
+        ChannelFuture future = channel.write(new QueuedMessage(message, 42));
+        Assert.assertTrue(!future.isDone());
+        Assert.assertFalse(channel.releaseOutbound());
+    }
+
+    @Test
+    public void write_WithFlush() throws ExecutionException, InterruptedException, TimeoutException
+    {
+        setup(1);
+        MessageOut message = new MessageOut(MessagingService.Verb.ECHO);
+        ChannelFuture future = channel.write(new QueuedMessage(message, 42));
+        Assert.assertTrue(future.isSuccess());
+        Assert.assertTrue(channel.releaseOutbound());
     }
 
     @Test
