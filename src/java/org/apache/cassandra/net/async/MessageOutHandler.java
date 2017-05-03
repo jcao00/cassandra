@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
@@ -51,7 +52,7 @@ import org.apache.cassandra.utils.UUIDGen;
  * See the javadoc on {@link ChannelWriter} for more details about the callbacks as well as message timeouts.
  *<p>
  * Note: this class derives from {@link ChannelDuplexHandler} so we can intercept calls to
- * {@link #userEventTriggered(ChannelHandlerContext, Object)}.
+ * {@link #userEventTriggered(ChannelHandlerContext, Object)} and {@link #channelWritabilityChanged(ChannelHandlerContext)}.
  */
 class MessageOutHandler extends ChannelDuplexHandler
 {
@@ -79,17 +80,20 @@ class MessageOutHandler extends ChannelDuplexHandler
 
     private final ChannelWriter channelWriter;
 
-    MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter)
+    private final Supplier<QueuedMessage> backlogSupplier;
+
+    MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter, Supplier<QueuedMessage> backlogSupplier)
     {
-        this (connectionId, targetMessagingVersion, channelWriter, AUTO_FLUSH_THRESHOLD);
+        this (connectionId, targetMessagingVersion, channelWriter, backlogSupplier, AUTO_FLUSH_THRESHOLD);
     }
 
-    MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter, int flushThreshold)
+    MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter, Supplier<QueuedMessage> backlogSupplier, int flushThreshold)
     {
         this.connectionId = connectionId;
         this.targetMessagingVersion = targetMessagingVersion;
         this.channelWriter = channelWriter;
         this.flushSizeThreshold = flushThreshold;
+        this.backlogSupplier = backlogSupplier;
     }
 
     @Override
@@ -118,6 +122,8 @@ class MessageOutHandler extends ChannelDuplexHandler
             captureTracingInfo(msg);
             serializeMessage(msg, out);
             ctx.write(out, promise);
+
+            // check to see if we should flush based on buffered size
             if (ctx.channel().unsafe().outboundBuffer().totalPendingWriteBytes() >= flushSizeThreshold)
                 ctx.flush();
         }
@@ -175,7 +181,8 @@ class MessageOutHandler extends ChannelDuplexHandler
                 UUID sessionId = UUIDGen.getUUID(ByteBuffer.wrap(sessionBytes));
                 TraceState state = Tracing.instance.get(sessionId);
                 String message = String.format("Sending %s message to %s, size = %d bytes",
-                                               msg.message.verb, connectionId.connectionAddress(), msg.message.serializedSize(targetMessagingVersion) + MESSAGE_PREFIX_SIZE);
+                                               msg.message.verb, connectionId.connectionAddress(),
+                                               msg.message.serializedSize(targetMessagingVersion) + MESSAGE_PREFIX_SIZE);
                 // session may have already finished; see CASSANDRA-5668
                 if (state == null)
                 {
@@ -221,6 +228,32 @@ class MessageOutHandler extends ChannelDuplexHandler
         channelWriter.onTriggeredFlush(ctx);
     }
 
+
+    /**
+     * {@inheritDoc}
+     *
+     * When the channel becomes writable (assuming it was previously unwritable), try to eat through any backlogged messages
+     * {@link #backlogSupplier}. As we're on the event loop when this is invoked, no one else can fill up the netty
+     * {@link ChannelOutboundBuffer}, so we should be able to make decent progress chewing through the backlog
+     * (assuming not large messages). Any messages messages written from {@link OutboundMessagingConnection} threads won't
+     * be processed immediately; they'll be queued up as tasks, and once this function return, those messages can begin
+     * to be consumed.
+     */
+    @Override
+    public void channelWritabilityChanged(ChannelHandlerContext ctx)
+    {
+        if (!ctx.channel().isWritable())
+            return;
+
+        // guarantee at least a minimal amount of progress (one messge from the backlog) by using a do-while loop.
+        do
+        {
+            QueuedMessage msg = backlogSupplier.get();
+            if (msg == null || !channelWriter.write(msg))
+                break;
+        } while (ctx.channel().isWritable());
+    }
+
     /**
      * {@inheritDoc}
      *
@@ -236,7 +269,11 @@ class MessageOutHandler extends ChannelDuplexHandler
         {
             ChannelOutboundBuffer cob = ctx.channel().unsafe().outboundBuffer();
             if (cob != null && cob.totalPendingWriteBytes() > 0)
+            {
+                ctx.channel().attr(ChannelWriter.PURGE_MESSAGES_CHANNEL_ATTR)
+                   .compareAndSet(Boolean.FALSE, Boolean.TRUE);
                 ctx.close();
+            }
         }
     }
 

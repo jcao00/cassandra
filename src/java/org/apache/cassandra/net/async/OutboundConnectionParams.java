@@ -20,6 +20,7 @@ package org.apache.cassandra.net.async;
 
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import com.google.common.base.Preconditions;
 
@@ -42,6 +43,8 @@ public class OutboundConnectionParams
     final Optional<CoalescingStrategy> coalescingStrategy;
     final int sendBufferSize;
     final boolean tcpNoDelay;
+    final Supplier<QueuedMessage> backlogSupplier;
+    final OutboundMessagingConnection connection;
 
     private OutboundConnectionParams(OutboundConnectionIdentifier connectionId,
                                      Consumer<HandshakeResult> callback,
@@ -50,7 +53,9 @@ public class OutboundConnectionParams
                                      boolean compress,
                                      Optional<CoalescingStrategy> coalescingStrategy,
                                      int sendBufferSize,
-                                     boolean tcpNoDelay)
+                                     boolean tcpNoDelay,
+                                     Supplier<QueuedMessage> backlogSupplier,
+                                     OutboundMessagingConnection connection)
     {
         this.connectionId = connectionId;
         this.callback = callback;
@@ -60,6 +65,8 @@ public class OutboundConnectionParams
         this.coalescingStrategy = coalescingStrategy;
         this.sendBufferSize = sendBufferSize;
         this.tcpNoDelay = tcpNoDelay;
+        this.backlogSupplier = backlogSupplier;
+        this.connection = connection;
     }
 
     public static Builder builder()
@@ -82,6 +89,8 @@ public class OutboundConnectionParams
         private Optional<CoalescingStrategy> coalescingStrategy = Optional.empty();
         private int sendBufferSize = DEFAULT_SEND_BUFFER_SIZE;
         private boolean tcpNoDelay;
+        private Supplier<QueuedMessage> backlogSupplier;
+        private OutboundMessagingConnection connection;
 
         private Builder()
         {   }
@@ -146,12 +155,24 @@ public class OutboundConnectionParams
             return this;
         }
 
+        public Builder backlogSupplier(Supplier<QueuedMessage> backlogSupplier)
+        {
+            this.backlogSupplier = backlogSupplier;
+            return this;
+        }
+
+        public Builder connection(OutboundMessagingConnection connection)
+        {
+            this.connection = connection;
+            return this;
+        }
+
         public OutboundConnectionParams build()
         {
             Preconditions.checkArgument(sendBufferSize > 0 && sendBufferSize < 1 << 20, "illegal send buffer size: " + sendBufferSize);
 
-            return new OutboundConnectionParams(connectionId, callback, encryptionOptions,
-                                                mode, compress, coalescingStrategy, sendBufferSize, tcpNoDelay);
+            return new OutboundConnectionParams(connectionId, callback, encryptionOptions, mode, compress,
+                                                coalescingStrategy, sendBufferSize, tcpNoDelay, backlogSupplier, connection);
         }
     }
 }

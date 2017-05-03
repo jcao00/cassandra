@@ -85,7 +85,7 @@ public class OutboundMessagingConnectionTest
         connectionId = OutboundConnectionIdentifier.small(LOCAL_ADDR, REMOTE_ADDR);
         omc = new OutboundMessagingConnection(connectionId, null, Optional.empty(), new AllowAllInternodeAuthenticator());
         channel = new EmbeddedChannel();
-        omc.setChannelWriter(ChannelWriter.create(channel, Optional.empty()));
+        omc.setChannelWriter(ChannelWriter.create(omc, channel, Optional.empty()));
 
         snitch = DatabaseDescriptor.getEndpointSnitch();
     }
@@ -211,7 +211,7 @@ public class OutboundMessagingConnectionTest
         ScheduledFuture<?> connectionTimeoutFuture = new TestScheduledFuture();
         Assert.assertFalse(connectionTimeoutFuture.isCancelled());
         omc.setConnectionTimeoutFuture(connectionTimeoutFuture);
-        ChannelWriter channelWriter = ChannelWriter.create(channel, Optional.empty());
+        ChannelWriter channelWriter = ChannelWriter.create(omc, channel, Optional.empty());
         omc.setChannelWriter(channelWriter);
 
         omc.close(softClose);
@@ -360,7 +360,7 @@ public class OutboundMessagingConnectionTest
     @Test
     public void finishHandshake_GOOD()
     {
-        ChannelWriter channelWriter = ChannelWriter.create(channel, Optional.empty());
+        ChannelWriter channelWriter = ChannelWriter.create(omc, channel, Optional.empty());
         HandshakeResult result = HandshakeResult.success(channelWriter, MESSAGING_VERSION);
         ScheduledFuture<?> connectionTimeoutFuture = new TestScheduledFuture();
         Assert.assertFalse(connectionTimeoutFuture.isCancelled());
@@ -379,7 +379,7 @@ public class OutboundMessagingConnectionTest
     @Test
     public void finishHandshake_GOOD_ButClosed()
     {
-        ChannelWriter channelWriter = ChannelWriter.create(channel, Optional.empty());
+        ChannelWriter channelWriter = ChannelWriter.create(omc, channel, Optional.empty());
         HandshakeResult result = HandshakeResult.success(channelWriter, MESSAGING_VERSION);
         ScheduledFuture<?> connectionTimeoutFuture = new TestScheduledFuture();
         Assert.assertFalse(connectionTimeoutFuture.isCancelled());
@@ -446,7 +446,7 @@ public class OutboundMessagingConnectionTest
     @Test
     public void reconnectWithNewIp_HappyPath()
     {
-        ChannelWriter channelWriter = ChannelWriter.create(channel, Optional.empty());
+        ChannelWriter channelWriter = ChannelWriter.create(omc, channel, Optional.empty());
         omc.setChannelWriter(channelWriter);
         omc.setState(READY);
         OutboundConnectionIdentifier originalId = omc.getConnectionId();

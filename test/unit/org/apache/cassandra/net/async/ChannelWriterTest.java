@@ -29,13 +29,14 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.embedded.EmbeddedChannel;
-import org.apache.cassandra.auth.AllowAllInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.ChannelWriter.CoalescingChannelWriter;
@@ -70,22 +71,47 @@ public class ChannelWriterTest
         OutboundConnectionIdentifier id = OutboundConnectionIdentifier.small(new InetSocketAddress("127.0.0.1", 0),
                                                                              new InetSocketAddress("127.0.0.2", 0));
         channel = new EmbeddedChannel();
-        channelWriter = ChannelWriter.create(channel, Optional.empty());
-        channel.pipeline().addFirst(new MessageOutHandler(id, MessagingService.current_version, channelWriter));
         omc = new NonSendingOutboundMessagingConnection(id, null, Optional.empty());
+        channelWriter = ChannelWriter.create(omc, channel, Optional.empty());
+        channel.pipeline().addFirst(new MessageOutHandler(id, MessagingService.current_version, channelWriter, () -> null));
         coalescingStrategy = CoalescingStrategies.newCoalescingStrategy(CoalescingStrategies.Strategy.FIXED.name(), COALESCE_WINDOW_MS, null, "test");
     }
 
     @Test
     public void create_nonCoalescing()
     {
-        Assert.assertSame(ChannelWriter.SimpleChannelWriter.class, ChannelWriter.create(channel, Optional.empty()).getClass());
+        Assert.assertSame(ChannelWriter.SimpleChannelWriter.class, ChannelWriter.create(omc, channel, Optional.empty()).getClass());
     }
 
     @Test
     public void create_Coalescing()
     {
-        Assert.assertSame(CoalescingChannelWriter.class, ChannelWriter.create(channel, coalescingStrategy).getClass());
+        Assert.assertSame(CoalescingChannelWriter.class, ChannelWriter.create(omc, channel, coalescingStrategy).getClass());
+    }
+
+    @Test
+    public void write_IsWritable()
+    {
+        Assert.assertTrue(channel.isWritable());
+        Assert.assertTrue(channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42)));
+        Assert.assertTrue(channel.isWritable());
+        Assert.assertTrue(channel.releaseOutbound());
+    }
+
+    @Test
+    public void write_NotWritable()
+    {
+        channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
+
+        // send one message through, which will trigger the writability check (and turn it off)
+        Assert.assertTrue(channel.isWritable());
+        ByteBuf buf = channel.alloc().buffer(8, 8);
+        channel.unsafe().outboundBuffer().addMessage(buf, buf.capacity(), channel.newPromise());
+        Assert.assertFalse(channel.isWritable());
+        Assert.assertFalse(channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42)));
+        Assert.assertFalse(channel.isWritable());
+        Assert.assertFalse(channel.releaseOutbound());
+        buf.release();
     }
 
     @Test
@@ -94,7 +120,7 @@ public class ChannelWriterTest
         CoalescingChannelWriter channelWriter = resetEnvForCoalescing(DatabaseDescriptor.getOtcCoalescingEnoughCoalescedMessages());
         channelWriter.scheduledFlush.set(true);
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() == 0);
-        channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42), omc);
+        Assert.assertTrue(channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42)));
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() > 0);
         Assert.assertFalse(channel.releaseOutbound());
         Assert.assertTrue(channelWriter.scheduledFlush.get());
@@ -107,7 +133,7 @@ public class ChannelWriterTest
 
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() == 0);
         Assert.assertFalse(channelWriter.scheduledFlush.get());
-        channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42), omc);
+        Assert.assertTrue(channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42)));
 
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() == 0);
         Assert.assertTrue(channel.releaseOutbound());
@@ -121,7 +147,7 @@ public class ChannelWriterTest
 
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() == 0);
         Assert.assertFalse(channelWriter.scheduledFlush.get());
-        channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42), omc);
+        Assert.assertTrue(channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42)));
 
         Assert.assertTrue(channelWriter.scheduledFlush.get());
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() > 0);
@@ -138,7 +164,7 @@ public class ChannelWriterTest
     private CoalescingChannelWriter resetEnvForCoalescing(int minMessagesForCoalesce)
     {
         channel = new EmbeddedChannel();
-        CoalescingChannelWriter cw = new CoalescingChannelWriter(channel, coalescingStrategy.get(), minMessagesForCoalesce);
+        CoalescingChannelWriter cw = new CoalescingChannelWriter(omc, channel, coalescingStrategy.get(), minMessagesForCoalesce);
         channel.pipeline().addFirst(new ChannelOutboundHandlerAdapter()
         {
             public void flush(ChannelHandlerContext ctx) throws Exception
@@ -154,8 +180,24 @@ public class ChannelWriterTest
     public void writeBacklog_Empty()
     {
         BlockingQueue<QueuedMessage> queue = new LinkedBlockingQueue<>();
-        Assert.assertEquals(0, channelWriter.writeBacklog(queue, omc, false));
+        Assert.assertEquals(0, channelWriter.writeBacklog(queue, false));
         Assert.assertFalse(channel.releaseOutbound());
+    }
+
+    @Test
+    public void writeBacklog_ChannelNotWritable()
+    {
+        Assert.assertTrue(channel.isWritable());
+        // force the channel to be non writable
+        channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
+        ByteBuf buf = channel.alloc().buffer(8, 8);
+        channel.unsafe().outboundBuffer().addMessage(buf, buf.capacity(), channel.newPromise());
+        Assert.assertFalse(channel.isWritable());
+
+        Assert.assertEquals(0, channelWriter.writeBacklog(new LinkedBlockingQueue<>(), false));
+        Assert.assertFalse(channel.releaseOutbound());
+        Assert.assertFalse(channel.isWritable());
+        buf.release();
     }
 
     @Test
@@ -165,7 +207,7 @@ public class ChannelWriterTest
         int count = 12;
         for (int i = 0; i < count; i++)
             queue.offer(new QueuedMessage(new MessageOut<>(ECHO), i));
-        Assert.assertEquals(count, channelWriter.writeBacklog(queue, omc, false));
+        Assert.assertEquals(count, channelWriter.writeBacklog(queue, false));
         Assert.assertTrue(channel.releaseOutbound());
     }
 
@@ -194,7 +236,7 @@ public class ChannelWriterTest
     {
         ChannelPromise promise = channel.newPromise();
         promise.cancel(false);
-        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1), omc, true);
+        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1), true);
         Assert.assertTrue(channel.isActive());
         Assert.assertEquals(1, omc.getCompletedMessages().longValue());
         Assert.assertEquals(0, omc.getDroppedMessages().longValue());
@@ -206,7 +248,7 @@ public class ChannelWriterTest
         ChannelPromise promise = channel.newPromise();
         promise.setFailure(new ExpiredException());
 
-        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1), omc, true);
+        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1), true);
         Assert.assertTrue(channel.isActive());
         Assert.assertEquals(1, omc.getCompletedMessages().longValue());
         Assert.assertEquals(1, omc.getDroppedMessages().longValue());
@@ -218,7 +260,7 @@ public class ChannelWriterTest
     {
         ChannelPromise promise = channel.newPromise();
         promise.setFailure(new NullPointerException("this is a test"));
-        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1), omc, true);
+        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1), true);
         Assert.assertTrue(channel.isActive());
         Assert.assertEquals(1, omc.getCompletedMessages().longValue());
         Assert.assertEquals(0, omc.getDroppedMessages().longValue());
@@ -231,7 +273,7 @@ public class ChannelWriterTest
         ChannelPromise promise = channel.newPromise();
         promise.setFailure(new IOException("this is a test"));
         Assert.assertTrue(channel.isActive());
-        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1, 0, true, true), omc, true);
+        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1, 0, true, true), true);
 
         Assert.assertFalse(channel.isActive());
         Assert.assertEquals(1, omc.getCompletedMessages().longValue());
@@ -245,28 +287,11 @@ public class ChannelWriterTest
         ChannelPromise promise = channel.newPromise();
         promise.cancel(false);
         Assert.assertTrue(channel.isActive());
-        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1, 0, true, true), omc, true);
+        channelWriter.handleMessageFuture(promise, new QueuedMessage(new MessageOut<>(ECHO), 1, 0, true, true), true);
 
         Assert.assertTrue(channel.isActive());
         Assert.assertEquals(1, omc.getCompletedMessages().longValue());
         Assert.assertEquals(0, omc.getDroppedMessages().longValue());
         Assert.assertFalse(omc.sendMessageInvoked);
-    }
-
-    private static class NonSendingOutboundMessagingConnection extends OutboundMessagingConnection
-    {
-        boolean sendMessageInvoked;
-
-        NonSendingOutboundMessagingConnection(OutboundConnectionIdentifier connectionId, EncryptionOptions.ServerEncryptionOptions encryptionOptions, Optional<CoalescingStrategy> coalescingStrategy)
-        {
-            super(connectionId, encryptionOptions, coalescingStrategy, new AllowAllInternodeAuthenticator());
-        }
-
-        @Override
-        boolean sendMessage(QueuedMessage queuedMessage)
-        {
-            sendMessageInvoked = true;
-            return true;
-        }
     }
 }

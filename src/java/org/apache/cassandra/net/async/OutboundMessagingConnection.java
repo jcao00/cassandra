@@ -190,8 +190,9 @@ public class OutboundMessagingConnection
      * Otherwise, one lucky thread is selected to create the Channel, while other threads just add the {@code msg} to
      * the backlog queue.
      *
-     * @return true if the message was added to the {@link #backlog} queue or sent to the {@link #channelWriter};
-     * false if the connection is {@link State#CLOSED}.
+     * @return true if the message was accepted by the {@link #channelWriter}; else false if it was not accepted
+     * and added to the backlog or the channel is {@link State#CLOSED}. See documentation in {@link ChannelWriter} and
+     * {@link MessageOutHandler} how the backlogged messages get consumed.
      */
     boolean sendMessage(MessageOut msg, int id)
     {
@@ -203,8 +204,11 @@ public class OutboundMessagingConnection
         State state = this.state.get();
         if (state == State.READY)
         {
-            channelWriter.write(queuedMessage, this);
-            return true;
+            if (channelWriter.write(queuedMessage))
+                return true;
+
+            backlog.add(queuedMessage);
+            return false;
         }
         else if (state == State.CLOSED)
         {
@@ -294,6 +298,7 @@ public class OutboundMessagingConnection
                                                                   .coalescingStrategy(coalescingStrategy)
                                                                   .sendBufferSize(sendBufferSize)
                                                                   .tcpNoDelay(tcpNoDelay)
+                                                                  .backlogSupplier(() -> backlog.poll())
                                                                   .build();
 
         return NettyFactory.instance.createOutboundBootstrap(params);
@@ -424,11 +429,11 @@ public class OutboundMessagingConnection
                 }
                 channelWriter = result.channelWriter;
                 // drain the backlog to the channel
-                channelWriter.writeBacklog(backlog, this, true);
+                channelWriter.writeBacklog(backlog, true);
                 // change the state so newly incoming messages can be sent to the channel (without adding to the backlog)
                 setStateIfNotClosed(state, State.READY);
                 // ship out any stragglers that got added to the backlog
-                channelWriter.writeBacklog(backlog, this, true);
+                channelWriter.writeBacklog(backlog, true);
                 break;
             case DISCONNECT:
                 setStateIfNotClosed(state, State.NOT_READY);
@@ -494,6 +499,11 @@ public class OutboundMessagingConnection
             connect();
     }
 
+    void purgeBacklog()
+    {
+        backlog.clear();
+    }
+
     public void close(boolean softClose)
     {
         state.set(State.CLOSED);
@@ -509,7 +519,7 @@ public class OutboundMessagingConnection
         {
             if (softClose)
             {
-                channelWriter.writeBacklog(backlog, this, false);
+                channelWriter.writeBacklog(backlog, false);
                 channelWriter.softClose();
             }
             else

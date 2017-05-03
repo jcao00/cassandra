@@ -35,7 +35,11 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundBuffer;
+import io.netty.channel.ChannelPromise;
 import io.netty.channel.MessageSizeEstimator;
+import io.netty.handler.timeout.IdleStateEvent;
+import io.netty.util.Attribute;
+import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.Future;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.utils.CoalescingStrategies;
@@ -55,7 +59,7 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
  * When to flush mainly depends on whether we use message coalescing or not (see {@link CoalescingStrategies}).
  * <p>
  * Note that the callback functions are invoked on the netty event loop, which is (in almost all cases) different
- * from the thread that will be invoking {@link #write(QueuedMessage, OutboundMessagingConnection)}.
+ * from the thread that will be invoking {@link #write(QueuedMessage)}.
  *
  * <h3>Flushing without coalescing</h3>
  *
@@ -63,9 +67,9 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
  * every message would be particularly inefficient when there is lots of message in our sending queue, and so in
  * practice we want to flush in 2 cases:
  *  1) After any message <b>if</b> there is no pending message in the send queue.
- *  2) When we've filled up or exceeded the netty outbound buffer ({@link ChannelOutboundBuffer})
+ *  2) When we've filled up or exceeded the netty outbound buffer (see {@link ChannelOutboundBuffer})
  * <p>
- * The second part is relatively simple and handled generically in {@link MessageOutHandler#channelWritabilityChanged} [1].
+ * The second part is relatively simple and handled generically in {@link MessageOutHandler#write(ChannelHandlerContext, Object, ChannelPromise)} [1].
  * The first part however is made a little more complicated by how netty's event loop executes. It is woken up by
  * external callers to the channel invoking a flush, via either {@link Channel#flush} or one of the {@link Channel#writeAndFlush}
  * methods [2]. So a plain {@link Channel#write} will only queue the message in the channel, and not wake up the event loop.
@@ -94,17 +98,28 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
  *  if a flush has been already scheduled by the coalescing strategy. If one has, we're done, otherwise we ask the
  *  strategy when the next flush should happen and schedule one.
  *
+ *<h2>Message timeouts and retries</h2>
  *
- * <h2>Message timeouts and retries</h2>
- *
- * The main outward-facing method is {@link #write(QueuedMessage, OutboundMessagingConnection)}, where callers pass a
+ * The main outward-facing method is {@link #write(QueuedMessage)}, where callers pass a
  * {@link QueuedMessage}. If a message times out, as defined in {@link QueuedMessage#isTimedOut()},
- * the message listener {@link #handleMessageFuture(Future, QueuedMessage, OutboundMessagingConnection, boolean)} is invoked
+ * the message listener {@link #handleMessageFuture(Future, QueuedMessage, boolean)} is invoked
  * with the cause being a {@link ExpiredException}. The message is not retried and it is dropped on the floor.
  * <p>
  * If there is some {@link IOException} on the socket after the message has been written to the netty channel,
- * the message listener {@link #handleMessageFuture(Future, QueuedMessage, OutboundMessagingConnection, boolean)} is invoked
+ * the message listener {@link #handleMessageFuture(Future, QueuedMessage, boolean)} is invoked
  * and 1) we check to see if the connection should be re-established, and 2) possibly createRetry the message.
+ *
+ * <h2>Failures</h2>
+ *
+ * <h3>Failure to make progress sending bytes</h3>
+ * If we are unable to make progress sending messages, we'll receive a netty notification
+ * ({@link IdleStateEvent}) at {@link MessageOutHandler#userEventTriggered(ChannelHandlerContext, Object)}.
+ * We then want to close the socket/channel, and purge any messages in {@link OutboundMessagingConnection#backlog}
+ * to try to free up memory as quickly as possible. Any messages in the netty pipeline will be marked as fail
+ * (as we close the channel), but {@link MessageOutHandler#userEventTriggered(ChannelHandlerContext, Object)} also
+ * sets a channel attribute, {@link #PURGE_MESSAGES_CHANNEL_ATTR} to true. This is essentially as special flag
+ * that we can look at in the promise handler code ({@link #handleMessageFuture(Future, QueuedMessage, boolean)})
+ * to indicate that any backlog should be thrown away.
  *
  * <h2>Notes</h2>
  * [1] For those desperately interested, and only after you've read the entire class-level doc: You can register a custom
@@ -119,31 +134,57 @@ abstract class ChannelWriter
 {
     private static final Logger logger = LoggerFactory.getLogger(ChannelWriter.class);
 
+    /**
+     * A netty channel {@link Attribute} to indicate, when a channel is closed, any backlogged messages should be purged,
+     * as well. See the class-level documentation for more information.
+     */
+    static final AttributeKey<Boolean> PURGE_MESSAGES_CHANNEL_ATTR = AttributeKey.newInstance("purgeMessages");
+
+    protected final OutboundMessagingConnection connection;
     protected final Channel channel;
     private volatile boolean closed;
 
     /** Number of currently pending messages on this channel. */
     final AtomicLong pendingMessageCount = new AtomicLong(0);
 
-    protected ChannelWriter(Channel channel)
+    protected ChannelWriter(OutboundMessagingConnection connection, Channel channel)
     {
+        this.connection = connection;
         this.channel = channel;
+        channel.attr(PURGE_MESSAGES_CHANNEL_ATTR).set(false);
     }
 
     /**
      * Creates a new {@link ChannelWriter} using the (assumed properly connected) provided channel, and using coalescing
      * based on the provided strategy.
      */
-    static ChannelWriter create(Channel channel, Optional<CoalescingStrategy> coalescingStrategy)
+    static ChannelWriter create(OutboundMessagingConnection connection, Channel channel, Optional<CoalescingStrategy> coalescingStrategy)
     {
         return coalescingStrategy.isPresent()
-               ? new CoalescingChannelWriter(channel, coalescingStrategy.get())
-               : new SimpleChannelWriter(channel);
+               ? new CoalescingChannelWriter(connection, channel, coalescingStrategy.get())
+               : new SimpleChannelWriter(connection, channel);
     }
 
-    long pendingMessageCount()
+    /**
+     * Writes a message to this {@link ChannelWriter} if the channel is writable.
+     * <p>
+     * We always want to write to the channel *unless* it's not writable yet still open.
+     * If the channel is closed, the promise will be notifed as a fail (due to channel closed),
+     * and let the handler ({@link #handleMessageFuture(Future, QueuedMessage, boolean)})
+     * do the reconnect magic/dance. Thus we simplify when to reconnect by not burdening the (concurrent) callers
+     * of this method, and instead keep it all in the future handler/event loop (which is single threaded).
+     *
+     * @param message the message to write/send.
+     * @return true if the message was written to the channel; else, false.
+     */
+    boolean write(QueuedMessage message)
     {
-        return pendingMessageCount.get();
+        if (channel.isWritable() || !channel.isOpen())
+        {
+            write0(message).addListener(f -> handleMessageFuture(f, message, true));
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -152,7 +193,7 @@ abstract class ChannelWriter
      * Note: this is called from the netty event loop, so there is no race across multiple execution of this method.
      */
     @VisibleForTesting
-    void handleMessageFuture(Future<? super Void> future, QueuedMessage msg, OutboundMessagingConnection connection, boolean allowReconnect)
+    void handleMessageFuture(Future<? super Void> future, QueuedMessage msg, boolean allowReconnect)
     {
         connection.completedMessageCount.incrementAndGet();
 
@@ -173,6 +214,14 @@ abstract class ChannelWriter
 
         if (cause instanceof IOException || cause.getCause() instanceof IOException)
         {
+            // see class-level documentation
+            // TODO:JEB add unit test
+            if (channel.attr(PURGE_MESSAGES_CHANNEL_ATTR).get())
+            {
+                channel.attr(PURGE_MESSAGES_CHANNEL_ATTR).set(false);
+                connection.purgeBacklog();
+            }
+
             // This writer needs to be closed and we need to trigger a reconnection. We really only want to do that
             // once for this channel however (and again, no race because we're on the netty event loop).
             if (!closed && allowReconnect)
@@ -182,7 +231,9 @@ abstract class ChannelWriter
             }
 
             if (msg.shouldRetry())
+            {
                 connection.sendMessage(msg.createRetry());
+            }
         }
         else if (future.isCancelled())
         {
@@ -197,41 +248,28 @@ abstract class ChannelWriter
     }
 
     /**
-     * Writes a message to this {@link ChannelWriter}.
-     *
-     * @param message the message to write/send.
-     * @param connection the connection this {@link ChannelWriter} is part of. This is used to increment completed/dropped
-     * messages counts and to trigger reconnects if error occurs rendering this channel unusable.
-     */
-    void write(QueuedMessage message, OutboundMessagingConnection connection)
-    {
-        write(message).addListener(f -> handleMessageFuture(f, message, connection, true));
-    }
-
-    /**
      * Writes a backlog of message to this {@link ChannelWriter}. This is mostly equivalent to calling
-     * {@link #write(QueuedMessage, OutboundMessagingConnection)} for every message of the provided backlog queue, but
+     * {@link #write(QueuedMessage)} for every message of the provided backlog queue, but
      * it ignores any coalescing, triggering a flush only once after all messages have been sent.
      *
      * @param backlog the backlog of message to send.
-     * @param connection the connection this {@link ChannelWriter} is part of. Its use is the same than in
-     * {@link #write(QueuedMessage, OutboundMessagingConnection)}, but this can actually be {@code null} if one doesn't
-     * want any side effect on the connection (mainly used when closing the connection "softly" and we want to attempt
-     * sending backlogged messages but don't want to end up reconnecting on errors).
      * @return the count of items written to the channel from the queue.
      */
-    int writeBacklog(Queue<QueuedMessage> backlog, OutboundMessagingConnection connection, boolean allowReconnect)
+    int writeBacklog(Queue<QueuedMessage> backlog, boolean allowReconnect)
     {
         int count = 0;
         while (true)
         {
+            if (!channel.isWritable())
+                break;
+
             QueuedMessage msg = backlog.poll();
             if (msg == null)
                 break;
 
             pendingMessageCount.incrementAndGet();
             ChannelFuture future = channel.write(msg);
-            future.addListener(f -> handleMessageFuture(f, msg, connection, allowReconnect));
+            future.addListener(f -> handleMessageFuture(f, msg, allowReconnect));
             count++;
         }
 
@@ -249,6 +287,11 @@ abstract class ChannelWriter
 
         closed = true;
         channel.close();
+    }
+
+    long pendingMessageCount()
+    {
+        return pendingMessageCount.get();
     }
 
     /**
@@ -274,7 +317,7 @@ abstract class ChannelWriter
      * <p>
      * Note: this method, in almost all cases, is invoked from an app-level writing thread, not the netty event loop.
      */
-    protected abstract ChannelFuture write(QueuedMessage message);
+    protected abstract ChannelFuture write0(QueuedMessage message);
 
     /**
      * Invoked after a message has been processed in the pipeline. Should only be used for essential bookkeeping operations.
@@ -296,12 +339,12 @@ abstract class ChannelWriter
     @VisibleForTesting
     static class SimpleChannelWriter extends ChannelWriter
     {
-        private SimpleChannelWriter(Channel channel)
+        private SimpleChannelWriter(OutboundMessagingConnection connection, Channel channel)
         {
-            super(channel);
+            super(connection, channel);
         }
 
-        protected ChannelFuture write(QueuedMessage message)
+        protected ChannelFuture write0(QueuedMessage message)
         {
             pendingMessageCount.incrementAndGet();
             // We don't truly want to flush on every message but we do want to wake-up the netty event loop for the
@@ -338,20 +381,20 @@ abstract class ChannelWriter
         @VisibleForTesting
         final AtomicBoolean scheduledFlush = new AtomicBoolean(false);
 
-        CoalescingChannelWriter(Channel channel, CoalescingStrategy strategy)
+        CoalescingChannelWriter(OutboundMessagingConnection connection, Channel channel, CoalescingStrategy strategy)
         {
-            this (channel, strategy, MIN_MESSAGES_FOR_COALESCE);
+            this (connection, channel, strategy, MIN_MESSAGES_FOR_COALESCE);
         }
 
         @VisibleForTesting
-        CoalescingChannelWriter(Channel channel, CoalescingStrategy strategy, int minMessagesForCoalesce)
+        CoalescingChannelWriter(OutboundMessagingConnection connection, Channel channel, CoalescingStrategy strategy, int minMessagesForCoalesce)
         {
-            super(channel);
+            super(connection, channel);
             this.strategy = strategy;
             this.minMessagesForCoalesce = minMessagesForCoalesce;
         }
 
-        protected ChannelFuture write(QueuedMessage message)
+        protected ChannelFuture write0(QueuedMessage message)
         {
             long pendingCount = pendingMessageCount.incrementAndGet();
             ChannelFuture future = channel.write(message);
