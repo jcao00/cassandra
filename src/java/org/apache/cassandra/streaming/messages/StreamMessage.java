@@ -18,93 +18,61 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
-import java.util.UUID;
+import java.net.SocketException;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 
-import com.carrotsearch.hppc.IntObjectMap;
-import com.carrotsearch.hppc.IntObjectOpenHashMap;
-import org.apache.cassandra.io.IVersionedSerializer;
-import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.UUIDGen;
-import org.apache.cassandra.utils.UUIDSerializer;
-import org.stringtemplate.v4.misc.STMessage;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.streaming.StreamSession;
 
 /**
  * StreamMessage is an abstract base class that every messages in streaming protocol inherit.
+ *
+ * Every message carries message type({@link Type}) and streaming protocol version byte.
  */
 public abstract class StreamMessage
 {
-    public enum Type
-    {
-        STREAM_INIT(0, false, StreamInitMessage.serializer),
-        STREAM_INIT_ACK(1, false, StreamInitAckMessage.serializer),
-        PREPARE_SYN(2, false, PrepareSynMessage.serializer),
-        PREPARE_SYNACK(3, false, PrepareSynAckMessage.serializer),
-        PREPARE_ACK(4, false, PrepareAckMessage.serializer),
-        FILE(5, true, null),
-        COMPLETE(6, false, CompleteMessage.serializer),
-        RECEIVED(7, false, ReceivedMessage.serializer),
-        SESSION_FAILED(8, false, SessionFailedMessage.serializer),
-        KEEP_ALIVE(9, false, KeepAliveMessage.serializer);
-
-        private static final IntObjectMap<Type> idToTypeMap = new IntObjectOpenHashMap<>(values().length);
-        static
-        {
-            for (Type v : values())
-                idToTypeMap.put(v.getId(), v);
-        }
-
-        private final int id;
-
-        /**
-         * Indicates if this {@link Type} represents a file transfer message.
-         */
-        private final boolean transfer;
-
-        private final IVersionedSerializer<? extends StreamMessage> serializer;
-
-        Type(int id, boolean transfer, IVersionedSerializer<? extends StreamMessage> serializer)
-        {
-            this.id = id;
-            this.transfer = transfer;
-            this.serializer = serializer;
-        }
-
-        public int getId()
-        {
-            return id;
-        }
-
-        public boolean isTransfer()
-        {
-            return transfer;
-        }
-
-        public IVersionedSerializer<? extends StreamMessage> getSerializer()
-        {
-            return serializer;
-        }
-
-        public static Type getById(int id) throws IllegalArgumentException
-        {
-            Type t = idToTypeMap.get(id);
-            if (t != null)
-                return t;
-            throw new IllegalArgumentException("unknown streamng message type id: " + id);
-        }
-    }
-
-    public final UUID planId;
-    public final int sessionIndex;
+    /** Streaming protocol version */
+    public static final int VERSION_40 = 5;
+    public static final int CURRENT_VERSION = VERSION_40;
 
     private transient volatile boolean sent = false;
 
-    protected StreamMessage(UUID planId, int sessionIndex)
+    public static void serialize(StreamMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
     {
-        this.planId = planId;
-        this.sessionIndex = sessionIndex;
+        ByteBuffer buff = ByteBuffer.allocate(1);
+        // message type
+        buff.put(message.type.type);
+        buff.flip();
+        out.write(buff);
+        message.type.outSerializer.serialize(message, out, version, session);
+    }
+
+    public static long serializedSize(StreamMessage message, int version) throws IOException
+    {
+        return 1 + message.type.outSerializer.serializedSize(message, version);
+    }
+
+    public static StreamMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
+    {
+        ByteBuffer buff = ByteBuffer.allocate(1);
+        int readBytes = in.read(buff);
+        if (readBytes > 0)
+        {
+            buff.flip();
+            Type type = Type.get(buff.get());
+            return type.inSerializer.deserialize(in, version, session);
+        }
+        else if (readBytes == 0)
+        {
+            // input socket buffer was not filled yet
+            return null;
+        }
+        else
+        {
+            // possibly socket gets closed
+            throw new SocketException("End-of-stream reached");
+        }
     }
 
     public void sent()
@@ -117,51 +85,71 @@ public abstract class StreamMessage
         return sent;
     }
 
-    public abstract Type getType();
-
-    public abstract IVersionedSerializer<? extends StreamMessage> getSerializer();
-
-    /**
-     * To be invoked by {@link IVersionedSerializer}s of derived classes.
-     */
-    protected static void serialize(StreamMessage msg, DataOutputPlus out, int version) throws IOException
+    /** StreamMessage serializer */
+    public static interface Serializer<V extends StreamMessage>
     {
-        UUIDSerializer.serializer.serialize(msg.planId, out, version);
-        out.writeInt(msg.sessionIndex);
+        V deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException;
+        void serialize(V message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException;
+        long serializedSize(V message, int version) throws IOException;
+    }
+
+    /** StreamMessage types */
+    public static enum Type
+    {
+        PREPARE_SYN(1, 5, PrepareSynMessage.serializer),
+        FILE(2, 0, IncomingFileMessage.serializer, OutgoingFileMessage.serializer),
+        RECEIVED(3, 4, ReceivedMessage.serializer),
+        //RETRY(4, 4, RetryMessage.serializer), removed as of c* 4.0
+        COMPLETE(5, 1, CompleteMessage.serializer),
+        SESSION_FAILED(6, 5, SessionFailedMessage.serializer),
+        KEEP_ALIVE(7, 5, KeepAliveMessage.serializer),
+        PREPARE_SYNACK(8, 5, PrepareSynAckMessage.serializer),
+        PREPARE_ACK(9, 5, PrepareAckMessage.serializer),
+        STREAM_INIT(10, 5, StreamInitMessage.serializer);
+
+        public static Type get(byte type)
+        {
+            for (Type t : Type.values())
+            {
+                if (t.type == type)
+                    return t;
+            }
+            throw new IllegalArgumentException("Unknown type " + type);
+        }
+
+        private final byte type;
+        public final int priority;
+        public final Serializer<StreamMessage> inSerializer;
+        public final Serializer<StreamMessage> outSerializer;
+
+        @SuppressWarnings("unchecked")
+        private Type(int type, int priority, Serializer serializer)
+        {
+            this(type, priority, serializer, serializer);
+        }
+
+        @SuppressWarnings("unchecked")
+        private Type(int type, int priority, Serializer inSerializer, Serializer outSerializer)
+        {
+            this.type = (byte) type;
+            this.priority = priority;
+            this.inSerializer = inSerializer;
+            this.outSerializer = outSerializer;
+        }
+    }
+
+    public final Type type;
+
+    protected StreamMessage(Type type)
+    {
+        this.type = type;
     }
 
     /**
-     * To be invoked by {@link IVersionedSerializer}s of derived classes.
+     * @return priority of this message. higher value, higher priority.
      */
-    protected static int serializedSize(StreamMessage msg, int version)
+    public int getPriority()
     {
-        return UUIDGen.UUID_LEN + 4;
-    }
-
-    /**
-     * To be invoked by {@link IVersionedSerializer}s of derived classes.
-     */
-    protected static Pair<UUID, Integer> deserialize(DataInputPlus in, int version) throws IOException
-    {
-        UUID planId = UUIDSerializer.serializer.deserialize(in, version);
-        int sessionIndex = in.readInt();
-        return Pair.create(planId, sessionIndex);
-    }
-
-    @Override
-    public String toString()
-    {
-        return String.format("%s - planId: %s, sessionIndex: %d", getClass().getSimpleName(), planId, sessionIndex);
-    }
-
-    @Override
-    public boolean equals(Object o)
-    {
-        if (o == null || !(o instanceof StreamMessage))
-            return false;
-        if (o == this)
-            return true;
-        StreamMessage msg = (StreamMessage)o;
-        return planId.equals(msg.planId) && sessionIndex == msg.sessionIndex;
+        return type.priority;
     }
 }

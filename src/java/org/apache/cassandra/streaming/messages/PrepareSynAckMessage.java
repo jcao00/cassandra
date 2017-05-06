@@ -19,46 +19,41 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.UUID;
 
-import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamSummary;
-import org.apache.cassandra.utils.Pair;
 
 public class PrepareSynAckMessage extends StreamMessage
 {
-    public static final IVersionedSerializer<PrepareSynAckMessage> serializer = new IVersionedSerializer<PrepareSynAckMessage>()
+    public static Serializer<PrepareSynAckMessage> serializer = new Serializer<PrepareSynAckMessage>()
     {
-        public void serialize(PrepareSynAckMessage prepareSynMessage, DataOutputPlus out, int version) throws IOException
+        public void serialize(PrepareSynAckMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
         {
-            StreamMessage.serialize(prepareSynMessage, out, version);
-
-            // summaries
-            out.writeInt(prepareSynMessage.summaries.size());
-            for (StreamSummary summary : prepareSynMessage.summaries)
+            out.writeInt(message.summaries.size());
+            for (StreamSummary summary : message.summaries)
                 StreamSummary.serializer.serialize(summary, out, version);
         }
 
-        public PrepareSynAckMessage deserialize(DataInputPlus in, int version) throws IOException
+        public PrepareSynAckMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
         {
-            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
-            PrepareSynAckMessage message = new PrepareSynAckMessage(header.left, header.right);
-            // summaries
-            int numSummaries = in.readInt();
+            DataInputPlus input = new DataInputPlus.DataInputStreamPlus(Channels.newInputStream(in));
+            PrepareSynAckMessage message = new PrepareSynAckMessage();
+            int numSummaries = input.readInt();
             for (int i = 0; i < numSummaries; i++)
-                message.summaries.add(StreamSummary.serializer.deserialize(in, version));
+                message.summaries.add(StreamSummary.serializer.deserialize(input, version));
             return message;
         }
 
-        public long serializedSize(PrepareSynAckMessage prepareSynMessage, int version)
+        public long serializedSize(PrepareSynAckMessage message, int version)
         {
-            long size = StreamMessage.serializedSize(prepareSynMessage, version);
-            size += 4; // count of requests and count of summaries
-            for (StreamSummary summary : prepareSynMessage.summaries)
+            long size = 4; // count of requests and count of summaries
+            for (StreamSummary summary : message.summaries)
                 size += StreamSummary.serializer.serializedSize(summary, version);
             return size;
         }
@@ -69,21 +64,9 @@ public class PrepareSynAckMessage extends StreamMessage
      */
     public final Collection<StreamSummary> summaries = new ArrayList<>();
 
-    public PrepareSynAckMessage(UUID planId, int sessionIndex)
+    public PrepareSynAckMessage()
     {
-        super(planId, sessionIndex);
-    }
-
-    @Override
-    public Type getType()
-    {
-        return Type.PREPARE_SYNACK;
-    }
-
-    @Override
-    public IVersionedSerializer<? extends StreamMessage> getSerializer()
-    {
-        return serializer;
+        super(Type.PREPARE_SYNACK);
     }
 
     @Override

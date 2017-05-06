@@ -18,6 +18,8 @@
 package org.apache.cassandra.streaming;
 
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.util.Collection;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -103,7 +105,6 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
                                                                     UUID planId,
                                                                     String description,
                                                                     InetAddress from,
-                                                                    InetAddress connecting,
                                                                     Channel channel,
                                                                     boolean keepSSTableLevel,
                                                                     boolean isIncremental,
@@ -118,7 +119,7 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
             future = new StreamResultFuture(planId, description, keepSSTableLevel, isIncremental, pendingRepair);
             StreamManager.instance.registerReceiving(future);
         }
-        future.attachConnection(from, sessionIndex, connecting, channel);
+        future.attachConnection(from, sessionIndex, channel);
         logger.info("[Stream #{}, ID#{}] Received streaming plan from {} for {}", planId, sessionIndex, from, description);
         return future;
     }
@@ -135,8 +136,10 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
         return coordinator;
     }
 
-    private void attachConnection(InetAddress from, int sessionIndex, InetAddress connecting, Channel channel)
+    private void attachConnection(InetAddress from, int sessionIndex, Channel channel)
     {
+        SocketAddress addr = channel.remoteAddress();
+        InetAddress connecting = (addr instanceof InetSocketAddress ? ((InetSocketAddress) addr).getAddress() : null);
         StreamSession session = coordinator.getOrCreateSessionById(from, sessionIndex, connecting);
         session.init(this);
         session.attach(channel);

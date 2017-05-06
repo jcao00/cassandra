@@ -68,7 +68,6 @@ import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.streaming.async.NettyStreamingMessageSender;
-import org.apache.cassandra.streaming.async.StreamingOutboundHandler;
 import org.apache.cassandra.streaming.messages.CompleteMessage;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
@@ -77,7 +76,6 @@ import org.apache.cassandra.streaming.messages.PrepareSynAckMessage;
 import org.apache.cassandra.streaming.messages.PrepareSynMessage;
 import org.apache.cassandra.streaming.messages.ReceivedMessage;
 import org.apache.cassandra.streaming.messages.SessionFailedMessage;
-import org.apache.cassandra.streaming.messages.StreamInitAckMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.FBUtilities;
@@ -100,8 +98,8 @@ import org.apache.cassandra.utils.concurrent.Refs;
  *       initialize it {@link #init(StreamResultFuture)}, and then start it ({@link #start()}).
  *       Starting a session causes a {@link StreamInitMessage} to be sent.
  *   (b) Upon reception of that {@link StreamInitMessage}, the follower creates its own {@link StreamSession},
- *       initializes it if it still does not exist, and responds with a {@link StreamInitAckMessage}.
- *   (c) After the initiator receives the {@link StreamInitAckMessage}, it invokes
+ *       and initializes it if it still does not exist.
+ *   (c) After the initiator sends the {@link StreamInitMessage}, it invokes
  *       {@link StreamSession#onInitializationComplete()} to start the streaming prepare phase.
  *
  * 2. Streaming preparation phase
@@ -195,7 +193,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
     final Map<String, Set<Range<Token>>> transferredRangesPerKeyspace = new HashMap<>();
 
-    private final StreamingMessageSender messageSender;
+    private final NettyStreamingMessageSender messageSender;
     private final ConcurrentMap<ChannelId, Channel> incomingChannels = new ConcurrentHashMap<>();
 
     private final AtomicBoolean isAborted = new AtomicBoolean(false);
@@ -287,6 +285,8 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
     public boolean attach(Channel channel)
     {
+        if (!messageSender.hasControlChannel())
+            messageSender.injectControlMessageChannel(channel);
         return incomingChannels.putIfAbsent(channel.id(), channel) == null;
     }
 
@@ -307,14 +307,8 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             logger.info("[Stream #{}] Starting streaming to {}{}", planId(),
                                                                    peer,
                                                                    peer.equals(connecting) ? "" : " through " + connecting);
-            StreamInitMessage streamInitMessage = new StreamInitMessage(FBUtilities.getBroadcastAddress(),
-                                                                        sessionIndex(),
-                                                                        planId(),
-                                                                        description(),
-                                                                        keepSSTableLevel(),
-                                                                        isIncremental(),
-                                                                        getPendingRepair());
-            messageSender.sendMessage(streamInitMessage);
+            messageSender.initialize();
+            onInitializationComplete();
         }
         catch (Exception e)
         {
@@ -553,20 +547,20 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         return state == State.COMPLETE;
     }
 
-    public void receive(StreamMessage message)
+    public void messageReceived(StreamMessage message)
     {
         logger.debug("**** received stream message: {}", message);
 
         try
         {
-            switch (message.getType())
+            switch (message.type)
             {
                 case STREAM_INIT:
-                    receive((StreamInitMessage) message);
+                    // nop
                     break;
-                case STREAM_INIT_ACK:
-                    onInitializationComplete();
-                    break;
+//                case STREAM_INIT_ACK:
+//                    onInitializationComplete();
+//                    break;
                 case PREPARE_SYN:
                     receive((PrepareSynMessage) message);
                     break;
@@ -600,43 +594,13 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         }
     }
 
-    public void receive(StreamInitMessage msg)
-    {
-        StreamInitAckMessage ackMessage = new StreamInitAckMessage(planId(), index);
-        sendControlMessage(ackMessage);
-    }
-
-    /**
-     * Send a control {@link StreamMessage} to the peer. The interesting idea here, though, is to try to use of one
-     * of the channels on which we are receiving streams. Those are the streams on which this is node is *not* sending data,
-     * and thus the message is unlikely to get stuck by head-of-line blocking behind a large file transfer. If no
-     * channel from {@link #incomingChannels} is available, fall back to sending via the {@link #messageSender}.
-     */
-    private void sendControlMessage(StreamMessage message)
-    {
-        for (Channel channel : incomingChannels.values())
-        {
-            if (channel.isOpen())
-            {
-                ChannelPipeline pipeline = channel.pipeline();
-                if (pipeline.get(NettyFactory.OUTBOUND_STREAM_HANDLER_NAME) == null)
-                    pipeline.addLast(NettyFactory.OUTBOUND_STREAM_HANDLER_NAME, new StreamingOutboundHandler(this, CURRENT_VERSION, StreamRateLimiter.instance));
-
-                channel.writeAndFlush(message);
-                return;
-            }
-        }
-
-        messageSender.sendMessage(message);
-    }
-
     /**
      * Call back when connection initialization is complete to start the prepare phase.
      */
     public void onInitializationComplete()
     {
         state(State.PREPARING);
-        PrepareSynMessage prepare = new PrepareSynMessage(planId(), index);
+        PrepareSynMessage prepare = new PrepareSynMessage();
         prepare.requests.addAll(requests);
         for (StreamTransferTask task : transfers.values())
             prepare.summaries.add(task.getSummary());
@@ -654,7 +618,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
                      e);
         // send session failure message
         if (messageSender.connected())
-            messageSender.sendMessage(new SessionFailedMessage(planId(), index));
+            messageSender.sendMessage(new SessionFailedMessage());
         // fail session
         closeSession(State.FAILED);
     }
@@ -671,12 +635,12 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         for (StreamSummary summary : msg.summaries)
             prepareReceiving(summary);
 
-        PrepareSynAckMessage prepareSynAck = new PrepareSynAckMessage(planId(), index);
+        PrepareSynAckMessage prepareSynAck = new PrepareSynAckMessage();
         // TODO:JEB this is a hack to help out the unit tests
         if (!peer.equals(FBUtilities.getBroadcastAddress()))
             for (StreamTransferTask task : transfers.values())
                 prepareSynAck.summaries.add(task.getSummary());
-        sendControlMessage(prepareSynAck);
+        messageSender.sendMessage(prepareSynAck);
     }
 
     public void receive(PrepareSynAckMessage msg)
@@ -687,7 +651,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
                 prepareReceiving(summary);
 
             // only send the (final) ACK if we are expecting the peer to send this node (the initiator) some files
-            messageSender.sendMessage(new PrepareAckMessage(planId(), index));
+            messageSender.sendMessage(new PrepareAckMessage());
         }
 
         startStreamingFiles();
@@ -728,7 +692,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         StreamingMetrics.totalIncomingBytes.inc(headerSize);
         metrics.incomingBytes.inc(headerSize);
         // send back file received message
-        sendControlMessage(new ReceivedMessage(message.planId, message.sessionIndex, message.tableId, message.sequenceNumber));
+        messageSender.sendMessage(new ReceivedMessage(message.tableId, message.sequenceNumber));
         receivers.get(message.tableId).received(sstable);
     }
 
@@ -752,7 +716,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         {
             if (!completeSent)
             {
-                messageSender.sendMessage(new CompleteMessage(planId(), index));
+                messageSender.sendMessage(new CompleteMessage());
                 completeSent = true;
             }
             closeSession(State.COMPLETE);
@@ -826,7 +790,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             {
                 if (!completeSent)
                 {
-                    messageSender.sendMessage(new CompleteMessage(planId(), index));
+                    messageSender.sendMessage(new CompleteMessage());
                     completeSent = true;
                 }
                 closeSession(State.COMPLETE);
@@ -834,7 +798,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             else
             {
                 // notify peer that this session is completed
-                messageSender.sendMessage(new CompleteMessage(planId(), index));
+                messageSender.sendMessage(new CompleteMessage());
                 completeSent = true;
                 state(State.WAIT_COMPLETE);
             }
@@ -874,8 +838,8 @@ public class StreamSession implements IEndpointStateChangeSubscriber
                 for (OutgoingFileMessage ofm : messages)
                 {
                     // TODO:JEB beware: hack to pass in the planId (which is only set at start() here, after the transfers have already been created)
-                    ofm.header.addSessionInfo(this);
-                    messageSender.sendMessage(ofm);
+//                    ofm.header.addSessionInfo(this);
+                    messageSender.transferFile(ofm);
                 }
             }
             else

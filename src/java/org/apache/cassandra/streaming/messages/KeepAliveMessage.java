@@ -19,55 +19,36 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
-import java.util.UUID;
+import java.nio.channels.ReadableByteChannel;
 
-import org.apache.cassandra.io.IVersionedSerializer;
-import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.streaming.StreamSession;
 
 public class KeepAliveMessage extends StreamMessage
 {
-    public static final IVersionedSerializer<KeepAliveMessage> serializer = new IVersionedSerializer<KeepAliveMessage>()
+    public static Serializer<KeepAliveMessage> serializer = new Serializer<KeepAliveMessage>()
     {
-        public void serialize(KeepAliveMessage keepAliveMessage, DataOutputPlus out, int version) throws IOException
+        public KeepAliveMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
         {
-            StreamMessage.serialize(keepAliveMessage, out, version);
+            return new KeepAliveMessage();
         }
 
-        public KeepAliveMessage deserialize(DataInputPlus in, int version) throws IOException
-        {
-            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
-            return new KeepAliveMessage(header.left, header.right);
-        }
+        public void serialize(KeepAliveMessage message, DataOutputStreamPlus out, int version, StreamSession session)
+        {}
 
-        public long serializedSize(KeepAliveMessage keepAliveMessage, int version)
+        public long serializedSize(KeepAliveMessage message, int version)
         {
-            return StreamMessage.serializedSize(keepAliveMessage, version);
+            return 0;
         }
     };
 
-    public KeepAliveMessage(UUID planId, int sessionIndex)
+    public KeepAliveMessage()
     {
-        super(planId, sessionIndex);
+        super(Type.KEEP_ALIVE);
     }
 
-    @Override
-    public StreamMessage.Type getType()
-    {
-        return StreamMessage.Type.KEEP_ALIVE;
-    }
-
-    @Override
-    public IVersionedSerializer<? extends StreamMessage> getSerializer()
-    {
-        return serializer;
-    }
-
-    @Override
     public String toString()
     {
         return "keep-alive";
     }
-
 }

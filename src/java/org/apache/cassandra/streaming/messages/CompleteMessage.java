@@ -17,50 +17,31 @@
  */
 package org.apache.cassandra.streaming.messages;
 
-import java.io.IOException;
-import java.util.UUID;
+import java.nio.channels.ReadableByteChannel;
 
-import org.apache.cassandra.io.IVersionedSerializer;
-import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.streaming.StreamSession;
 
 public class CompleteMessage extends StreamMessage
 {
-    public static final IVersionedSerializer<CompleteMessage> serializer = new IVersionedSerializer<CompleteMessage>()
+    public static Serializer<CompleteMessage> serializer = new Serializer<CompleteMessage>()
     {
-        public void serialize(CompleteMessage completeMessage, DataOutputPlus out, int version) throws IOException
+        public CompleteMessage deserialize(ReadableByteChannel in, int version, StreamSession session)
         {
-            StreamMessage.serialize(completeMessage, out, version);
+            return new CompleteMessage();
         }
 
-        public CompleteMessage deserialize(DataInputPlus in, int version) throws IOException
-        {
-            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
-            return new CompleteMessage(header.left, header.right);
-        }
+        public void serialize(CompleteMessage message, DataOutputStreamPlus out, int version, StreamSession session) {}
 
-        public long serializedSize(CompleteMessage completeMessage, int version)
+        public long serializedSize(CompleteMessage message, int version)
         {
-            return StreamMessage.serializedSize(completeMessage, version);
+            return 0;
         }
     };
 
-    public CompleteMessage(UUID planId, int sessionIndex)
+    public CompleteMessage()
     {
-        super(planId, sessionIndex);
-    }
-
-    @Override
-    public Type getType()
-    {
-        return Type.COMPLETE;
-    }
-
-    @Override
-    public IVersionedSerializer<? extends StreamMessage> getSerializer()
-    {
-        return serializer;
+        super(Type.COMPLETE);
     }
 
     @Override

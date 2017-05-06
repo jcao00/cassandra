@@ -17,43 +17,32 @@
  */
 package org.apache.cassandra.streaming;
 
-import java.io.IOError;
-import java.io.IOException;
+import java.io.*;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Collection;
 import java.util.UUID;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.UnmodifiableIterator;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.concurrent.ScheduledExecutors;
-import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.DeletionTime;
-import org.apache.cassandra.db.Directories;
-import org.apache.cassandra.db.RegularAndStaticColumns;
-import org.apache.cassandra.db.SerializationHeader;
-import org.apache.cassandra.db.rows.EncodingStats;
-import org.apache.cassandra.db.rows.Row;
-import org.apache.cassandra.db.rows.SerializationHelper;
-import org.apache.cassandra.db.rows.Unfiltered;
-import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import net.jpountz.lz4.LZ4BlockInputStream;
+import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.SSTableSimpleIterator;
 import org.apache.cassandra.io.sstable.format.RangeAwareSSTableWriter;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.TrackedDataInputPlus;
-import org.apache.cassandra.net.async.AppendingByteBufInputPlus;
-import org.apache.cassandra.schema.TableId;
-import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.io.util.TrackedInputStream;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
@@ -73,7 +62,6 @@ public class StreamReader
     protected final int sstableLevel;
     protected final SerializationHeader.Component header;
     protected final int fileSeqNum;
-    private final CompressionInfo compressionInfo;
 
     public StreamReader(FileMessageHeader header, StreamSession session)
     {
@@ -87,42 +75,43 @@ public class StreamReader
         this.sstableLevel = header.sstableLevel;
         this.header = header.header;
         this.fileSeqNum = header.sequenceNumber;
-        this.compressionInfo = header.getCompressionInfo();
     }
 
     /**
-     * @param input where this reads data from
+     * @param channel where this reads data from
      * @return SSTable transferred
      * @throws IOException if reading the remote sstable fails. Will throw an RTE if local write fails.
      */
     @SuppressWarnings("resource") // channel needs to remain open, streams on top of it can't be closed
-    public SSTableMultiWriter read(ColumnFamilyStore cfs, AppendingByteBufInputPlus input) throws IOException
+    public SSTableMultiWriter read(ReadableByteChannel channel) throws IOException
     {
-        final long totalSize = compressionInfo == null ? StreamingUtils.totalSize(sections) : StreamingUtils.totalSize(compressionInfo.chunks);
+        long totalSize = totalSize();
 
-        logger.debug("[Stream #{}] Start receiving file #{} from {}, repairedAt = {}, size = {}, ks = '{}', table = '{}'.",
+        ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(tableId);
+        if (cfs == null)
+        {
+            // schema was dropped during streaming
+            throw new IOException("CF " + tableId + " was dropped during streaming");
+        }
+
+        logger.debug("[Stream #{}] Start receiving file #{} from {}, repairedAt = {}, size = {}, ks = '{}', table = '{}', pendingRepair = '{}'.",
                      session.planId(), fileSeqNum, session.peer, repairedAt, totalSize, cfs.keyspace.getName(),
-                     cfs.getTableName());
-        TrackedDataInputPlus inPlus = new TrackedDataInputPlus(input);
-        StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata.get(), inPlus, inputVersion, getHeader(cfs.metadata.get()));
+                     cfs.getTableName(), session.getPendingRepair());
+
+        TrackedInputStream in = new TrackedInputStream(new LZ4BlockInputStream(Channels.newInputStream(channel)));
+        StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata(), in, inputVersion, getHeader(cfs.metadata()));
         SSTableMultiWriter writer = null;
-        ScheduledFuture<?> reportingTask = null;
         try
         {
             writer = createWriter(cfs, totalSize, repairedAt, session.getPendingRepair(), format);
-
-            long totalReadLen = StreamingUtils.totalSize(sections);
-            final String filename = writer.getFilename();
-            reportingTask = ScheduledExecutors.scheduledTasks.schedule(() ->
-                                                                       session.progress(filename, ProgressInfo.Direction.IN, inPlus.getBytesRead(), totalSize),
-                                                                       1, TimeUnit.SECONDS);
-            while (inPlus.getBytesRead() < totalReadLen)
+            while (in.getBytesRead() < totalSize)
+            {
                 writePartition(deserializer, writer);
-
-            reportingTask.cancel(false);
-            session.progress(filename, ProgressInfo.Direction.IN, inPlus.getBytesRead(), totalSize);
+                // TODO move this to BytesReadTracker
+                session.progress(writer.getFilename(), ProgressInfo.Direction.IN, in.getBytesRead(), totalSize);
+            }
             logger.debug("[Stream #{}] Finished receiving file #{} from {} readBytes = {}, totalSize = {}",
-                         session.planId(), fileSeqNum, session.peer, FBUtilities.prettyPrintMemory(inPlus.getBytesRead()), FBUtilities.prettyPrintMemory(totalSize));
+                         session.planId(), fileSeqNum, session.peer, FBUtilities.prettyPrintMemory(in.getBytesRead()), FBUtilities.prettyPrintMemory(totalSize));
             return writer;
         }
         catch (Throwable e)
@@ -134,11 +123,6 @@ public class StreamReader
                 writer.abort(e);
             }
             throw Throwables.propagate(e);
-        }
-        finally
-        {
-            if (reportingTask != null)
-                reportingTask.cancel(false);
         }
     }
 
@@ -156,6 +140,14 @@ public class StreamReader
         RangeAwareSSTableWriter writer = new RangeAwareSSTableWriter(cfs, estimatedKeys, repairedAt, pendingRepair, format, sstableLevel, totalSize, session.getTransaction(tableId), getHeader(cfs.metadata()));
         StreamHook.instance.reportIncomingFile(cfs, writer, session, fileSeqNum);
         return writer;
+    }
+
+    protected long totalSize()
+    {
+        long size = 0;
+        for (Pair<Long, Long> section : sections)
+            size += section.right - section.left;
+        return size;
     }
 
     protected void writePartition(StreamDeserializer deserializer, SSTableMultiWriter writer) throws IOException
@@ -177,15 +169,15 @@ public class StreamReader
         private Row staticRow;
         private IOException exception;
 
-        public StreamDeserializer(TableMetadata metadata, DataInputPlus in, Version version, SerializationHeader header)
+        public StreamDeserializer(TableMetadata metadata, InputStream in, Version version, SerializationHeader header) throws IOException
         {
             this.metadata = metadata;
-            this.in = in;
+            this.in = new DataInputPlus.DataInputStreamPlus(in);
             this.helper = new SerializationHelper(metadata, version.correspondingMessagingVersion(), SerializationHelper.Flag.PRESERVE_SIZE);
             this.header = header;
         }
 
-        StreamDeserializer newPartition() throws IOException
+        public StreamDeserializer newPartition() throws IOException
         {
             key = metadata.partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in));
             partitionLevelDeletion = DeletionTime.serializer.deserialize(in);
@@ -254,8 +246,8 @@ public class StreamReader
             // to what we do in hasNext)
             Unfiltered unfiltered = iterator.next();
             return metadata.isCounter() && unfiltered.kind() == Unfiltered.Kind.ROW
-                 ? maybeMarkLocalToBeCleared((Row) unfiltered)
-                 : unfiltered;
+                   ? maybeMarkLocalToBeCleared((Row) unfiltered)
+                   : unfiltered;
         }
 
         private Row maybeMarkLocalToBeCleared(Row row)
@@ -263,7 +255,7 @@ public class StreamReader
             return metadata.isCounter() ? row.markCounterLocalToBeCleared() : row;
         }
 
-        void checkForExceptions() throws IOException
+        public void checkForExceptions() throws IOException
         {
             if (exception != null)
                 throw exception;

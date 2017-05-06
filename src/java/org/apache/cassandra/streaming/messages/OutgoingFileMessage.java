@@ -17,13 +17,22 @@
  */
 package org.apache.cassandra.streaming.messages;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.nio.channels.ReadableByteChannel;
 import java.util.List;
+import java.util.UUID;
 
 import com.google.common.annotations.VisibleForTesting;
 
-import org.apache.cassandra.io.IVersionedSerializer;
+import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.streaming.StreamWriter;
+import org.apache.cassandra.streaming.compress.CompressedStreamWriter;
+import org.apache.cassandra.streaming.compress.CompressionInfo;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.Ref;
 
@@ -32,22 +41,49 @@ import org.apache.cassandra.utils.concurrent.Ref;
  */
 public class OutgoingFileMessage extends StreamMessage
 {
+    public static Serializer<OutgoingFileMessage> serializer = new Serializer<OutgoingFileMessage>()
+    {
+        public OutgoingFileMessage deserialize(ReadableByteChannel in, int version, StreamSession session)
+        {
+            throw new UnsupportedOperationException("Not allowed to call deserialize on an outgoing file");
+        }
+
+        public void serialize(OutgoingFileMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
+        {
+            message.startTransfer();
+            try
+            {
+                message.serialize(out, version, session);
+                session.fileSent(message.header);
+            }
+            finally
+            {
+                message.finishTransfer();
+            }
+        }
+
+        public long serializedSize(OutgoingFileMessage message, int version)
+        {
+            return 0;
+        }
+    };
+
     public final FileMessageHeader header;
-    public final Ref<SSTableReader> ref;
+    private final Ref<SSTableReader> ref;
     private final String filename;
     private boolean completed = false;
     private boolean transferring = false;
 
-    public OutgoingFileMessage(Ref<SSTableReader> ref, StreamSession session, int sequenceNumber, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt)
+    public OutgoingFileMessage(Ref<SSTableReader> ref, StreamSession session, int sequenceNumber, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt, boolean keepSSTableLevel)
     {
-        super(session.planId(), session.sessionIndex());
+        super(Type.FILE);
         this.ref = ref;
 
         SSTableReader sstable = ref.get();
         filename = sstable.getFilename();
         this.header = new FileMessageHeader(sstable.metadata().id,
+                                            FBUtilities.getBroadcastAddress(),
                                             session.planId(),
-                                            session.sessionIndex(),
                                             sequenceNumber,
                                             sstable.descriptor.version,
                                             sstable.descriptor.formatType,
@@ -55,29 +91,25 @@ public class OutgoingFileMessage extends StreamMessage
                                             sections,
                                             sstable.compression ? sstable.getCompressionMetadata() : null,
                                             repairedAt,
-                                            session.keepSSTableLevel() ? sstable.getSSTableLevel() : 0,
-                                            sstable.header == null ? null : sstable.header.toComponent());
+                                            keepSSTableLevel ? sstable.getSSTableLevel() : 0,
+                                            sstable.header.toComponent());
     }
 
-    @VisibleForTesting
-    public OutgoingFileMessage(FileMessageHeader header, Ref<SSTableReader> ref, String filename)
+    public synchronized void serialize(DataOutputStreamPlus out, int version, StreamSession session) throws IOException
     {
-        super(header.planId, header.sessionIndex);
-        this.ref = ref;
-        this.header = header;
-        this.filename = filename;
-    }
+        if (completed)
+        {
+            return;
+        }
 
-    /**
-     * Constructor solely for tests
-     */
-    @VisibleForTesting
-    public OutgoingFileMessage()
-    {
-        super(null, 0);
-        this.ref = null;
-        this.header = null;
-        this.filename = null;
+        CompressionInfo compressionInfo = FileMessageHeader.serializer.serialize(header, out, version);
+
+        final SSTableReader reader = ref.get();
+        StreamWriter writer = compressionInfo == null ?
+                              new StreamWriter(reader, header.sections, session) :
+                              new CompressedStreamWriter(reader, header.sections,
+                                                         compressionInfo, session);
+        writer.write(out);
     }
 
     @VisibleForTesting
@@ -111,18 +143,6 @@ public class OutgoingFileMessage extends StreamMessage
                 ref.release();
             }
         }
-    }
-
-    @Override
-    public Type getType()
-    {
-        return Type.FILE;
-    }
-
-    @Override
-    public IVersionedSerializer<StreamMessage> getSerializer()
-    {
-        return null;
     }
 
     @Override

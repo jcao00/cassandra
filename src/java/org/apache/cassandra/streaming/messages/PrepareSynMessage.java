@@ -17,60 +17,59 @@
  */
 package org.apache.cassandra.streaming.messages;
 
-import java.io.IOException;
+import java.io.*;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.UUID;
 
-import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.io.util.DataInputPlus.DataInputStreamPlus;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamRequest;
+import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamSummary;
-import org.apache.cassandra.utils.Pair;
 
 public class PrepareSynMessage extends StreamMessage
 {
-    public static final IVersionedSerializer<PrepareSynMessage> serializer = new IVersionedSerializer<PrepareSynMessage>()
+    public static Serializer<PrepareSynMessage> serializer = new Serializer<PrepareSynMessage>()
     {
-        public void serialize(PrepareSynMessage prepareSynMessage, DataOutputPlus out, int version) throws IOException
+        @SuppressWarnings("resource") // Not closing constructed DataInputPlus's as the channel needs to remain open.
+        public PrepareSynMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
         {
-            StreamMessage.serialize(prepareSynMessage, out, version);
-
+            DataInputPlus input = new DataInputStreamPlus(Channels.newInputStream(in));
+            PrepareSynMessage message = new PrepareSynMessage();
             // requests
-            out.writeInt(prepareSynMessage.requests.size());
-            for (StreamRequest request : prepareSynMessage.requests)
-                StreamRequest.serializer.serialize(request, out, version);
-            // summaries
-            out.writeInt(prepareSynMessage.summaries.size());
-            for (StreamSummary summary : prepareSynMessage.summaries)
-                StreamSummary.serializer.serialize(summary, out, version);
-        }
-
-        public PrepareSynMessage deserialize(DataInputPlus in, int version) throws IOException
-        {
-            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
-            PrepareSynMessage message = new PrepareSynMessage(header.left, header.right);
-            // requests
-            int numRequests = in.readInt();
+            int numRequests = input.readInt();
             for (int i = 0; i < numRequests; i++)
-                message.requests.add(StreamRequest.serializer.deserialize(in, version));
+                message.requests.add(StreamRequest.serializer.deserialize(input, version));
             // summaries
-            int numSummaries = in.readInt();
+            int numSummaries = input.readInt();
             for (int i = 0; i < numSummaries; i++)
-                message.summaries.add(StreamSummary.serializer.deserialize(in, version));
+                message.summaries.add(StreamSummary.serializer.deserialize(input, version));
             return message;
         }
 
-        public long serializedSize(PrepareSynMessage prepareSynMessage, int version)
+        public long serializedSize(PrepareSynMessage message, int version)
         {
-            long size = StreamMessage.serializedSize(prepareSynMessage, version);
-            size += 4 + 4; // count of requests and count of summaries
-            for (StreamRequest request : prepareSynMessage.requests)
+            long size = 4 + 4; // count of requests and count of summaries
+            for (StreamRequest request : message.requests)
                 size += StreamRequest.serializer.serializedSize(request, version);
-            for (StreamSummary summary : prepareSynMessage.summaries)
+            for (StreamSummary summary : message.summaries)
                 size += StreamSummary.serializer.serializedSize(summary, version);
             return size;
+        }
+
+        public void serialize(PrepareSynMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
+        {
+            // requests
+            out.writeInt(message.requests.size());
+            for (StreamRequest request : message.requests)
+                StreamRequest.serializer.serialize(request, out, version);
+            // summaries
+            out.writeInt(message.summaries.size());
+            for (StreamSummary summary : message.summaries)
+                StreamSummary.serializer.serialize(summary, out, version);
         }
     };
 
@@ -84,21 +83,9 @@ public class PrepareSynMessage extends StreamMessage
      */
     public final Collection<StreamSummary> summaries = new ArrayList<>();
 
-    public PrepareSynMessage(UUID planId, int sessionIndex)
+    public PrepareSynMessage()
     {
-        super(planId, sessionIndex);
-    }
-
-    @Override
-    public Type getType()
-    {
-        return Type.PREPARE_SYN;
-    }
-
-    @Override
-    public IVersionedSerializer<? extends StreamMessage> getSerializer()
-    {
-        return serializer;
+        super(Type.PREPARE_SYN);
     }
 
     @Override

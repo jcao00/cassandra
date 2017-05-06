@@ -19,48 +19,44 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
+import java.nio.channels.ReadableByteChannel;
 import java.util.UUID;
 
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.utils.Pair;
 
 public class PrepareAckMessage extends StreamMessage
 {
-    public static final IVersionedSerializer<PrepareAckMessage> serializer = new IVersionedSerializer<PrepareAckMessage>()
+    public static Serializer<PrepareAckMessage> serializer = new Serializer<PrepareAckMessage>()
     {
-        public void serialize(PrepareAckMessage PrepareAckMessage, DataOutputPlus out, int version) throws IOException
+        public void serialize(PrepareAckMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
         {
-            StreamMessage.serialize(PrepareAckMessage, out, version);
+            //nop
         }
 
-        public PrepareAckMessage deserialize(DataInputPlus in, int version) throws IOException
+        public PrepareAckMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
         {
-            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
-            return new PrepareAckMessage(header.left, header.right);
+            return new PrepareAckMessage();
         }
 
-        public long serializedSize(PrepareAckMessage PrepareAckMessage, int version)
+        public long serializedSize(PrepareAckMessage message, int version)
         {
-            return StreamMessage.serializedSize(PrepareAckMessage, version);
+            return 0;
         }
     };
 
-    public PrepareAckMessage(UUID planId, int sessionIndex)
+    public PrepareAckMessage()
     {
-        super(planId, sessionIndex);
+        super(Type.PREPARE_ACK);
     }
 
     @Override
-    public Type getType()
+    public String toString()
     {
-        return Type.PREPARE_ACK;
-    }
-
-    @Override
-    public IVersionedSerializer<? extends StreamMessage> getSerializer()
-    {
-        return serializer;
+        return "Prepare ACK";
     }
 }

@@ -18,11 +18,19 @@
 
 package org.apache.cassandra.streaming;
 
+import java.io.IOException;
+
+import io.netty.channel.ChannelFuture;
+import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 
 public interface StreamingMessageSender
 {
-    void sendMessage(StreamMessage message);
+    void initialize() throws IOException;
+
+    ChannelFuture sendMessage(StreamMessage message) throws IOException;
+
+    void transferFile(OutgoingFileMessage ofm);
 
     boolean connected();
 

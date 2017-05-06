@@ -23,6 +23,7 @@ import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -360,5 +361,26 @@ public class AppendingByteBufInputPlus implements DataInputPlus, Closeable
         ByteBuf buf;
         while ((buf = queue.poll()) != null)
             buf.release(buf.refCnt());
+    }
+
+    public void read(ByteBuffer dst) throws IOException
+    {
+        if (dst.hasArray())
+        {
+            readFully(dst.array(), dst.arrayOffset(), dst.remaining());
+        }
+        else
+        {
+            int len = dst.remaining();
+            while (len > 0)
+            {
+                int readableBytes = updateCurrentBuffer();
+                int toReadCount = Math.min(len, readableBytes);
+                buffer.readBytes(dst);
+                len -= toReadCount;
+            }
+            maybeReleaseBuffer();
+        }
+        dst.position(dst.limit());
     }
 }

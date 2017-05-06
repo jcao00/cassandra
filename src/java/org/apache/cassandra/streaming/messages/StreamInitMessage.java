@@ -20,29 +20,31 @@ package org.apache.cassandra.streaming.messages;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.UUID;
 
 import org.apache.cassandra.db.TypeSizes;
-import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
-import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.streaming.StreamSession;
-import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.UUIDSerializer;
 
 /**
- * StreamInitMessage is first sent from the node where {@link StreamSession} is started,
- * to initiate corresponding {@link StreamSession} on the other side.
+ * StreamInitMessage is first sent from the node where {@link org.apache.cassandra.streaming.StreamSession} is started,
+ * to initiate corresponding {@link org.apache.cassandra.streaming.StreamSession} on the other side.
  */
 public class StreamInitMessage extends StreamMessage
 {
-    public static final IVersionedSerializer<StreamInitMessage> serializer = new StreamInitMessageSerializer();
+    public static Serializer<StreamInitMessage> serializer = new StreamInitMessageSerializer();
 
     public final InetAddress from;
+    public final int sessionIndex;
+    public final UUID planId;
     public final String description;
 
     public final boolean keepSSTableLevel;
@@ -51,74 +53,65 @@ public class StreamInitMessage extends StreamMessage
 
     public StreamInitMessage(InetAddress from, int sessionIndex, UUID planId, String description, boolean keepSSTableLevel, boolean isIncremental, UUID pendingRepair)
     {
-        super(planId, sessionIndex);
+        super(Type.STREAM_INIT);
         this.from = from;
+        this.sessionIndex = sessionIndex;
+        this.planId = planId;
         this.description = description;
         this.keepSSTableLevel = keepSSTableLevel;
         this.isIncremental = isIncremental;
         this.pendingRepair = pendingRepair;
     }
 
-    /**
-     * Create serialized message.
-     *
-     * @param compress true if message is compressed
-     * @param version Streaming protocol version
-     * @return serialized message in ByteBuffer format
-     */
-    public ByteBuffer createMessage(boolean compress, int version)
-    {
-        int header = 0;
-        // set compression bit.
-        if (compress)
-            header |= 4;
-        // set streaming bit
-        header |= 8;
-        // Setting up the version bit
-        header |= (version << 8);
+//    /**
+//     * Create serialized message.
+//     *
+//     * @param compress true if message is compressed
+//     * @param version Streaming protocol version
+//     * @return serialized message in ByteBuffer format
+//     */
+//    public ByteBuffer createMessage(boolean compress, int version)
+//    {
+//        int header = 0;
+//        // set compression bit.
+//        if (compress)
+//            header |= 4;
+//        // set streaming bit
+//        header |= 8;
+//        // Setting up the version bit
+//        header |= (version << 8);
+//
+//        byte[] bytes;
+//        try
+//        {
+//            int size = (int)StreamInitMessage.serializer.serializedSize(this, version);
+//            try (DataOutputBuffer buffer = new DataOutputBufferFixed(size))
+//            {
+//                StreamInitMessage.serializer.serialize(this, buffer, version);
+//                bytes = buffer.getData();
+//            }
+//        }
+//        catch (IOException e)
+//        {
+//            throw new RuntimeException(e);
+//        }
+//        assert bytes.length > 0;
+//
+//        ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + bytes.length);
+//        buffer.putInt(MessagingService.PROTOCOL_MAGIC);
+//        buffer.putInt(header);
+//        buffer.put(bytes);
+//        buffer.flip();
+//        return buffer;
+//    }
 
-        byte[] bytes;
-        try
+    private static class StreamInitMessageSerializer implements Serializer<StreamInitMessage>
+    {
+        public void serialize(StreamInitMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
         {
-            int size = (int)StreamInitMessage.serializer.serializedSize(this, version);
-            try (DataOutputBuffer buffer = new DataOutputBufferFixed(size))
-            {
-                StreamInitMessage.serializer.serialize(this, buffer, version);
-                bytes = buffer.getData();
-            }
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
-        assert bytes.length > 0;
-
-        ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + bytes.length);
-        buffer.putInt(MessagingService.PROTOCOL_MAGIC);
-        buffer.putInt(header);
-        buffer.put(bytes);
-        buffer.flip();
-        return buffer;
-    }
-
-    @Override
-    public Type getType()
-    {
-        return Type.STREAM_INIT;
-    }
-
-    @Override
-    public IVersionedSerializer<? extends StreamMessage> getSerializer()
-    {
-        return serializer;
-    }
-
-    private static class StreamInitMessageSerializer implements IVersionedSerializer<StreamInitMessage>
-    {
-        public void serialize(StreamInitMessage message, DataOutputPlus out, int version) throws IOException
-        {
-            StreamMessage.serialize(message, out, version);
             CompactEndpointSerializationHelper.serialize(message.from, out);
+            out.writeInt(message.sessionIndex);
+            UUIDSerializer.serializer.serialize(message.planId, out, MessagingService.current_version);
             out.writeUTF(message.description);
             out.writeBoolean(message.keepSSTableLevel);
             out.writeBoolean(message.isIncremental);
@@ -130,22 +123,25 @@ public class StreamInitMessage extends StreamMessage
             }
         }
 
-        public StreamInitMessage deserialize(DataInputPlus in, int version) throws IOException
+        public StreamInitMessage deserialize(ReadableByteChannel channel, int version, StreamSession session) throws IOException
         {
-            Pair<UUID, Integer> header = StreamMessage.deserialize(in, version);
+            DataInputPlus in = new DataInputPlus.DataInputStreamPlus(Channels.newInputStream(channel));
             InetAddress from = CompactEndpointSerializationHelper.deserialize(in);
+            int sessionIndex = in.readInt();
+            UUID planId = UUIDSerializer.serializer.deserialize(in, MessagingService.current_version);
             String description = in.readUTF();
             boolean keepSSTableLevel = in.readBoolean();
 
             boolean isIncremental = in.readBoolean();
             UUID pendingRepair = in.readBoolean() ? UUIDSerializer.serializer.deserialize(in, version) : null;
-            return new StreamInitMessage(from, header.right, header.left, description, keepSSTableLevel, isIncremental, pendingRepair);
+            return new StreamInitMessage(from, sessionIndex, planId, description, keepSSTableLevel, isIncremental, pendingRepair);
         }
 
         public long serializedSize(StreamInitMessage message, int version)
         {
-            long size = StreamMessage.serializedSize(message, version);
-            size += CompactEndpointSerializationHelper.serializedSize(message.from);
+            long size = CompactEndpointSerializationHelper.serializedSize(message.from);
+            size += TypeSizes.sizeof(message.sessionIndex);
+            size += UUIDSerializer.serializer.serializedSize(message.planId, MessagingService.current_version);
             size += TypeSizes.sizeof(message.description);
             size += TypeSizes.sizeof(message.keepSSTableLevel);
             size += TypeSizes.sizeof(message.isIncremental);
@@ -156,23 +152,5 @@ public class StreamInitMessage extends StreamMessage
             }
             return size;
         }
-    }
-
-    @Override
-    public boolean equals(Object o)
-    {
-        if (!super.equals(o) || !(o instanceof StreamInitMessage))
-            return false;
-        StreamInitMessage msg = (StreamInitMessage)o;
-        return from.equals(msg.from) &&
-               description.equals(msg.description) &&
-               keepSSTableLevel == msg.keepSSTableLevel &&
-               isIncremental == msg.isIncremental;
-    }
-
-    @Override
-    public String toString()
-    {
-        return String.format("%s, from: %s, description: %s, keepSSTableLevel: %b, isIncremental: %b", super.toString(), from, description, keepSSTableLevel, isIncremental);
     }
 }

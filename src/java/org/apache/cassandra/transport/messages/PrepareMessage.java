@@ -96,6 +96,6 @@ public class PrepareMessage extends Message.Request
     @Override
     public String toString()
     {
-        return "PREPARE " + query;
+        return "PREPARE_SYN " + query;
     }
 }
