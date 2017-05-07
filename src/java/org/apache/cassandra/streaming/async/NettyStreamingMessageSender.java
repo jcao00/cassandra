@@ -50,6 +50,7 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.net.async.OutboundConnectionParams;
+import org.apache.cassandra.net.async.SwappingByteBufDataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingMessageSender;
 import org.apache.cassandra.streaming.messages.KeepAliveMessage;
@@ -162,16 +163,24 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     @Override
     public ChannelFuture sendMessage(StreamMessage message) //throws IOException
     {
+        if (message instanceof OutgoingFileMessage)
+        {
+            logger.debug("[Stream #{}] Sending {}", session.planId(), message);
+            fileTransferExecutor.submit(new FileStreamTask((OutgoingFileMessage)message));
+            // TODO:JEB have better return type - maybe Optional<> ??
+            return null;
+        }
+
         // TODO:JEB clean up this error handling - exception *should* percolate up
         try
         {
-            logger.debug("[Stream #{}] Sending {}", session.planId(), message);
             if (closed)
                 throw new IllegalStateException(String.format("[Stream #%s] not sending outbound message for the stream session " +
                                                               "as the session is closed", session.planId()));
 
             // TODO:JEB this is fragile, but works for now
             getControlMessageChannel();
+            logger.debug("[Stream #{}] on channel {} Sending {}", session.planId(), controlMessageChannel.id(), message);
 
             // we anticipate that the control messages are rather small, so allocating a ByteBuf shouldn't  blow out of memory.
             long messageSize = StreamMessage.serializedSize(message, protocolVersion);
@@ -197,12 +206,6 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         return null;
     }
 
-    @Override
-    public void transferFile(OutgoingFileMessage ofm)
-    {
-        fileTransferExecutor.submit(new FileStreamTask(ofm));
-    }
-
     class FileStreamTask implements Runnable
     {
         private final OutgoingFileMessage ofm;
@@ -218,7 +221,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             try
             {
                 Channel channel = getOrCreateChannel();
-                DataOutputStreamPlus outPlus = null;// new SwappingBBDOP(channel);
+                DataOutputStreamPlus outPlus = new SwappingByteBufDataOutputStreamPlus(channel, 1 << 16);
                 StreamMessage.serialize(ofm, outPlus, protocolVersion, session);
             }
             catch (Exception e)
@@ -298,7 +301,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         logger.trace("[Stream #{}] Scheduling keep-alive task with {}s period.", session.planId(), keepAlivePeriod);
 
         // TODO:JEB make sure to shut this keep-alive future down
-        ScheduledFuture<?> scheduledFuture = channel.eventLoop().scheduleAtFixedRate(new KeepAliveTask(session), 0, keepAlivePeriod, TimeUnit.SECONDS);
+//        ScheduledFuture<?> scheduledFuture = channel.eventLoop().scheduleAtFixedRate(new KeepAliveTask(session), 0, keepAlivePeriod, TimeUnit.SECONDS);
 
         return channel;
     }
@@ -350,33 +353,33 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         }
     }
 
-    /**
-     * Decides what to do after a {@link StreamMessage} is processed.
-     *
-     * Note: this is called from the netty event loop.
-     *
-     * @return true if the message was processed sucessfully; else, false.
-     */
-    private boolean onMessageComplete(Future<? super Void> future, StreamMessage msg)
-    {
-        ChannelFuture channelFuture = (ChannelFuture)future;
-        Channel channel = channelFuture.channel();
-        Throwable cause = future.cause();
-        if (cause == null)
-        {
-            msg.sent();
-            return true;
-        }
-
-        logger.error("failed to send a stream message/file: future = {}, msg = {}", future, msg, future.cause());
-
-        // TODO:JEB double check this correct
-        if (!channel.isOpen())
-            session.onError(cause);
-        close();
-
-        return false;
-    }
+//    /**
+//     * Decides what to do after a {@link StreamMessage} is processed.
+//     *
+//     * Note: this is called from the netty event loop.
+//     *
+//     * @return true if the message was processed sucessfully; else, false.
+//     */
+//    private boolean onMessageComplete(Future<? super Void> future, StreamMessage msg)
+//    {
+//        ChannelFuture channelFuture = (ChannelFuture)future;
+//        Channel channel = channelFuture.channel();
+//        Throwable cause = future.cause();
+//        if (cause == null)
+//        {
+//            msg.sent();
+//            return true;
+//        }
+//
+//        logger.error("failed to send a stream message/file: future = {}, msg = {}", future, msg, future.cause());
+//
+//        // TODO:JEB double check this correct
+//        if (!channel.isOpen())
+//            session.onError(cause);
+//        close();
+//
+//        return false;
+//    }
 
     @Override
     public boolean connected()
@@ -392,6 +395,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         if (!closed)
         {
             closed = true;
+            fileTransferExecutor.shutdownNow();
         }
     }
 }

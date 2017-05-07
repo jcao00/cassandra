@@ -30,8 +30,6 @@ public interface StreamingMessageSender
 
     ChannelFuture sendMessage(StreamMessage message) throws IOException;
 
-    void transferFile(OutgoingFileMessage ofm);
-
     boolean connected();
 
     void close();

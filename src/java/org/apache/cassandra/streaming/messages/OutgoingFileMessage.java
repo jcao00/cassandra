@@ -18,14 +18,11 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.nio.channels.ReadableByteChannel;
 import java.util.List;
-import java.util.UUID;
 
 import com.google.common.annotations.VisibleForTesting;
 
-import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
@@ -84,6 +81,7 @@ public class OutgoingFileMessage extends StreamMessage
         this.header = new FileMessageHeader(sstable.metadata().id,
                                             FBUtilities.getBroadcastAddress(),
                                             session.planId(),
+                                            session.sessionIndex(),
                                             sequenceNumber,
                                             sstable.descriptor.version,
                                             sstable.descriptor.formatType,

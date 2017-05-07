@@ -45,7 +45,6 @@ import org.slf4j.LoggerFactory;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelId;
-import io.netty.channel.ChannelPipeline;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.PartitionPosition;
@@ -63,13 +62,13 @@ import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.metrics.StreamingMetrics;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.streaming.async.NettyStreamingMessageSender;
 import org.apache.cassandra.streaming.messages.CompleteMessage;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
+import org.apache.cassandra.streaming.messages.IncomingFileMessage;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.streaming.messages.PrepareAckMessage;
 import org.apache.cassandra.streaming.messages.PrepareSynAckMessage;
@@ -558,11 +557,9 @@ public class StreamSession implements IEndpointStateChangeSubscriber
                 case STREAM_INIT:
                     // nop
                     break;
-//                case STREAM_INIT_ACK:
-//                    onInitializationComplete();
-//                    break;
                 case PREPARE_SYN:
-                    receive((PrepareSynMessage) message);
+                    PrepareSynMessage msg = (PrepareSynMessage) message;
+                    prepare(msg.requests, msg.summaries);
                     break;
                 case PREPARE_SYNACK:
                     receive((PrepareSynAckMessage) message);
@@ -571,18 +568,20 @@ public class StreamSession implements IEndpointStateChangeSubscriber
                     receive((PrepareAckMessage) message);
                     break;
                 case FILE:
+                    receive((IncomingFileMessage) message);
                     break;
                 case COMPLETE:
-                    receive((CompleteMessage) message);
+                    complete();
                     break;
                 case RECEIVED:
-                    receive((ReceivedMessage) message);
+                    ReceivedMessage received = (ReceivedMessage) message;
+                    received(received.tableId, received.sequenceNumber);
                     break;
                 case KEEP_ALIVE:
                     // NOP - we only send/receive the KEEP_ALIVE to force the TCP connection to remain open
                     break;
                 case SESSION_FAILED:
-                    receive((SessionFailedMessage) message);
+                    sessionFailed();
                     break;
                 default:
                     throw new AssertionError("unhandled StreamMessage type: " + message.getClass().getName());
@@ -599,6 +598,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      */
     public void onInitializationComplete()
     {
+        // send prepare message
         state(State.PREPARING);
         PrepareSynMessage prepare = new PrepareSynMessage();
         prepare.requests.addAll(requests);
@@ -626,13 +626,13 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     /**
      * Prepare this session for sending/receiving files.
      */
-    public void receive(PrepareSynMessage msg)
+    public void prepare(Collection<StreamRequest> requests, Collection<StreamSummary> summaries)
     {
         // prepare tasks
         state(State.PREPARING);
-        for (StreamRequest request : msg.requests)
+        for (StreamRequest request : requests)
             addTransferRanges(request.keyspace, request.ranges, request.columnFamilies, true, request.repairedAt); // always flush on stream request
-        for (StreamSummary summary : msg.summaries)
+        for (StreamSummary summary : summaries)
             prepareReceiving(summary);
 
         PrepareSynAckMessage prepareSynAck = new PrepareSynAckMessage();
@@ -686,14 +686,14 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      *
      * @param message received file
      */
-    public void receive(FileMessageHeader message, SSTableMultiWriter sstable)
+    public void receive(IncomingFileMessage message)
     {
-        long headerSize = message.size();
+        long headerSize = message.header.size();
         StreamingMetrics.totalIncomingBytes.inc(headerSize);
         metrics.incomingBytes.inc(headerSize);
         // send back file received message
-        messageSender.sendMessage(new ReceivedMessage(message.tableId, message.sequenceNumber));
-        receivers.get(message.tableId).received(sstable);
+        messageSender.sendMessage(new ReceivedMessage(message.header.tableId, message.header.sequenceNumber));
+        receivers.get(message.header.tableId).received(message.sstable);
     }
 
     public void progress(String filename, ProgressInfo.Direction direction, long bytes, long total)
@@ -702,15 +702,15 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         streamResult.handleProgress(progress);
     }
 
-    public void receive(ReceivedMessage msg)
+    public void received(TableId tableId, int sequenceNumber)
     {
-        transfers.get(msg.tableId).complete(msg.sequenceNumber);
+        transfers.get(tableId).complete(sequenceNumber);
     }
 
     /**
      * Check if session is completed on receiving {@code StreamMessage.Type.COMPLETE} message.
      */
-    public synchronized void receive(CompleteMessage msg)
+    public synchronized void complete()
     {
         if (state == State.WAIT_COMPLETE)
         {
@@ -731,7 +731,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     /**
      * Call back on receiving {@code StreamMessage.Type.SESSION_FAILED} message.
      */
-    public synchronized void receive(SessionFailedMessage msg)
+    public synchronized void sessionFailed()
     {
         logger.error("[Stream #{}] Remote peer {} failed stream session.", planId(), peer.getHostAddress());
         closeSession(State.FAILED);
@@ -838,8 +838,8 @@ public class StreamSession implements IEndpointStateChangeSubscriber
                 for (OutgoingFileMessage ofm : messages)
                 {
                     // TODO:JEB beware: hack to pass in the planId (which is only set at start() here, after the transfers have already been created)
-//                    ofm.header.addSessionInfo(this);
-                    messageSender.transferFile(ofm);
+                    ofm.header.addSessionInfo(this);
+                    messageSender.sendMessage(ofm);
                 }
             }
             else

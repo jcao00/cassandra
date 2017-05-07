@@ -98,7 +98,7 @@ public class StreamReader
                      session.planId(), fileSeqNum, session.peer, repairedAt, totalSize, cfs.keyspace.getName(),
                      cfs.getTableName(), session.getPendingRepair());
 
-        TrackedInputStream in = new TrackedInputStream(new LZ4BlockInputStream(Channels.newInputStream(channel)));
+        TrackedInputStream in = new TrackedInputStream(Channels.newInputStream(channel));
         StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata(), in, inputVersion, getHeader(cfs.metadata()));
         SSTableMultiWriter writer = null;
         try

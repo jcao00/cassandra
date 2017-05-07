@@ -368,6 +368,7 @@ public class AppendingByteBufInputPlus implements DataInputPlus, Closeable
         if (dst.hasArray())
         {
             readFully(dst.array(), dst.arrayOffset(), dst.remaining());
+            dst.position(dst.limit());
         }
         else
         {
@@ -381,6 +382,5 @@ public class AppendingByteBufInputPlus implements DataInputPlus, Closeable
             }
             maybeReleaseBuffer();
         }
-        dst.position(dst.limit());
     }
 }

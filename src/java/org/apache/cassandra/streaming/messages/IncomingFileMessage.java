@@ -46,9 +46,9 @@ public class IncomingFileMessage extends StreamMessage
         {
             DataInputPlus input = new DataInputStreamPlus(Channels.newInputStream(in));
             FileMessageHeader header = FileMessageHeader.serializer.deserialize(input, version);
-            session = StreamManager.instance.findSession(header.sender, header.planId, header.sequenceNumber);
+            session = StreamManager.instance.findSession(header.sender, header.planId, header.sessionIndex);
             if (session == null)
-                throw new IllegalStateException(String.format("unknown stream session: %s - %d", header.planId, header.sequenceNumber));
+                throw new IllegalStateException(String.format("unknown stream session: %s - %d", header.planId, header.sessionIndex));
             ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(header.tableId);
             if (cfs == null)
                 throw new IOException("CF " + header.tableId + " was dropped during streaming");

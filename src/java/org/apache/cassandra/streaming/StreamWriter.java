@@ -85,7 +85,7 @@ public class StreamWriter
             transferBuffer = validator == null ? new byte[DEFAULT_CHUNK_SIZE] : new byte[validator.chunkSize];
 
             // setting up data compression stream
-            compressedOutput = new LZ4BlockOutputStream(output);
+            compressedOutput = output;//new LZ4BlockOutputStream(output);
             long progress = 0L;
 
             // stream each of the required sections of the file

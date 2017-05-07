@@ -32,6 +32,7 @@ import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.UUIDSerializer;
@@ -45,6 +46,7 @@ public class FileMessageHeader
 
     public final TableId tableId;
     public UUID planId;
+    public int sessionIndex;
     public final int sequenceNumber;
     /** SSTable version */
     public final Version version;
@@ -71,6 +73,7 @@ public class FileMessageHeader
     private FileMessageHeader(TableId tableId,
                              InetAddress sender,
                              UUID planId,
+                             int sessionIndex,
                              int sequenceNumber,
                              Version version,
                              SSTableFormat.Type format,
@@ -84,6 +87,7 @@ public class FileMessageHeader
         this.tableId = tableId;
         this.sender = sender;
         this.planId = planId;
+        this.sessionIndex = sessionIndex;
         this.sequenceNumber = sequenceNumber;
         this.version = version;
         this.format = format;
@@ -100,6 +104,7 @@ public class FileMessageHeader
     public FileMessageHeader(TableId tableId,
                              InetAddress sender,
                              UUID planId,
+                             int sessionIndex,
                              int sequenceNumber,
                              Version version,
                              SSTableFormat.Type format,
@@ -113,6 +118,7 @@ public class FileMessageHeader
         this.tableId = tableId;
         this.sender = sender;
         this.planId = planId;
+        this.sessionIndex = sessionIndex;
         this.sequenceNumber = sequenceNumber;
         this.version = version;
         this.format = format;
@@ -194,6 +200,12 @@ public class FileMessageHeader
         return result;
     }
 
+    public void addSessionInfo(StreamSession session)
+    {
+        planId = session.planId();
+        sessionIndex = session.sessionIndex();
+    }
+
     static class FileMessageHeaderSerializer
     {
         public CompressionInfo serialize(FileMessageHeader header, DataOutputPlus out, int version) throws IOException
@@ -201,6 +213,7 @@ public class FileMessageHeader
             header.tableId.serialize(out);
             CompactEndpointSerializationHelper.serialize(header.sender, out);
             UUIDSerializer.serializer.serialize(header.planId, out, version);
+            out.writeInt(header.sessionIndex);
             out.writeInt(header.sequenceNumber);
             out.writeUTF(header.version.toString());
             out.writeUTF(header.format.name);
@@ -229,6 +242,7 @@ public class FileMessageHeader
             TableId tableId = TableId.deserialize(in);
             InetAddress sender = CompactEndpointSerializationHelper.deserialize(in);
             UUID planId = UUIDSerializer.serializer.deserialize(in, MessagingService.current_version);
+            int sessionIndex = in.readInt();
             int sequenceNumber = in.readInt();
             Version sstableVersion = SSTableFormat.Type.current().info.getVersion(in.readUTF());
             SSTableFormat.Type format = SSTableFormat.Type.validate(in.readUTF());
@@ -243,7 +257,7 @@ public class FileMessageHeader
             int sstableLevel = in.readInt();
             SerializationHeader.Component header =  SerializationHeader.serializer.deserialize(sstableVersion, in);
 
-            return new FileMessageHeader(tableId, sender, planId, sequenceNumber, sstableVersion, format, estimatedKeys, sections, compressionInfo, repairedAt, sstableLevel, header);
+            return new FileMessageHeader(tableId, sender, planId, sessionIndex, sequenceNumber, sstableVersion, format, estimatedKeys, sections, compressionInfo, repairedAt, sstableLevel, header);
         }
     }
 }

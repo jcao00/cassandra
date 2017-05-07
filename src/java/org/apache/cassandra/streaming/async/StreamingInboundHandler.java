@@ -91,7 +91,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     {
         pendingBuffers = new AppendingByteBufInputPlus(ctx.channel().config());
         blockingIOThread = new FastThreadLocalThread(new DeserializingSstableTask(ctx),
-                                                     String.format("Stream-Inbound-%s", remoteAddress.toString()));
+                                                     String.format("Stream-Inbound--%s-%s", ctx.channel().id(), remoteAddress.toString()));
         blockingIOThread.setDaemon(true);
         blockingIOThread.start();
     }
@@ -190,12 +190,12 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                     {
                         // TODO: i'd be great to check if the session actually exists before slurping in the entire sstable
                         FileMessageHeader header = ((IncomingFileMessage) message).header;
-                        session = StreamManager.instance.findSession(header.sender, header.planId, header.sequenceNumber);
+                        session = StreamManager.instance.findSession(header.sender, header.planId, header.sessionIndex);
                     }
 
                     // TODO:JEB better error handling
                     if (session == null)
-                        throw new IllegalStateException("no session found");
+                        throw new IllegalStateException("no session found for message " + message);
 
                     logger.debug("[Stream #{}] Received {}", session.planId(), message);
 
