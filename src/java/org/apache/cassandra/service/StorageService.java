@@ -1315,10 +1315,20 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return DatabaseDescriptor.getTruncateRpcTimeout();
     }
 
+    public void setStreamingSocketTimeout(int value)
+    {
+        DatabaseDescriptor.setStreamingSocketTimeout(value);
+        logger.info("set streaming socket timeout to {} ms", value);
+    }
+
+    public int getStreamingSocketTimeout()
+    {
+        return DatabaseDescriptor.getStreamingSocketTimeout();
+    }
+
     public void setStreamThroughputMbPerSec(int value)
     {
         DatabaseDescriptor.setStreamThroughputOutboundMegabitsPerSec(value);
-        StreamRateLimiter.instance.updateGlobalThroughput(value);
         logger.info("setstreamthroughput: throttle set to {}", value);
     }
 
@@ -1330,7 +1340,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public void setInterDCStreamThroughputMbPerSec(int value)
     {
         DatabaseDescriptor.setInterDCStreamThroughputOutboundMegabitsPerSec(value);
-        StreamRateLimiter.instance.updateInterDcThroughput(value);
         logger.info("setinterdcstreamthroughput: throttle set to {}", value);
     }
 

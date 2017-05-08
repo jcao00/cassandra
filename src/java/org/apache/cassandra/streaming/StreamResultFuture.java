@@ -20,8 +20,7 @@ package org.apache.cassandra.streaming;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.util.Collection;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import com.google.common.util.concurrent.AbstractFuture;
