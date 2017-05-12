@@ -90,7 +90,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     /**
      *
      */
-    private static final int DEFAULT_CHANNEL_BUFFER_SIZE = 1 << 17;
+    private static final int DEFAULT_CHANNEL_BUFFER_SIZE = 1 << 22;
 
     // TODO:JEB should this be configurable? also, is this local to this stream session or global to all stream sessions or per-remote peer?
     private static final int DEFAULT_MAX_PARALLEL_TRANSFERS = 4;
@@ -255,9 +255,9 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
      */
     private Channel createChannel() throws IOException
     {
-        // this is the amount of data to allow in memory before netty sends the channgeWritablityChanged event
+        // this is the amount of data to allow in memory before netty sets the channel writablility flag to false
         int channelBufferSize = DEFAULT_CHANNEL_BUFFER_SIZE;
-        WriteBufferWaterMark waterMark = new WriteBufferWaterMark(channelBufferSize >> 1, channelBufferSize);
+        WriteBufferWaterMark waterMark = new WriteBufferWaterMark(channelBufferSize >> 2, channelBufferSize);
 
         int sendBufferSize = DatabaseDescriptor.getInternodeSendBufferSize() > 0
                              ? DatabaseDescriptor.getInternodeSendBufferSize()

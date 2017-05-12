@@ -43,8 +43,8 @@ import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.EventExecutor;
 import org.apache.cassandra.cql3.CQLTester;
-import org.apache.cassandra.net.async.AppendingByteBufInputPlus;
-import org.apache.cassandra.net.async.AppendingByteBufInputPlusTest.TestChannelConfig;
+//import org.apache.cassandra.net.async.AppendingByteBufInputPlus;
+//import org.apache.cassandra.net.async.AppendingByteBufInputPlusTest.TestChannelConfig;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.utils.ChecksumType;
 
@@ -58,32 +58,32 @@ public class StreamingInboundHandlerTest extends CQLTester
     private static final int SESSION_INDEX = 0;
 
     private StreamingInboundHandler handler;
-    private AppendingByteBufInputPlus inputPlus;
+//    private AppendingByteBufInputPlus inputPlus;
     private ByteBuf buf;
     private ChannelHandlerContext ctx;
     private String table;
 
-    @Before
-    public void setup()
-    {
-        if (table == null)
-            table = createTable("CREATE TABLE %s (k int PRIMARY KEY, t int)");
-
-        inputPlus = new AppendingByteBufInputPlus(new TestChannelConfig());
-        handler = new StreamingInboundHandler(REMOTE_ADDR, VERSION);
-        handler.setPendingBuffers(inputPlus);
-        ctx = new TestChannelHandlerContext();
-    }
-
-    @After
-    public void tearDown()
-    {
-        if (buf != null)
-        {
-            while (buf.refCnt() > 0)
-                buf.release();
-        }
-    }
+//    @Before
+//    public void setup()
+//    {
+//        if (table == null)
+//            table = createTable("CREATE TABLE %s (k int PRIMARY KEY, t int)");
+//
+//        inputPlus = new AppendingByteBufInputPlus(new TestChannelConfig());
+//        handler = new StreamingInboundHandler(REMOTE_ADDR, VERSION);
+//        handler.setPendingBuffers(inputPlus);
+//        ctx = new TestChannelHandlerContext();
+//    }
+//
+//    @After
+//    public void tearDown()
+//    {
+//        if (buf != null)
+//        {
+//            while (buf.refCnt() > 0)
+//                buf.release();
+//        }
+//    }
 
 //    @Test
 //    public void parseBufferedBytes_LittleBufferedData() throws IOException
@@ -180,464 +180,464 @@ public class StreamingInboundHandlerTest extends CQLTester
 //        inputPlus.append(buf);
 //        handler.parseBufferedBytes(ctx);
 //    }
-
-    private static class TestChannelHandlerContext implements ChannelHandlerContext
-    {
-        private Channel channel = new TestChannel();
-
-        public Channel channel()
-        {
-            return channel;
-        }
-
-        public EventExecutor executor()
-        {
-            return null;
-        }
-
-        public String name()
-        {
-            return null;
-        }
-
-        public ChannelHandler handler()
-        {
-            return null;
-        }
-
-        public boolean isRemoved()
-        {
-            return false;
-        }
-
-        public ChannelHandlerContext fireChannelRegistered()
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireChannelUnregistered()
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireChannelActive()
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireChannelInactive()
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireExceptionCaught(Throwable cause)
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireUserEventTriggered(Object evt)
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireChannelRead(Object msg)
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireChannelReadComplete()
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext fireChannelWritabilityChanged()
-        {
-            return null;
-        }
-
-        public ChannelFuture bind(SocketAddress localAddress)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress)
-        {
-            return null;
-        }
-
-        public ChannelFuture disconnect()
-        {
-            return null;
-        }
-
-        public ChannelFuture close()
-        {
-            return null;
-        }
-
-        public ChannelFuture deregister()
-        {
-            return null;
-        }
-
-        public ChannelFuture bind(SocketAddress localAddress, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture disconnect(ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture close(ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture deregister(ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext read()
-        {
-            return null;
-        }
-
-        public ChannelFuture write(Object msg)
-        {
-            return null;
-        }
-
-        public ChannelFuture write(Object msg, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelHandlerContext flush()
-        {
-            return null;
-        }
-
-        public ChannelFuture writeAndFlush(Object msg, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture writeAndFlush(Object msg)
-        {
-            return null;
-        }
-
-        public ChannelPromise newPromise()
-        {
-            return null;
-        }
-
-        public ChannelProgressivePromise newProgressivePromise()
-        {
-            return null;
-        }
-
-        public ChannelFuture newSucceededFuture()
-        {
-            return null;
-        }
-
-        public ChannelFuture newFailedFuture(Throwable cause)
-        {
-            return null;
-        }
-
-        public ChannelPromise voidPromise()
-        {
-            return null;
-        }
-
-        public ChannelPipeline pipeline()
-        {
-            return null;
-        }
-
-        public ByteBufAllocator alloc()
-        {
-            return null;
-        }
-
-        public <T> Attribute<T> attr(AttributeKey<T> key)
-        {
-            return null;
-        }
-
-        public <T> boolean hasAttr(AttributeKey<T> key)
-        {
-            return false;
-        }
-    }
-
-    private static class TestChannel implements Channel
-    {
-        private static final AtomicInteger idGenerator = new AtomicInteger();
-
-        ChannelConfig config = new TestChannelConfig();
-        private ChannelId channelId = new TestChannelId(idGenerator.getAndIncrement());
-
-        public ChannelId id()
-        {
-            return channelId;
-        }
-
-        public EventLoop eventLoop()
-        {
-            return null;
-        }
-
-        public Channel parent()
-        {
-            return null;
-        }
-
-        public ChannelConfig config()
-        {
-            return config;
-        }
-
-        public boolean isOpen()
-        {
-            return false;
-        }
-
-        public boolean isRegistered()
-        {
-            return false;
-        }
-
-        public boolean isActive()
-        {
-            return false;
-        }
-
-        public ChannelMetadata metadata()
-        {
-            return null;
-        }
-
-        public SocketAddress localAddress()
-        {
-            return null;
-        }
-
-        public SocketAddress remoteAddress()
-        {
-            return null;
-        }
-
-        public ChannelFuture closeFuture()
-        {
-            return null;
-        }
-
-        public boolean isWritable()
-        {
-            return false;
-        }
-
-        public long bytesBeforeUnwritable()
-        {
-            return 0;
-        }
-
-        public long bytesBeforeWritable()
-        {
-            return 0;
-        }
-
-        public Unsafe unsafe()
-        {
-            return null;
-        }
-
-        public ChannelPipeline pipeline()
-        {
-            return null;
-        }
-
-        public ByteBufAllocator alloc()
-        {
-            return null;
-        }
-
-        public ChannelFuture bind(SocketAddress localAddress)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress)
-        {
-            return null;
-        }
-
-        public ChannelFuture disconnect()
-        {
-            return null;
-        }
-
-        public ChannelFuture close()
-        {
-            return null;
-        }
-
-        public ChannelFuture deregister()
-        {
-            return null;
-        }
-
-        public ChannelFuture bind(SocketAddress localAddress, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture disconnect(ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture close(ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture deregister(ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public Channel read()
-        {
-            return null;
-        }
-
-        public ChannelFuture write(Object msg)
-        {
-            return null;
-        }
-
-        public ChannelFuture write(Object msg, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public Channel flush()
-        {
-            return null;
-        }
-
-        public ChannelFuture writeAndFlush(Object msg, ChannelPromise promise)
-        {
-            return null;
-        }
-
-        public ChannelFuture writeAndFlush(Object msg)
-        {
-            return null;
-        }
-
-        public ChannelPromise newPromise()
-        {
-            return null;
-        }
-
-        public ChannelProgressivePromise newProgressivePromise()
-        {
-            return null;
-        }
-
-        public ChannelFuture newSucceededFuture()
-        {
-            return null;
-        }
-
-        public ChannelFuture newFailedFuture(Throwable cause)
-        {
-            return null;
-        }
-
-        public ChannelPromise voidPromise()
-        {
-            return null;
-        }
-
-        public <T> Attribute<T> attr(AttributeKey<T> key)
-        {
-            return null;
-        }
-
-        public <T> boolean hasAttr(AttributeKey<T> key)
-        {
-            return false;
-        }
-
-        public int compareTo(Channel o)
-        {
-            return 0;
-        }
-    }
-
-    private static class TestChannelId implements ChannelId
-    {
-        private final int id;
-
-        private TestChannelId(int id)
-        {
-            this.id = id;
-        }
-
-        public String asShortText()
-        {
-            return String.valueOf(id);
-        }
-
-        public String asLongText()
-        {
-            return String.valueOf(id);
-        }
-
-        public int compareTo(ChannelId o)
-        {
-            if (o instanceof TestChannelId)
-                return this.id - ((TestChannelId)o).id;
-            return 1;
-        }
-    }
+//
+//    private static class TestChannelHandlerContext implements ChannelHandlerContext
+//    {
+//        private Channel channel = new TestChannel();
+//
+//        public Channel channel()
+//        {
+//            return channel;
+//        }
+//
+//        public EventExecutor executor()
+//        {
+//            return null;
+//        }
+//
+//        public String name()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandler handler()
+//        {
+//            return null;
+//        }
+//
+//        public boolean isRemoved()
+//        {
+//            return false;
+//        }
+//
+//        public ChannelHandlerContext fireChannelRegistered()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireChannelUnregistered()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireChannelActive()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireChannelInactive()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireExceptionCaught(Throwable cause)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireUserEventTriggered(Object evt)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireChannelRead(Object msg)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireChannelReadComplete()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext fireChannelWritabilityChanged()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture bind(SocketAddress localAddress)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture disconnect()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture close()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture deregister()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture bind(SocketAddress localAddress, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture disconnect(ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture close(ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture deregister(ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext read()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture write(Object msg)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture write(Object msg, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelHandlerContext flush()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture writeAndFlush(Object msg, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture writeAndFlush(Object msg)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelPromise newPromise()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelProgressivePromise newProgressivePromise()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture newSucceededFuture()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture newFailedFuture(Throwable cause)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelPromise voidPromise()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelPipeline pipeline()
+//        {
+//            return null;
+//        }
+//
+//        public ByteBufAllocator alloc()
+//        {
+//            return null;
+//        }
+//
+//        public <T> Attribute<T> attr(AttributeKey<T> key)
+//        {
+//            return null;
+//        }
+//
+//        public <T> boolean hasAttr(AttributeKey<T> key)
+//        {
+//            return false;
+//        }
+//    }
+//
+//    private static class TestChannel implements Channel
+//    {
+//        private static final AtomicInteger idGenerator = new AtomicInteger();
+//
+//        ChannelConfig config = new TestChannelConfig();
+//        private ChannelId channelId = new TestChannelId(idGenerator.getAndIncrement());
+//
+//        public ChannelId id()
+//        {
+//            return channelId;
+//        }
+//
+//        public EventLoop eventLoop()
+//        {
+//            return null;
+//        }
+//
+//        public Channel parent()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelConfig config()
+//        {
+//            return config;
+//        }
+//
+//        public boolean isOpen()
+//        {
+//            return false;
+//        }
+//
+//        public boolean isRegistered()
+//        {
+//            return false;
+//        }
+//
+//        public boolean isActive()
+//        {
+//            return false;
+//        }
+//
+//        public ChannelMetadata metadata()
+//        {
+//            return null;
+//        }
+//
+//        public SocketAddress localAddress()
+//        {
+//            return null;
+//        }
+//
+//        public SocketAddress remoteAddress()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture closeFuture()
+//        {
+//            return null;
+//        }
+//
+//        public boolean isWritable()
+//        {
+//            return false;
+//        }
+//
+//        public long bytesBeforeUnwritable()
+//        {
+//            return 0;
+//        }
+//
+//        public long bytesBeforeWritable()
+//        {
+//            return 0;
+//        }
+//
+//        public Unsafe unsafe()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelPipeline pipeline()
+//        {
+//            return null;
+//        }
+//
+//        public ByteBufAllocator alloc()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture bind(SocketAddress localAddress)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture disconnect()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture close()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture deregister()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture bind(SocketAddress localAddress, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture disconnect(ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture close(ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture deregister(ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public Channel read()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture write(Object msg)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture write(Object msg, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public Channel flush()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture writeAndFlush(Object msg, ChannelPromise promise)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture writeAndFlush(Object msg)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelPromise newPromise()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelProgressivePromise newProgressivePromise()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture newSucceededFuture()
+//        {
+//            return null;
+//        }
+//
+//        public ChannelFuture newFailedFuture(Throwable cause)
+//        {
+//            return null;
+//        }
+//
+//        public ChannelPromise voidPromise()
+//        {
+//            return null;
+//        }
+//
+//        public <T> Attribute<T> attr(AttributeKey<T> key)
+//        {
+//            return null;
+//        }
+//
+//        public <T> boolean hasAttr(AttributeKey<T> key)
+//        {
+//            return false;
+//        }
+//
+//        public int compareTo(Channel o)
+//        {
+//            return 0;
+//        }
+//    }
+//
+//    private static class TestChannelId implements ChannelId
+//    {
+//        private final int id;
+//
+//        private TestChannelId(int id)
+//        {
+//            this.id = id;
+//        }
+//
+//        public String asShortText()
+//        {
+//            return String.valueOf(id);
+//        }
+//
+//        public String asLongText()
+//        {
+//            return String.valueOf(id);
+//        }
+//
+//        public int compareTo(ChannelId o)
+//        {
+//            if (o instanceof TestChannelId)
+//                return this.id - ((TestChannelId)o).id;
+//            return 1;
+//        }
+//    }
 }

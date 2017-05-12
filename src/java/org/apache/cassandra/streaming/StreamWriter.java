@@ -19,22 +19,31 @@ package org.apache.cassandra.streaming;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.util.Collection;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import net.jpountz.lz4.LZ4BlockOutputStream;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelDuplexHandler;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
+import org.apache.cassandra.io.util.ChannelProxy;
 import org.apache.cassandra.io.util.DataIntegrityMetadata;
 import org.apache.cassandra.io.util.DataIntegrityMetadata.ChecksumValidator;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
-import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.net.async.NettyFactory;
+import org.apache.cassandra.net.async.SwappingByteBufDataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamManager.StreamRateLimiter;
+import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.concurrent.SimpleCondition;
 
 /**
  * StreamWriter writes given section of the SSTable to given channel.
@@ -50,10 +59,7 @@ public class StreamWriter
     protected final StreamRateLimiter limiter;
     protected final StreamSession session;
 
-    private OutputStream compressedOutput;
-
-    // allocate buffer to use for transfers only once
-    private byte[] transferBuffer;
+    private final StreamCompressionSerializer compressionSerializer;
 
     public StreamWriter(SSTableReader sstable, Collection<Pair<Long, Long>> sections, StreamSession session)
     {
@@ -61,6 +67,8 @@ public class StreamWriter
         this.sstable = sstable;
         this.sections = sections;
         this.limiter =  StreamManager.getRateLimiter(session.peer);
+        compressionSerializer = new StreamCompressionSerializer(NettyFactory.lz4Factory().fastCompressor(),
+                                                                NettyFactory.lz4Factory().fastDecompressor());
     }
 
     /**
@@ -77,24 +85,23 @@ public class StreamWriter
         logger.debug("[Stream #{}] Start streaming file {} to {}, repairedAt = {}, totalSize = {}", session.planId(),
                      sstable.getFilename(), session.peer, sstable.getSSTableMetadata().repairedAt, totalSize);
 
-        try(RandomAccessReader file = sstable.openDataReader();
+        Channel channel = ((SwappingByteBufDataOutputStreamPlus)output).channel();
+        try(ChannelProxy proxy = sstable.getDataChannel().sharedCopy();
             ChecksumValidator validator = new File(sstable.descriptor.filenameFor(Component.CRC)).exists()
                                           ? DataIntegrityMetadata.checksumValidator(sstable.descriptor)
-                                          : null;)
+                                          : null)
         {
-            transferBuffer = validator == null ? new byte[DEFAULT_CHUNK_SIZE] : new byte[validator.chunkSize];
+            int bufferSize = validator == null ? DEFAULT_CHUNK_SIZE: validator.chunkSize;
 
             // setting up data compression stream
-            compressedOutput = output;//new LZ4BlockOutputStream(output);
             long progress = 0L;
 
             // stream each of the required sections of the file
             for (Pair<Long, Long> section : sections)
             {
                 long start = validator == null ? section.left : validator.chunkStart(section.left);
-                int readOffset = (int) (section.left - start);
-                // seek to the beginning of the section
-                file.seek(start);
+                // if the transfer does not start on the valididator's chunk boundary, this is the number of bytes to offset by
+                int transferOffset = (int) (section.left - start);
                 if (validator != null)
                     validator.seek(start);
 
@@ -104,15 +111,17 @@ public class StreamWriter
                 long bytesRead = 0;
                 while (bytesRead < length)
                 {
-                    long lastBytesRead = write(file, validator, readOffset, length, bytesRead);
+                    int toTransfer = (int) Math.min(bufferSize, length - bytesRead);
+                    long lastBytesRead = write(proxy, validator, channel, start, transferOffset, toTransfer);
+                    start += lastBytesRead;
                     bytesRead += lastBytesRead;
-                    progress += (lastBytesRead - readOffset);
+                    progress += (lastBytesRead - transferOffset);
                     session.progress(sstable.descriptor.filenameFor(Component.DATA), ProgressInfo.Direction.OUT, progress, totalSize);
-                    readOffset = 0;
+                    transferOffset = 0;
                 }
 
                 // make sure that current section is sent
-                compressedOutput.flush();
+                output.flush();
             }
             logger.debug("[Stream #{}] Finished streaming file {} to {}, bytesTransferred = {}, totalSize = {}",
                          session.planId(), sstable.getFilename(), session.peer, FBUtilities.prettyPrintMemory(progress), FBUtilities.prettyPrintMemory(totalSize));
@@ -130,28 +139,95 @@ public class StreamWriter
     /**
      * Sequentially read bytes from the file and write them to the output stream
      *
-     * @param reader The file reader to read from
+     * @param proxy The file reader to read from
      * @param validator validator to verify data integrity
-     * @param start number of bytes to skip transfer, but include for validation.
-     * @param length The full length that should be read from {@code reader}
-     * @param bytesTransferred Number of bytes already read out of {@code length}
+     * @param start The readd offset from the beginning of the {@code proxy} file.
+     * @param transferOffset number of bytes to skip transfer, but include for validation.
+     * @param toTransfer The number of bytes to be transferred.
      *
-     * @return Number of bytes read
+     * @return Number of bytes transferred.
      *
      * @throws java.io.IOException on any I/O error
      */
-    protected long write(RandomAccessReader reader, ChecksumValidator validator, int start, long length, long bytesTransferred) throws IOException
+    protected long write(ChannelProxy proxy, ChecksumValidator validator, Channel channel, long start, int transferOffset, int toTransfer) throws IOException
     {
-        int toTransfer = (int) Math.min(transferBuffer.length, length - bytesTransferred);
-        int minReadable = (int) Math.min(transferBuffer.length, reader.length() - reader.getFilePointer());
+        // the count of bytes to read off disk
+        int minReadable = (int) Math.min(toTransfer, proxy.size() - start);
 
-        reader.readFully(transferBuffer, 0, minReadable);
+        ByteBuf outBuf = channel.alloc().directBuffer(minReadable, minReadable);
+        ByteBuffer outNioBuffer = outBuf.nioBuffer(0, minReadable);
+        long readCount = proxy.read(outNioBuffer, start);
+
         if (validator != null)
-            validator.validate(transferBuffer, 0, minReadable);
+        {
+            outNioBuffer.flip();
+            validator.validate(outNioBuffer);
+        }
 
-        limiter.acquire(toTransfer - start);
-        compressedOutput.write(transferBuffer, start, (toTransfer - start));
+        outBuf.writerIndex((int) readCount);
+        outBuf.readerIndex(transferOffset);
+
+        if (!waitUntilWritable(channel))
+            throw new IOException("outbound channel was not writable");
+
+        ByteBuf compressed = compressionSerializer.serialize(outBuf, StreamSession.CURRENT_VERSION);
+        limiter.acquire(compressed.readableBytes());
+        channel.writeAndFlush(compressed).addListener(future -> {
+            if (!future.isSuccess() && channel.isOpen())
+            {
+                logger.error("sending file block failed", future.cause());
+                channel.close();
+                session.sessionFailed(); /// ????????
+            }
+        });
 
         return toTransfer;
+    }
+
+    protected boolean waitUntilWritable(Channel channel)
+    {
+        if (channel.isWritable())
+            return true;
+
+        // wait until the channel is writable again.
+        SimpleCondition condition = new SimpleCondition();
+        ChannelHandler writabilityHandler = new ChannelWritabiliityListsener(condition);
+        channel.pipeline().addLast(writabilityHandler);
+        try
+        {
+            condition.await(2, TimeUnit.MINUTES);
+        }
+        catch (InterruptedException e)
+        {
+            // TODO:JEB handle this better
+            // nop
+        }
+
+        channel.pipeline().remove(writabilityHandler);
+        if (!channel.isWritable())
+        {
+            logger.info("JEB:: waited on condition but channel is still unwritable");
+            channel.close();
+            session.sessionFailed(); /// ?????
+            return false;
+        }
+        return true;
+    }
+
+    private static class ChannelWritabiliityListsener extends ChannelDuplexHandler
+    {
+        private final SimpleCondition condition;
+
+        private ChannelWritabiliityListsener(SimpleCondition condition)
+        {
+            this.condition = condition;
+        }
+
+        @Override
+        public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception
+        {
+            if (ctx.channel().isWritable())
+                condition.signalAll();
+        }
     }
 }

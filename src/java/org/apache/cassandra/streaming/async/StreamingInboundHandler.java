@@ -19,10 +19,7 @@
 package org.apache.cassandra.streaming.async;
 
 import java.io.EOFException;
-import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
-import java.nio.channels.ReadableByteChannel;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +29,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.FastThreadLocalThread;
-import org.apache.cassandra.net.async.AppendingByteBufInputPlus;
+import org.apache.cassandra.net.async.ByteBufReadableByteChannel;
 import org.apache.cassandra.streaming.StreamManager;
 import org.apache.cassandra.streaming.StreamResultFuture;
 import org.apache.cassandra.streaming.StreamSession;
@@ -57,8 +54,8 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 
     public static final int CHECKSUM_LENGTH = Integer.BYTES;
 
-    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 19; // 1 << 19 = 512Kb
-    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 21; // 1 << 22 = 4Mb
+    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 15; // 1 << 19 = 512Kb
+    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 16; // 1 << 22 = 4Mb
 
     enum State { START, MESSAGE_PAYLOAD, FILE_TRANSFER_HEADER_PAYLOAD, FILE_TRANSFER_PAYLOAD, CLOSED }
 
@@ -71,7 +68,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
      * A collection of {@link ByteBuf}s that are yet to be processed. Incoming buffers are first dropped into this
      * structure, and then consumed.
      */
-    private AppendingByteBufInputPlus pendingBuffers;
+    private ByteBufReadableByteChannel bufChannel;
 
     /**
      * A background thread that performs the deserialization of the sstable data.
@@ -89,7 +86,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     @SuppressWarnings("resource")
     public void handlerAdded(ChannelHandlerContext ctx)
     {
-        pendingBuffers = new AppendingByteBufInputPlus(ctx.channel().config());
+        bufChannel = new ByteBufReadableByteChannel(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx.channel().config());
         blockingIOThread = new FastThreadLocalThread(new DeserializingSstableTask(ctx),
                                                      String.format("Stream-Inbound--%s-%s", ctx.channel().id(), remoteAddress.toString()));
         blockingIOThread.setDaemon(true);
@@ -111,7 +108,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             return;
         }
 
-        pendingBuffers.append((ByteBuf) message);
+        bufChannel.append((ByteBuf) message);
     }
 
     @Override
@@ -150,9 +147,9 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     /**
      * For testing only!!
      */
-    void setPendingBuffers(AppendingByteBufInputPlus pendingBuffers)
+    void setPendingBuffers(ByteBufReadableByteChannel bufChannel)
     {
-        this.pendingBuffers = pendingBuffers;
+        this.bufChannel = bufChannel;
     }
 
     /**
@@ -175,14 +172,14 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             {
                 while (state != State.CLOSED)
                 {
-                    StreamMessage message = StreamMessage.deserialize(new BBRBC(), protocolVersion, null);
+                    StreamMessage message = StreamMessage.deserialize(bufChannel, protocolVersion, null);
                     if (message == null)
                         continue;
 
                     // StreamInitMessage & IncomingFileMessage each start new channels, and IMF needs a session to be established a priori
                     if (message instanceof StreamInitMessage)
                     {
-                        StreamInitMessage init = (StreamInitMessage)message;
+                        StreamInitMessage init = (StreamInitMessage) message;
                         StreamResultFuture.initReceivingSide(init.sessionIndex, init.planId, init.description, init.from, ctx.channel(), init.keepSSTableLevel, init.isIncremental, init.pendingRepair);
                         session = StreamManager.instance.findSession(init.from, init.planId, init.sessionIndex);
                     }
@@ -233,26 +230,6 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 
                 //StreamingInboundHandler.this.state = true;
                 //FileUtils.closeQuietly(inputStream);
-            }
-        }
-
-        private class BBRBC implements ReadableByteChannel
-        {
-            public int read(ByteBuffer dst) throws IOException
-            {
-                int startPos = dst.position();
-                pendingBuffers.read(dst);
-                return dst.position() - startPos;
-            }
-
-            public boolean isOpen()
-            {
-                return true;
-            }
-
-            public void close() throws IOException
-            {
-                // nop
             }
         }
     }

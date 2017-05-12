@@ -23,8 +23,11 @@ import java.util.List;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import io.netty.channel.ChannelHandler;
+import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamWriter;
 import org.apache.cassandra.streaming.compress.CompressedStreamWriter;
@@ -101,7 +104,7 @@ public class OutgoingFileMessage extends StreamMessage
         }
 
         CompressionInfo compressionInfo = FileMessageHeader.serializer.serialize(header, out, version);
-
+        out.flush();
         final SSTableReader reader = ref.get();
         StreamWriter writer = compressionInfo == null ?
                               new StreamWriter(reader, header.sections, session) :

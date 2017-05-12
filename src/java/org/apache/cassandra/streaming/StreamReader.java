@@ -18,7 +18,6 @@
 package org.apache.cassandra.streaming;
 
 import java.io.*;
-import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Collection;
 import java.util.UUID;
@@ -29,7 +28,7 @@ import com.google.common.collect.UnmodifiableIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import net.jpountz.lz4.LZ4BlockInputStream;
+import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.db.*;
@@ -40,6 +39,7 @@ import org.apache.cassandra.io.sstable.format.RangeAwareSSTableWriter;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.io.util.TrackedInputStream;
@@ -98,9 +98,12 @@ public class StreamReader
                      session.planId(), fileSeqNum, session.peer, repairedAt, totalSize, cfs.keyspace.getName(),
                      cfs.getTableName(), session.getPendingRepair());
 
-        TrackedInputStream in = new TrackedInputStream(Channels.newInputStream(channel));
+
+        StreamCompressionSerializer compressionSerializer = new StreamCompressionSerializer(null, NettyFactory.lz4Factory().fastDecompressor());
+        TrackedInputStream in = new TrackedInputStream(new StreamCompressionInputStream(channel, StreamSession.CURRENT_VERSION, compressionSerializer));
         StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata(), in, inputVersion, getHeader(cfs.metadata()));
         SSTableMultiWriter writer = null;
+        int cnt = 0;
         try
         {
             writer = createWriter(cfs, totalSize, repairedAt, session.getPendingRepair(), format);
@@ -109,6 +112,7 @@ public class StreamReader
                 writePartition(deserializer, writer);
                 // TODO move this to BytesReadTracker
                 session.progress(writer.getFilename(), ProgressInfo.Direction.IN, in.getBytesRead(), totalSize);
+                cnt++;
             }
             logger.debug("[Stream #{}] Finished receiving file #{} from {} readBytes = {}, totalSize = {}",
                          session.planId(), fileSeqNum, session.peer, FBUtilities.prettyPrintMemory(in.getBytesRead()), FBUtilities.prettyPrintMemory(totalSize));

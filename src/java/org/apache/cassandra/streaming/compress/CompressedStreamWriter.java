@@ -18,30 +18,41 @@
 package org.apache.cassandra.streaming.compress;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelDuplexHandler;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.ChannelProxy;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.net.async.SwappingByteBufDataOutputStreamPlus;
 import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamWriter;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.concurrent.SimpleCondition;
 
 /**
  * StreamWriter for compressed SSTable.
  */
 public class CompressedStreamWriter extends StreamWriter
 {
-    public static final int CHUNK_SIZE = 10 * 1024 * 1024;
+    public static final int CHUNK_SIZE = 1 << 16;
 
     private static final Logger logger = LoggerFactory.getLogger(CompressedStreamWriter.class);
 
@@ -68,6 +79,7 @@ public class CompressedStreamWriter extends StreamWriter
             int sectionIdx = 0;
 
             // stream each of the required sections of the file
+            Channel channel = ((SwappingByteBufDataOutputStreamPlus)out).channel();
             for (final Pair<Long, Long> section : sections)
             {
                 // length of the section to stream
@@ -79,12 +91,28 @@ public class CompressedStreamWriter extends StreamWriter
                 long bytesTransferred = 0;
                 while (bytesTransferred < length)
                 {
-                    final long bytesTransferredFinal = bytesTransferred;
                     final int toTransfer = (int) Math.min(CHUNK_SIZE, length - bytesTransferred);
                     limiter.acquire(toTransfer);
-                    long lastWrite = out.applyToChannel((wbc) -> fc.transferTo(section.left + bytesTransferredFinal, toTransfer, wbc));
-                    bytesTransferred += lastWrite;
-                    progress += lastWrite;
+
+                    ByteBuf outBuf = channel.alloc().directBuffer(toTransfer, toTransfer);
+                    ByteBuffer outNioBuffer = outBuf.nioBuffer(0, toTransfer);
+                    long lastWrite = fc.read(outNioBuffer, section.left + bytesTransferred);
+                    outBuf.writerIndex((int) lastWrite);
+
+                    if (!waitUntilWritable(channel))
+                        return;
+
+                    channel.writeAndFlush(outBuf).addListener(future -> {
+                    if (!future.isSuccess() && channel.isOpen())
+                        {
+                            logger.error("sending file block failed", future.cause());
+                            channel.close();
+                            session.sessionFailed(); /// ????????
+                        }
+                    });
+
+                    bytesTransferred += toTransfer;
+                    progress += toTransfer;
                     session.progress(sstable.descriptor.filenameFor(Component.DATA), ProgressInfo.Direction.OUT, progress, totalSize);
                 }
             }

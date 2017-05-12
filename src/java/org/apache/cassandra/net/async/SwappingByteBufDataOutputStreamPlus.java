@@ -61,6 +61,11 @@ public class SwappingByteBufDataOutputStreamPlus extends DataOutputStreamPlus
         this.bufferCapacity = bufferCapacity;
     }
 
+    public Channel channel()
+    {
+        return channel;
+    }
+
     boolean checkBufSpace(int writeSize)
     {
         if (buf != null)

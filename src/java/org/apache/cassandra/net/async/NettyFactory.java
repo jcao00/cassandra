@@ -66,8 +66,8 @@ public final class NettyFactory
     public enum Mode { MESSAGING, STREAMING }
 
     private static final String SSL_CHANNEL_HANDLER_NAME = "ssl";
-    static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
-    static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
+    public static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
+    public static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
     public static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
     public static final String OUTBOUND_STREAM_HANDLER_NAME = "outboundStreamHandler";
     public static final String INBOUND_STREAM_HANDLER_NAME = "inboundStreamHandler";
@@ -334,7 +334,7 @@ public final class NettyFactory
         return channel.pipeline().get(SslHandler.class) != null;
     }
 
-    static Lz4FrameEncoder createLz4Encoder()
+    public static Lz4FrameEncoder createLz4Encoder()
     {
         return new Lz4FrameEncoder(lz4Factory(), false, 1 << 14, createXXHashChecksum());
     }
@@ -349,7 +349,7 @@ public final class NettyFactory
         return LZ4Factory.fastestInstance();
     }
 
-    static Lz4FrameDecoder createLz4Decoder()
+    public static Lz4FrameDecoder createLz4Decoder()
     {
         return new Lz4FrameDecoder(lz4Factory(), createXXHashChecksum());
     }

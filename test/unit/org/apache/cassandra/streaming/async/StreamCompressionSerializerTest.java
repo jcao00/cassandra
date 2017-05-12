@@ -19,20 +19,21 @@
 package org.apache.cassandra.streaming.async;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Random;
 
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.exceptions.ChecksumMismatchException;
-import org.apache.cassandra.net.async.AppendingByteBufInputPlus;
-import org.apache.cassandra.net.async.AppendingByteBufInputPlusTest.TestChannelConfig;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.streaming.StreamSession;
 
@@ -83,18 +84,17 @@ public class StreamCompressionSerializerTest
             input.writeInt(random.nextInt());
 
         compressed = serializer.serialize(input, VERSION);
-        AppendingByteBufInputPlus inputPlus = new AppendingByteBufInputPlus(new TestChannelConfig());
-        inputPlus.append(compressed);
-        Assert.assertEquals(StreamCompressionSerializer.DeserializeState.LENGTHS, serializer.getDeserializeState());
-        ByteBuf output = serializer.deserialize(inputPlus, VERSION);
+        ByteBuffer output = serializer.deserialize(new ByteBufRBC(compressed), VERSION);
 
         input.readerIndex(0);
-        Assert.assertEquals(input, output);
-        // make sure that after consuming the entire chunk, we reset the state
-        Assert.assertEquals(StreamCompressionSerializer.DeserializeState.LENGTHS, serializer.getDeserializeState());
+        Assert.assertEquals(input.readableBytes(), output.remaining());
+
+        for (int i = 0; i < input.readableBytes(); i++)
+            Assert.assertEquals(input.getByte(i), output.get(i));
     }
 
     @Test (expected = ChecksumMismatchException.class)
+    @Ignore("not checksumming right now, so test is disabled")
     public void roundTrip_CorruptLength() throws IOException
     {
         int bufSize = 1 << 14;
@@ -108,12 +108,11 @@ public class StreamCompressionSerializerTest
         b = (b & 0x01) == 0 ? b + 1 : b - 1;
         compressed.setByte(1, (byte) b);
 
-        AppendingByteBufInputPlus inputPlus = new AppendingByteBufInputPlus(new TestChannelConfig());
-        inputPlus.append(compressed);
-        serializer.deserialize(inputPlus, VERSION);
+        serializer.deserialize(new ByteBufRBC(compressed), VERSION);
     }
 
     @Test (expected = ChecksumMismatchException.class)
+    @Ignore("not checksumming right now, so test is disabled")
     public void roundTrip_CorruptPayload() throws IOException
     {
         int bufSize = 1 << 14;
@@ -125,8 +124,36 @@ public class StreamCompressionSerializerTest
         int positionToCorrupt = compressed.writerIndex() - 10;
         compressed.setByte(positionToCorrupt, (byte)(compressed.getByte(positionToCorrupt) << 1));
 
-        AppendingByteBufInputPlus inputPlus = new AppendingByteBufInputPlus(new TestChannelConfig());
-        inputPlus.append(compressed);
-        serializer.deserialize(inputPlus, VERSION);
+        serializer.deserialize(new ByteBufRBC(compressed), VERSION);
+    }
+
+    private static class ByteBufRBC implements ReadableByteChannel
+    {
+        private final ByteBuf buf;
+
+        private ByteBufRBC(ByteBuf buf)
+        {
+            this.buf = buf;
+        }
+
+        @Override
+        public int read(ByteBuffer dst) throws IOException
+        {
+            int len = dst.remaining();
+            buf.readBytes(dst);
+            return len;
+        }
+
+        @Override
+        public boolean isOpen()
+        {
+            return true;
+        }
+
+        @Override
+        public void close() throws IOException
+        {
+
+        }
     }
 }
