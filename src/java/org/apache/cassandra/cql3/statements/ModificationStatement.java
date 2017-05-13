@@ -806,6 +806,11 @@ public abstract class ModificationStatement implements CQLStatement
         private final boolean ifNotExists;
         private final boolean ifExists;
 
+        public List<Pair<ColumnMetadata.Raw, ColumnCondition.Raw>> getConditions()
+        {
+            return Collections.unmodifiableList(conditions);
+        }
+
         protected Parsed(CFName name,
                          StatementType type,
                          Attributes.Raw attrs,

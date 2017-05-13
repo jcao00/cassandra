@@ -705,6 +705,11 @@ public abstract class ColumnCondition
 
         private final Operator operator;
 
+        public Term.Raw getValue()
+        {
+            return value;
+        }
+
         private Raw(Term.Raw value, List<Term.Raw> inValues, AbstractMarker.INRaw inMarker, Term.Raw collectionElement,
                     FieldIdentifier udtField, Operator op)
         {

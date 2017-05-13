@@ -47,9 +47,11 @@ import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.stress.generate.*;
 import org.apache.cassandra.stress.generate.values.*;
-import org.apache.cassandra.stress.operations.userdefined.TokenRangeQuery;
+import org.apache.cassandra.stress.operations.userdefined.CASQuery;
+import org.apache.cassandra.stress.operations.userdefined.QueryUtil;
 import org.apache.cassandra.stress.operations.userdefined.SchemaInsert;
 import org.apache.cassandra.stress.operations.userdefined.SchemaQuery;
+import org.apache.cassandra.stress.operations.userdefined.TokenRangeQuery;
 import org.apache.cassandra.stress.operations.userdefined.ValidatingSchemaQuery;
 import org.apache.cassandra.stress.report.Timer;
 import org.apache.cassandra.stress.settings.*;
@@ -87,7 +89,7 @@ public class StressProfile implements Serializable
     transient volatile PreparedStatement insertStatement;
     transient volatile List<ValidatingSchemaQuery.Factory> validationFactories;
 
-    transient volatile Map<String, SchemaQuery.ArgSelect> argSelects;
+    transient volatile Map<String, QueryUtil.ArgSelect> argSelects;
     transient volatile Map<String, PreparedStatement> queryStatements;
 
     private static final Pattern lowercaseAlphanumeric = Pattern.compile("[a-z0-9_]+");
@@ -367,13 +369,13 @@ public class StressProfile implements Serializable
                     JavaDriverClient jclient = settings.getJavaDriverClient(keyspaceName);
 
                     Map<String, PreparedStatement> stmts = new HashMap<>();
-                    Map<String, SchemaQuery.ArgSelect> args = new HashMap<>();
+                    Map<String, QueryUtil.ArgSelect> args = new HashMap<>();
                     for (Map.Entry<String, StressYaml.QueryDef> e : queries.entrySet())
                     {
                         stmts.put(e.getKey().toLowerCase(), jclient.prepare(e.getValue().cql));
                         args.put(e.getKey().toLowerCase(), e.getValue().fields == null
-                                                                 ? SchemaQuery.ArgSelect.MULTIROW
-                                                                 : SchemaQuery.ArgSelect.valueOf(e.getValue().fields.toUpperCase()));
+                                ? QueryUtil.ArgSelect.MULTIROW
+                                : QueryUtil.ArgSelect.valueOf(e.getValue().fields.toUpperCase()));
                     }
                     queryStatements = stmts;
                     argSelects = args;
@@ -381,7 +383,15 @@ public class StressProfile implements Serializable
             }
         }
 
-        return new SchemaQuery(timer, settings, generator, seeds, queryStatements.get(name), settings.command.consistencyLevel, argSelects.get(name));
+        boolean casQuery = QueryUtil.dynamicConditionExists(queryStatements.get(name));
+        if (casQuery)
+        {
+            return new CASQuery(timer, settings, generator, seeds, queryStatements.get(name), settings.command.consistencyLevel, argSelects.get(name), tableName);
+        }
+        else
+        {
+            return new SchemaQuery(timer, settings, generator, seeds, queryStatements.get(name), settings.command.consistencyLevel, argSelects.get(name));
+        }
     }
 
     public Operation getBulkReadQueries(String name, Timer timer, StressSettings settings, TokenRangeIterator tokenRangeIterator, boolean isWarmup)
