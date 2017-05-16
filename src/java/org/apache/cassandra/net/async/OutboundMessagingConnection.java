@@ -299,6 +299,7 @@ public class OutboundMessagingConnection
                                                                   .sendBufferSize(sendBufferSize)
                                                                   .tcpNoDelay(tcpNoDelay)
                                                                   .backlogSupplier(() -> backlog.poll())
+                                                                  .connection(this)
                                                                   .build();
 
         return NettyFactory.instance.createOutboundBootstrap(params);

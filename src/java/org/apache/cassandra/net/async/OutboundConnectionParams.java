@@ -105,6 +105,8 @@ public class OutboundConnectionParams
             this.coalescingStrategy = params.coalescingStrategy;
             this.sendBufferSize = params.sendBufferSize;
             this.tcpNoDelay = params.tcpNoDelay;
+            this.backlogSupplier = params.backlogSupplier;
+            this.connection = params.connection;
         }
 
         public Builder connectionId(OutboundConnectionIdentifier connectionId)
