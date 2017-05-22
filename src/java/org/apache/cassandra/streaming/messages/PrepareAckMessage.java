@@ -19,15 +19,10 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
-import java.nio.channels.ReadableByteChannel;
-import java.util.UUID;
 
-import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
-import org.apache.cassandra.utils.Pair;
 
 public class PrepareAckMessage extends StreamMessage
 {
@@ -38,7 +33,7 @@ public class PrepareAckMessage extends StreamMessage
             //nop
         }
 
-        public PrepareAckMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
+        public PrepareAckMessage deserialize(DataInputPlus in, int version, StreamSession session) throws IOException
         {
             return new PrepareAckMessage();
         }

@@ -19,15 +19,10 @@ package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 import java.util.UUID;
 
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputBuffer;
-import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessagingService;
@@ -81,9 +76,8 @@ public class StreamInitMessage extends StreamMessage
             }
         }
 
-        public StreamInitMessage deserialize(ReadableByteChannel channel, int version, StreamSession session) throws IOException
+        public StreamInitMessage deserialize(DataInputPlus in, int version, StreamSession session) throws IOException
         {
-            DataInputPlus in = new DataInputPlus.DataInputStreamPlus(Channels.newInputStream(channel));
             InetAddress from = CompactEndpointSerializationHelper.deserialize(in);
             int sessionIndex = in.readInt();
             UUID planId = UUIDSerializer.serializer.deserialize(in, MessagingService.current_version);

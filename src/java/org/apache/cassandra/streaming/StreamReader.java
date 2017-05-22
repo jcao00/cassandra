@@ -18,7 +18,6 @@
 package org.apache.cassandra.streaming;
 
 import java.io.*;
-import java.nio.channels.ReadableByteChannel;
 import java.util.Collection;
 import java.util.UUID;
 
@@ -28,6 +27,7 @@ import com.google.common.collect.UnmodifiableIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.io.util.TrackedDataInputPlus;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
@@ -40,9 +40,9 @@ import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
+import org.apache.cassandra.streaming.compress.StreamCompressionInputStream;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.io.util.TrackedInputStream;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
@@ -78,12 +78,12 @@ public class StreamReader
     }
 
     /**
-     * @param channel where this reads data from
+     * @param inputPlus where this reads data from
      * @return SSTable transferred
      * @throws IOException if reading the remote sstable fails. Will throw an RTE if local write fails.
      */
-    @SuppressWarnings("resource") // channel needs to remain open, streams on top of it can't be closed
-    public SSTableMultiWriter read(ReadableByteChannel channel) throws IOException
+    @SuppressWarnings("resource") // input needs to remain open, streams on top of it can't be closed
+    public SSTableMultiWriter read(DataInputPlus inputPlus) throws IOException
     {
         long totalSize = totalSize();
 
@@ -100,10 +100,9 @@ public class StreamReader
 
 
         StreamCompressionSerializer compressionSerializer = new StreamCompressionSerializer(null, NettyFactory.lz4Factory().fastDecompressor());
-        TrackedInputStream in = new TrackedInputStream(new StreamCompressionInputStream(channel, StreamSession.CURRENT_VERSION, compressionSerializer));
+        TrackedDataInputPlus in = new TrackedDataInputPlus(new StreamCompressionInputStream(inputPlus, StreamSession.CURRENT_VERSION, compressionSerializer));
         StreamDeserializer deserializer = new StreamDeserializer(cfs.metadata(), in, inputVersion, getHeader(cfs.metadata()));
         SSTableMultiWriter writer = null;
-        int cnt = 0;
         try
         {
             writer = createWriter(cfs, totalSize, repairedAt, session.getPendingRepair(), format);
@@ -112,7 +111,6 @@ public class StreamReader
                 writePartition(deserializer, writer);
                 // TODO move this to BytesReadTracker
                 session.progress(writer.getFilename(), ProgressInfo.Direction.IN, in.getBytesRead(), totalSize);
-                cnt++;
             }
             logger.debug("[Stream #{}] Finished receiving file #{} from {} readBytes = {}, totalSize = {}",
                          session.planId(), fileSeqNum, session.peer, FBUtilities.prettyPrintMemory(in.getBytesRead()), FBUtilities.prettyPrintMemory(totalSize));
@@ -173,10 +171,10 @@ public class StreamReader
         private Row staticRow;
         private IOException exception;
 
-        public StreamDeserializer(TableMetadata metadata, InputStream in, Version version, SerializationHeader header) throws IOException
+        public StreamDeserializer(TableMetadata metadata, DataInputPlus in, Version version, SerializationHeader header) throws IOException
         {
             this.metadata = metadata;
-            this.in = new DataInputPlus.DataInputStreamPlus(in);
+            this.in = in;
             this.helper = new SerializationHelper(metadata, version.correspondingMessagingVersion(), SerializationHelper.Flag.PRESERVE_SIZE);
             this.header = header;
         }

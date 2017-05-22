@@ -18,25 +18,27 @@
 
 package org.apache.cassandra.net.async;
 
-import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelConfig;
 import io.netty.util.ReferenceCountUtil;
-import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.io.util.RebufferingInputStream;
 
-public class ByteBufReadableByteChannel implements ReadableByteChannel
+public class RebufferingByteBufDataInputPlus extends RebufferingInputStream implements ReadableByteChannel
 {
-    private static final Logger logger = LoggerFactory.getLogger(ByteBufReadableByteChannel.class);
+    private static final Logger logger = LoggerFactory.getLogger(RebufferingByteBufDataInputPlus.class);
 
     static final int DISABLED_LOW_WATER_MARK = Integer.MIN_VALUE;
     static final int DISABLED_HIGH_WATER_MARK = Integer.MAX_VALUE;
@@ -47,12 +49,12 @@ public class ByteBufReadableByteChannel implements ReadableByteChannel
      * The current buffer being read from. Initialize to en empty buffer to avoid needing a null check
      * in every method.
      */
-    private ByteBuf buffer;
+    private ByteBuf currentBuf;
 
     /**
      * The count of readable bytes in all {@link ByteBuf}s held by this instance.
      */
-    private volatile int queuedByteCount;
+    private final AtomicInteger queuedByteCount;
 
     /**
      * When a {@link ByteBuf} is pulled off the {@link #queue}, capture it's readable byte count before we start reading
@@ -69,17 +71,21 @@ public class ByteBufReadableByteChannel implements ReadableByteChannel
     /**
      * Constructs an instance that disables the low and high water mark checks.
      */
-    public ByteBufReadableByteChannel(ChannelConfig channelConfig)
+    public RebufferingByteBufDataInputPlus(ChannelConfig channelConfig)
     {
         this (DISABLED_LOW_WATER_MARK, DISABLED_HIGH_WATER_MARK, channelConfig);
     }
 
-    public ByteBufReadableByteChannel(int lowWaterMark, int highWaterMark, ChannelConfig channelConfig)
+    public RebufferingByteBufDataInputPlus(int lowWaterMark, int highWaterMark, ChannelConfig channelConfig)
     {
+        super(Unpooled.EMPTY_BUFFER.nioBuffer());
+        currentBuf = Unpooled.EMPTY_BUFFER;
         queue = new LinkedBlockingQueue<>();
         this.lowWaterMark = lowWaterMark;
         this.highWaterMark = highWaterMark;
         this.channelConfig = channelConfig;
+
+        queuedByteCount = new AtomicInteger();
     }
 
     // it's expected this method is invoked on the netty event loop
@@ -94,58 +100,50 @@ public class ByteBufReadableByteChannel implements ReadableByteChannel
         }
 
         queue.add(buf);
-        queuedByteCount += buf.readableBytes();
+        int queuedCount = queuedByteCount.addAndGet(buf.readableBytes());
 
-        if (channelConfig.isAutoRead() && queuedByteCount > highWaterMark)
+        if (channelConfig.isAutoRead() && queuedCount > highWaterMark)
             channelConfig.setAutoRead(false);
     }
 
-    @Override
-    public int read(ByteBuffer dst) throws IOException
-    {
-        final int len = dst.remaining();
-        int remaining = len;
-        while (remaining > 0)
-        {
-            int readableBytes = updateCurrentBuffer();
-            int toReadCount = Math.min(remaining, readableBytes);
-            dst.limit(dst.position() + toReadCount);
-            buffer.readBytes(dst);
-            remaining -= toReadCount;
-        }
-        maybeReleaseBuffer();
-        return len;
-    }
-
     /**
-     * If the {@link #buffer} is exhausted, release it and try to acquire another from the {@link #queue}.
-     * This method will block if the {@link #queue} is empty.
+     * {@inheritDoc}
+     *
+     * Release open buffers and poll the {@link #queue} for more data.
+     * <p>
+     * This is best, and more or less expected, to be invoked on a consuming thread (not the event loop)
+     * becasue if we block on the queue we can't fill it on the event loop (as that's where the buffers are coming from).
+     *
+     * @throws IOException
      */
-    private int updateCurrentBuffer() throws EOFException
+    @Override
+    protected void reBuffer() throws IOException
     {
-        if (buffer != null)
-        {
-            int readableBytes = buffer.readableBytes();
-            if (readableBytes > 0)
-                return readableBytes;
+        currentBuf.release();
+        buffer = null;
+        int liveByteCount = queuedByteCount.addAndGet(-bufferInitialReadableBytes);
+        bufferInitialReadableBytes = 0;
 
-            maybeReleaseBuffer();
-        }
+        // decrement the queuedByteCount, and possibly re-enable auto-read, *before* blocking on the queue
+        // because if we block on the queue without enabling auto-read we'll block forever :(
+        if (!channelConfig.isAutoRead() && liveByteCount < lowWaterMark)
+            channelConfig.setAutoRead(true);
 
         while (true)
         {
             if (closed)
-                throw new EOFException();
+                throw new ClosedChannelException();
             try
             {
-                buffer = queue.poll(1, TimeUnit.SECONDS);
-                if (buffer == null)
+                currentBuf = queue.poll(1, TimeUnit.SECONDS);
+                int bytes;
+                if (currentBuf == null || (bytes = currentBuf.readableBytes()) == 0)
                     continue;
 
-                int bytes = buffer.readableBytes();
-                queuedByteCount -= bytes;
+                buffer = currentBuf.nioBuffer(currentBuf.readerIndex(), bytes);
+                assert buffer.remaining() == bytes;
                 bufferInitialReadableBytes = bytes;
-                return bytes;
+                return;
             }
             catch (InterruptedException ie)
             {
@@ -154,19 +152,26 @@ public class ByteBufReadableByteChannel implements ReadableByteChannel
         }
     }
 
-    private void maybeReleaseBuffer()
+    @Override
+    public int read(ByteBuffer dst) throws IOException
     {
-        if (buffer == null || buffer.isReadable())
-            return;
+        int readLength = dst.remaining();
+        int remaining = readLength;
 
-        buffer.release();
-        buffer = null;
-        bufferInitialReadableBytes = 0;
+        while (remaining > 0)
+        {
+            if (!buffer.hasRemaining())
+                reBuffer();
+            int copyLength = Math.min(remaining, buffer.remaining());
 
-        // decrement the readableByteCount, and possibly re-enable auto-read, *before* blocking on the queue
-        // because if we block on the queue without enabling auto-read we'll block forever :(
-        if (!channelConfig.isAutoRead() && queuedByteCount < lowWaterMark)
-            channelConfig.setAutoRead(true);
+            int originalLimit = buffer.limit();
+            buffer.limit(buffer.position() + copyLength);
+            dst.put(buffer);
+            buffer.limit(originalLimit);
+            remaining -= copyLength;
+        }
+
+        return readLength;
     }
 
     @Override
@@ -175,16 +180,22 @@ public class ByteBufReadableByteChannel implements ReadableByteChannel
         return !closed;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Note: This should invoked on the consuming thread.
+     */
     @Override
-    public void close() throws IOException
+    public void close()
     {
         if (closed)
             return;
         closed = true;
 
-        if (buffer != null)
+        if (currentBuf != null)
         {
-            buffer.release(buffer.refCnt());
+            currentBuf.release(currentBuf.refCnt());
+            currentBuf = null;
             buffer = null;
         }
 

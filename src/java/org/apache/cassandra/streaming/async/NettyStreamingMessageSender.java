@@ -34,23 +34,20 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelPipeline;
-import io.netty.channel.ChannelPromise;
 import io.netty.channel.WriteBufferWaterMark;
 import io.netty.util.concurrent.FastThreadLocal;
 import io.netty.util.concurrent.Future;
-import io.netty.util.concurrent.ScheduledFuture;
 import org.apache.cassandra.concurrent.DebuggableThreadPoolExecutor;
-import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.net.async.ByteBufDataOutputStreamPlus;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.net.async.OutboundConnectionParams;
-import org.apache.cassandra.net.async.SwappingByteBufDataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingMessageSender;
 import org.apache.cassandra.streaming.messages.KeepAliveMessage;
@@ -221,7 +218,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             try
             {
                 Channel channel = getOrCreateChannel();
-                DataOutputStreamPlus outPlus = new SwappingByteBufDataOutputStreamPlus(channel, 1 << 16);
+                DataOutputStreamPlus outPlus = ByteBufDataOutputStreamPlus.create(channel, 1 << 16);
                 StreamMessage.serialize(ofm, outPlus, protocolVersion, session);
             }
             catch (Exception e)

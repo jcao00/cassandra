@@ -19,6 +19,7 @@
 package org.apache.cassandra.streaming.async;
 
 import java.io.EOFException;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 
 import org.slf4j.Logger;
@@ -27,9 +28,8 @@ import org.slf4j.LoggerFactory;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.FastThreadLocalThread;
-import org.apache.cassandra.net.async.ByteBufReadableByteChannel;
+import org.apache.cassandra.net.async.RebufferingByteBufDataInputPlus;
 import org.apache.cassandra.streaming.StreamManager;
 import org.apache.cassandra.streaming.StreamResultFuture;
 import org.apache.cassandra.streaming.StreamSession;
@@ -52,42 +52,37 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamingInboundHandler.class);
 
-    public static final int CHECKSUM_LENGTH = Integer.BYTES;
-
-    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 15; // 1 << 19 = 512Kb
-    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 16; // 1 << 22 = 4Mb
-
-    enum State { START, MESSAGE_PAYLOAD, FILE_TRANSFER_HEADER_PAYLOAD, FILE_TRANSFER_PAYLOAD, CLOSED }
+    private static final int AUTO_READ_LOW_WATER_MARK = 1 << 15;
+    private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 16;
 
     private final InetSocketAddress remoteAddress;
     private final int protocolVersion;
-
-    private State state;
 
     /**
      * A collection of {@link ByteBuf}s that are yet to be processed. Incoming buffers are first dropped into this
      * structure, and then consumed.
      */
-    private ByteBufReadableByteChannel bufChannel;
+    private RebufferingByteBufDataInputPlus buffers;
 
     /**
      * A background thread that performs the deserialization of the sstable data.
      */
     private Thread blockingIOThread;
 
+    private volatile boolean closed;
+
     public StreamingInboundHandler(InetSocketAddress remoteAddress, int protocolVersion)
     {
         this.remoteAddress = remoteAddress;
         this.protocolVersion = protocolVersion;
-        state = State.START;
     }
 
     @Override
     @SuppressWarnings("resource")
     public void handlerAdded(ChannelHandlerContext ctx)
     {
-        bufChannel = new ByteBufReadableByteChannel(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx.channel().config());
-        blockingIOThread = new FastThreadLocalThread(new DeserializingSstableTask(ctx),
+        buffers = new RebufferingByteBufDataInputPlus(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx.channel().config());
+        blockingIOThread = new FastThreadLocalThread(new StreamDeserializingTask(ctx),
                                                      String.format("Stream-Inbound--%s-%s", ctx.channel().id(), remoteAddress.toString()));
         blockingIOThread.setDaemon(true);
         blockingIOThread.start();
@@ -96,23 +91,14 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception
     {
-        if (state == State.CLOSED)
-        {
-            ReferenceCountUtil.release(message);
-            return;
-        }
-
-        if (!(message instanceof ByteBuf))
-        {
+        if (!closed && message instanceof ByteBuf)
+            buffers.append((ByteBuf) message);
+        else
             ctx.fireChannelRead(message);
-            return;
-        }
-
-        bufChannel.append((ByteBuf) message);
     }
 
     @Override
-    public void channelInactive(ChannelHandlerContext ctx)
+    public void channelInactive(ChannelHandlerContext ctx) throws IOException
     {
         close();
         ctx.fireChannelInactive();
@@ -120,12 +106,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 
     private void close()
     {
-        if (state == State.CLOSED)
-            return;
-
-        state = State.CLOSED;
-        blockingIOThread.interrupt();
-        // TODO:JEB release resources;
+        closed = true;
     }
 
     @Override
@@ -137,30 +118,22 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     }
 
     /**
-     * For testing
-     */
-    State getState()
-    {
-        return state;
-    }
-
-    /**
      * For testing only!!
      */
-    void setPendingBuffers(ByteBufReadableByteChannel bufChannel)
+    void setPendingBuffers(RebufferingByteBufDataInputPlus bufChannel)
     {
-        this.bufChannel = bufChannel;
+        this.buffers = bufChannel;
     }
 
     /**
      */
-    private class DeserializingSstableTask implements Runnable
+    private class StreamDeserializingTask implements Runnable
     {
         private final ChannelHandlerContext ctx;
 
         private StreamSession session;
 
-        DeserializingSstableTask(ChannelHandlerContext ctx)
+        StreamDeserializingTask(ChannelHandlerContext ctx)
         {
             this.ctx = ctx;
         }
@@ -170,9 +143,9 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
         {
             try
             {
-                while (state != State.CLOSED)
+                while (!closed)
                 {
-                    StreamMessage message = StreamMessage.deserialize(bufChannel, protocolVersion, null);
+                    StreamMessage message = StreamMessage.deserialize(buffers, protocolVersion, null);
                     if (message == null)
                         continue;
 
@@ -185,7 +158,8 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                     }
                     else if (message instanceof IncomingFileMessage)
                     {
-                        // TODO: i'd be great to check if the session actually exists before slurping in the entire sstable
+                        // TODO: it'd be great to check if the session actually exists before slurping in the entire sstable,
+                        // but that's a refactoring for another day
                         FileMessageHeader header = ((IncomingFileMessage) message).header;
                         session = StreamManager.instance.findSession(header.sender, header.planId, header.sessionIndex);
                     }
@@ -199,17 +173,14 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                     session.messageReceived(message);
                 }
             }
-//            catch (InterruptedException e)
-//            {
-//                // nop, thread was interrupted by the parent class (this is, or should be, normal/good/happy path)
-//            }
             catch (EOFException e)
             {
-                // thrown when netty socket closes/is interrupted
-                logger.debug("eof reading from socket; closing");
+                logger.debug("eof reading from socket; closing", e);
             }
             catch (Throwable t)
             {
+                // TODO:JEB do we close the session or send complete somewheres on fail?
+
                 // Throwable can be Runtime error containing IOException.
                 // In that case we don't want to retry.
                 // TODO:JEB resolve this
@@ -224,9 +195,10 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             }
             finally
             {
-
-                // TODO:JEB do we close the session or send complete somewheres?
                 ctx.close();
+
+                if (buffers != null)
+                    buffers.close();
 
                 //StreamingInboundHandler.this.state = true;
                 //FileUtils.closeQuietly(inputStream);

@@ -45,9 +45,8 @@ public class IncomingFileMessage extends StreamMessage
     public static Serializer<IncomingFileMessage> serializer = new Serializer<IncomingFileMessage>()
     {
         @SuppressWarnings("resource")
-        public IncomingFileMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
+        public IncomingFileMessage deserialize(DataInputPlus input, int version, StreamSession session) throws IOException
         {
-            DataInputPlus input = new DataInputStreamPlus(Channels.newInputStream(in));
             FileMessageHeader header = FileMessageHeader.serializer.deserialize(input, version);
             session = StreamManager.instance.findSession(header.sender, header.planId, header.sessionIndex);
             if (session == null)
@@ -56,13 +55,12 @@ public class IncomingFileMessage extends StreamMessage
             if (cfs == null)
                 throw new IOException("CF " + header.tableId + " was dropped during streaming");
 
-
             StreamReader reader = !header.isCompressed() ? new StreamReader(header, session)
                                                          : new CompressedStreamReader(header, session);
 
             try
             {
-                return new IncomingFileMessage(reader.read(in), header);
+                return new IncomingFileMessage(reader.read(input), header);
             }
             catch (Throwable t)
             {

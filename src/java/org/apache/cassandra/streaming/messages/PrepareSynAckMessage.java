@@ -19,8 +19,6 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.IOException;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.Collection;
 
@@ -40,9 +38,8 @@ public class PrepareSynAckMessage extends StreamMessage
                 StreamSummary.serializer.serialize(summary, out, version);
         }
 
-        public PrepareSynAckMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
+        public PrepareSynAckMessage deserialize(DataInputPlus input, int version, StreamSession session) throws IOException
         {
-            DataInputPlus input = new DataInputPlus.DataInputStreamPlus(Channels.newInputStream(in));
             PrepareSynAckMessage message = new PrepareSynAckMessage();
             int numSummaries = input.readInt();
             for (int i = 0; i < numSummaries; i++)

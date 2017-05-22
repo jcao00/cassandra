@@ -17,8 +17,7 @@
  */
 package org.apache.cassandra.streaming.messages;
 
-import java.nio.channels.ReadableByteChannel;
-
+import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
 
@@ -26,7 +25,7 @@ public class SessionFailedMessage extends StreamMessage
 {
     public static Serializer<SessionFailedMessage> serializer = new Serializer<SessionFailedMessage>()
     {
-        public SessionFailedMessage deserialize(ReadableByteChannel in, int version, StreamSession session)
+        public SessionFailedMessage deserialize(DataInputPlus in, int version, StreamSession session)
         {
             return new SessionFailedMessage();
         }

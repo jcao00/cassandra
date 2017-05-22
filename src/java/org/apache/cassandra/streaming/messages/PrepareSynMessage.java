@@ -18,13 +18,10 @@
 package org.apache.cassandra.streaming.messages;
 
 import java.io.*;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.Collection;
 
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataInputPlus.DataInputStreamPlus;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamRequest;
 import org.apache.cassandra.streaming.StreamSession;
@@ -34,10 +31,8 @@ public class PrepareSynMessage extends StreamMessage
 {
     public static Serializer<PrepareSynMessage> serializer = new Serializer<PrepareSynMessage>()
     {
-        @SuppressWarnings("resource") // Not closing constructed DataInputPlus's as the channel needs to remain open.
-        public PrepareSynMessage deserialize(ReadableByteChannel in, int version, StreamSession session) throws IOException
+        public PrepareSynMessage deserialize(DataInputPlus input, int version, StreamSession session) throws IOException
         {
-            DataInputPlus input = new DataInputStreamPlus(Channels.newInputStream(in));
             PrepareSynMessage message = new PrepareSynMessage();
             // requests
             int numRequests = input.readInt();

@@ -22,30 +22,22 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelDuplexHandler;
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelHandlerContext;
-import org.apache.cassandra.concurrent.ScheduledExecutors;
+import io.netty.buffer.Unpooled;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.ChannelProxy;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
-import org.apache.cassandra.net.async.SwappingByteBufDataOutputStreamPlus;
+import org.apache.cassandra.net.async.ByteBufDataOutputStreamPlus;
 import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamWriter;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.concurrent.SimpleCondition;
 
 /**
  * StreamWriter for compressed SSTable.
@@ -67,6 +59,8 @@ public class CompressedStreamWriter extends StreamWriter
     @Override
     public void write(DataOutputStreamPlus out) throws IOException
     {
+        assert out instanceof ByteBufDataOutputStreamPlus;
+        ByteBufDataOutputStreamPlus output = (ByteBufDataOutputStreamPlus)out;
         long totalSize = totalSize();
         logger.debug("[Stream #{}] Start streaming file {} to {}, repairedAt = {}, totalSize = {}", session.planId(),
                      sstable.getFilename(), session.peer, sstable.getSSTableMetadata().repairedAt, totalSize);
@@ -79,7 +73,6 @@ public class CompressedStreamWriter extends StreamWriter
             int sectionIdx = 0;
 
             // stream each of the required sections of the file
-            Channel channel = ((SwappingByteBufDataOutputStreamPlus)out).channel();
             for (final Pair<Long, Long> section : sections)
             {
                 // length of the section to stream
@@ -94,25 +87,14 @@ public class CompressedStreamWriter extends StreamWriter
                     final int toTransfer = (int) Math.min(CHUNK_SIZE, length - bytesTransferred);
                     limiter.acquire(toTransfer);
 
-                    ByteBuf outBuf = channel.alloc().directBuffer(toTransfer, toTransfer);
-                    ByteBuffer outNioBuffer = outBuf.nioBuffer(0, toTransfer);
+                    ByteBuffer outNioBuffer = ByteBuffer.allocateDirect(toTransfer);
                     long lastWrite = fc.read(outNioBuffer, section.left + bytesTransferred);
-                    outBuf.writerIndex((int) lastWrite);
+                    assert lastWrite == toTransfer : String.format("could not read required number of bytes from file to be streamed: read %d bytes, wanted %d bytes", lastWrite, toTransfer);
+                    outNioBuffer.flip();
+                    output.write(Unpooled.wrappedBuffer(outNioBuffer));
 
-                    if (!waitUntilWritable(channel))
-                        return;
-
-                    channel.writeAndFlush(outBuf).addListener(future -> {
-                    if (!future.isSuccess() && channel.isOpen())
-                        {
-                            logger.error("sending file block failed", future.cause());
-                            channel.close();
-                            session.sessionFailed(); /// ????????
-                        }
-                    });
-
-                    bytesTransferred += toTransfer;
-                    progress += toTransfer;
+                    bytesTransferred += lastWrite;
+                    progress += lastWrite;
                     session.progress(sstable.descriptor.filenameFor(Component.DATA), ProgressInfo.Direction.OUT, progress, totalSize);
                 }
             }
