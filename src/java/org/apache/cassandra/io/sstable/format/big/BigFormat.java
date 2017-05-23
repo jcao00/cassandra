@@ -40,6 +40,7 @@ public class BigFormat implements SSTableFormat
 {
     public static final BigFormat instance = new BigFormat();
     public static final Version latestVersion = new BigVersion(BigVersion.current_version);
+    public static final Version earliestSupportedVersion = new BigVersion(BigVersion.earliest_supported_version);
     private static final SSTableReader.Factory readerFactory = new ReaderFactory();
     private static final SSTableWriter.Factory writerFactory = new WriterFactory();
 
@@ -131,6 +132,7 @@ public class BigFormat implements SSTableFormat
         private final boolean hasCommitLogIntervals;
         public final boolean hasMaxCompressedLength;
         private final boolean hasPendingRepair;
+        private final boolean hasOptimizedStreamingHistogramSerialization;
 
         BigVersion(String version)
         {
@@ -143,6 +145,7 @@ public class BigFormat implements SSTableFormat
             hasCommitLogIntervals = version.compareTo("mc") >= 0;
             hasMaxCompressedLength = version.compareTo("na") >= 0;
             hasPendingRepair = version.compareTo("md") >= 0;
+            hasOptimizedStreamingHistogramSerialization = version.compareTo("na") >= 0;
         }
 
         @Override
@@ -166,6 +169,12 @@ public class BigFormat implements SSTableFormat
         public boolean hasPendingRepair()
         {
             return hasPendingRepair;
+        }
+
+        @Override
+        public boolean hasOptimizedStreamingHistogramSerialization()
+        {
+            return hasOptimizedStreamingHistogramSerialization;
         }
 
         @Override

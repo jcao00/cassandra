@@ -187,7 +187,7 @@ public class StreamingTombstoneHistogramBuilder
     public TombstoneHistogram build()
     {
         flushHistogram();
-        return new TombstoneHistogram(maxBinSize, roundSeconds, bin);
+        return new TombstoneHistogram(maxBinSize, bin);
     }
 
     private static class DistanceHolder

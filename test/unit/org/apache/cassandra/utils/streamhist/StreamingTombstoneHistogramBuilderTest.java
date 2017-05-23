@@ -25,6 +25,8 @@ import java.util.stream.IntStream;
 
 import org.junit.Test;
 
+import org.apache.cassandra.io.sstable.format.Version;
+import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 
@@ -68,7 +70,18 @@ public class StreamingTombstoneHistogramBuilderTest
     }
 
     @Test
-    public void testSerDe() throws Exception
+    public void testSerDe_Legacy() throws Exception
+    {
+        testSerDe(BigFormat.earliestSupportedVersion);
+    }
+
+    @Test
+    public void testSerDe_Modern() throws Exception
+    {
+        testSerDe(BigFormat.latestVersion);
+    }
+
+    private void testSerDe(Version version) throws Exception
     {
         StreamingTombstoneHistogramBuilder builder = new StreamingTombstoneHistogramBuilder(5, 0, 1);
         int[] samples = new int[]{ 23, 19, 10, 16, 36, 2, 9 };
@@ -80,10 +93,10 @@ public class StreamingTombstoneHistogramBuilderTest
         }
         TombstoneHistogram hist = builder.build();
         DataOutputBuffer out = new DataOutputBuffer();
-        TombstoneHistogram.serializer.serialize(hist, out);
+        TombstoneHistogram.serializer.serialize(version, hist, out);
         byte[] bytes = out.toByteArray();
 
-        TombstoneHistogram deserialized = TombstoneHistogram.serializer.deserialize(new DataInputBuffer(bytes));
+        TombstoneHistogram deserialized = TombstoneHistogram.serializer.deserialize(version, new DataInputBuffer(bytes));
 
         // deserialized histogram should have following values
         Map<Double, Long> expected1 = new LinkedHashMap<Double, Long>(5);
@@ -102,9 +115,19 @@ public class StreamingTombstoneHistogramBuilderTest
                              });
     }
 
+    @Test
+    public void testNumericTypes_Legacy() throws Exception
+    {
+        testNumericTypes(BigFormat.earliestSupportedVersion);
+    }
 
     @Test
-    public void testNumericTypes() throws Exception
+    public void testNumericTypes_Modern() throws Exception
+    {
+        testNumericTypes(BigFormat.latestVersion);
+    }
+
+    public void testNumericTypes(Version version) throws Exception
     {
         StreamingTombstoneHistogramBuilder builder = new StreamingTombstoneHistogramBuilder(5, 0, 1);
 
@@ -119,10 +142,10 @@ public class StreamingTombstoneHistogramBuilderTest
 
         //Make sure it's working with Serde
         DataOutputBuffer out = new DataOutputBuffer();
-        TombstoneHistogram.serializer.serialize(hist, out);
+        TombstoneHistogram.serializer.serialize(version, hist, out);
         byte[] bytes = out.toByteArray();
 
-        TombstoneHistogram deserialized = TombstoneHistogram.serializer.deserialize(new DataInputBuffer(bytes));
+        TombstoneHistogram deserialized = TombstoneHistogram.serializer.deserialize(version, new DataInputBuffer(bytes));
 
         asMap = asMap(deserialized);
         assertEquals(1, deserialized.size());

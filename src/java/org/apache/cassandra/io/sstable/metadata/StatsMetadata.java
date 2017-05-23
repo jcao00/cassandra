@@ -269,7 +269,7 @@ public class StatsMetadata extends MetadataComponent
             size += EstimatedHistogram.serializer.serializedSize(component.estimatedColumnCount);
             size += CommitLogPosition.serializer.serializedSize(component.commitLogIntervals.upperBound().orElse(CommitLogPosition.NONE));
             size += 8 + 8 + 4 + 4 + 4 + 4 + 8 + 8; // mix/max timestamp(long), min/maxLocalDeletionTime(int), min/max TTL, compressionRatio(double), repairedAt (long)
-            size += TombstoneHistogram.serializer.serializedSize(component.estimatedTombstoneDropTime);
+            size += TombstoneHistogram.serializer.serializedSize(version, component.estimatedTombstoneDropTime);
             size += TypeSizes.sizeof(component.sstableLevel);
             // min column names
             size += 4;
@@ -307,7 +307,7 @@ public class StatsMetadata extends MetadataComponent
             out.writeInt(component.minTTL);
             out.writeInt(component.maxTTL);
             out.writeDouble(component.compressionRatio);
-            TombstoneHistogram.serializer.serialize(component.estimatedTombstoneDropTime, out);
+            TombstoneHistogram.serializer.serialize(version, component.estimatedTombstoneDropTime, out);
             out.writeInt(component.sstableLevel);
             out.writeLong(component.repairedAt);
             out.writeInt(component.minClusteringValues.size());
@@ -353,7 +353,7 @@ public class StatsMetadata extends MetadataComponent
             int minTTL = in.readInt();
             int maxTTL = in.readInt();
             double compressionRatio = in.readDouble();
-            TombstoneHistogram tombstoneHistogram = TombstoneHistogram.serializer.deserialize(in);
+            TombstoneHistogram tombstoneHistogram = TombstoneHistogram.serializer.deserialize(version, in);
             int sstableLevel = in.readInt();
             long repairedAt = in.readLong();
 

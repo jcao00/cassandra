@@ -18,13 +18,13 @@
 package org.apache.cassandra.utils.streamhist;
 
 import java.io.IOException;
-import java.util.*;
 
 import com.google.common.base.Objects;
 
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.SSTable;
+import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.streamhist.StreamingTombstoneHistogramBuilder.DataHolder;
@@ -33,6 +33,8 @@ import org.apache.cassandra.utils.streamhist.StreamingTombstoneHistogramBuilder.
 public class TombstoneHistogram
 {
     public static final HistogramSerializer serializer = new HistogramSerializer();
+    public static final AsOf4_0Serializer fourDotZeroSerializer = new AsOf4_0Serializer();
+    public static final LegacyHistogramSerializer legacySerializer = new LegacyHistogramSerializer();
 
     // Buffer with point-value pair
     private final DataHolder bin;
@@ -40,37 +42,16 @@ public class TombstoneHistogram
     // maximum bin size for this histogram
     private final int maxBinSize;
 
-    // voluntarily give up resolution for speed
-    private final int roundSeconds;
-
-    /**
-     * Creates a new histogram with max bin size of maxBinSize
-     *
-     * @param maxBinSize maximum number of bins this histogram can have
-     */
-    private TombstoneHistogram(int maxBinSize, int roundSeconds, Map<Double, Long> bin)
+    TombstoneHistogram(int maxBinSize, DataHolder holder)
     {
         this.maxBinSize = maxBinSize;
-        this.roundSeconds = roundSeconds;
-        this.bin = new DataHolder(maxBinSize + 1, roundSeconds);
-
-        for (Map.Entry<Double, Long> entry : bin.entrySet())
-        {
-            final int current = entry.getKey().intValue();
-            this.bin.addValue(current, entry.getValue().intValue());
-        }
-    }
-
-    TombstoneHistogram(int maxBinSize, int roundSeconds, DataHolder holder)
-    {
-        this.maxBinSize = maxBinSize;
-        this.roundSeconds = roundSeconds;
         bin = new DataHolder(holder);
     }
 
     public static TombstoneHistogram createDefault()
     {
-        return new TombstoneHistogram(SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE, SSTable.TOMBSTONE_HISTOGRAM_TTL_ROUND_SECONDS, Collections.emptyMap());
+        int maxBinSize = SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE;
+        return new TombstoneHistogram(maxBinSize, new DataHolder(maxBinSize, SSTable.TOMBSTONE_HISTOGRAM_TTL_ROUND_SECONDS));
     }
 
     /**
@@ -96,7 +77,68 @@ public class TombstoneHistogram
         this.bin.forEach(pointAndValueConsumer);
     }
 
-    public static class HistogramSerializer implements ISerializer<TombstoneHistogram>
+    public static class HistogramSerializer
+    {
+        public int serializedSize(Version version, TombstoneHistogram histogram) throws IOException
+        {
+            return version.hasOptimizedStreamingHistogramSerialization() ?
+                   (int) fourDotZeroSerializer.serializedSize(histogram) :
+                   (int) legacySerializer.serializedSize(histogram);
+        }
+
+        public void serialize(Version version, TombstoneHistogram histogram, DataOutputPlus out) throws IOException
+        {
+            if (version.hasOptimizedStreamingHistogramSerialization())
+                fourDotZeroSerializer.serialize(histogram, out);
+            else
+                legacySerializer.serialize(histogram, out);
+        }
+
+        public TombstoneHistogram deserialize(Version version, DataInputPlus in) throws IOException
+        {
+            return version.hasOptimizedStreamingHistogramSerialization() ?
+                   fourDotZeroSerializer.deserialize(in) :
+                   legacySerializer.deserialize(in);
+        }
+    }
+
+    private static class AsOf4_0Serializer implements ISerializer<TombstoneHistogram>
+    {
+        public void serialize(TombstoneHistogram histogram, DataOutputPlus out) throws IOException
+        {
+            out.writeInt(histogram.maxBinSize);
+            out.writeInt(histogram.size());
+            histogram.forEach((point, value) ->
+                              {
+                                  out.writeInt(point);
+                                  out.writeInt(value);
+                              });
+        }
+
+        public TombstoneHistogram deserialize(DataInputPlus in) throws IOException
+        {
+            int maxBinSize = in.readInt();
+            int size = in.readInt();
+
+            DataHolder bin = new DataHolder(SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE, SSTable.TOMBSTONE_HISTOGRAM_TTL_ROUND_SECONDS);
+            for (int i = 0; i < size; i++)
+                bin.addValue(in.readInt(), in.readInt());
+
+            return new TombstoneHistogram(maxBinSize, bin);
+        }
+
+        public long serializedSize(TombstoneHistogram histogram)
+        {
+            long size = TypeSizes.sizeof(histogram.maxBinSize);
+            final int histSize = histogram.size();
+            size += TypeSizes.sizeof(histSize);
+            // size of entries = size * (4(int) + 4(int))
+            size += histSize * (4L + 4L);
+            return size;
+        }
+    }
+
+    private static class LegacyHistogramSerializer implements ISerializer<TombstoneHistogram>
     {
         public void serialize(TombstoneHistogram histogram, DataOutputPlus out) throws IOException
         {
@@ -113,13 +155,12 @@ public class TombstoneHistogram
         {
             int maxBinSize = in.readInt();
             int size = in.readInt();
-            Map<Double, Long> tmp = new HashMap<>(size);
-            for (int i = 0; i < size; i++)
-            {
-                tmp.put(in.readDouble(), in.readLong());
-            }
 
-            return new TombstoneHistogram(maxBinSize, maxBinSize, tmp);
+            DataHolder bin = new DataHolder(SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE, SSTable.TOMBSTONE_HISTOGRAM_TTL_ROUND_SECONDS);
+            for (int i = 0; i < size; i++)
+                bin.addValue((int)in.readDouble(), (int)in.readLong());
+
+            return new TombstoneHistogram(maxBinSize, bin);
         }
 
         public long serializedSize(TombstoneHistogram histogram)
