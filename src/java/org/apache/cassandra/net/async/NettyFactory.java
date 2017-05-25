@@ -309,14 +309,20 @@ public final class NettyFactory
             if (params.encryptionOptions != null)
             {
                 SslContext sslContext = SSLFactory.getSslContext(params.encryptionOptions, true, false);
-                SslHandler sslHandler = sslContext.newHandler(channel.alloc());
 
+                final SslHandler sslHandler;
                 if (params.encryptionOptions.require_endpoint_verification)
                 {
+                    InetSocketAddress peer = params.connectionId.remoteAddress();
+                    sslHandler = sslContext.newHandler(channel.alloc(), peer.getHostString(), peer.getPort());
                     SSLEngine engine = sslHandler.engine();
                     SSLParameters sslParameters = engine.getSSLParameters();
                     sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
                     engine.setSSLParameters(sslParameters);
+                }
+                else
+                {
+                    sslHandler = sslContext.newHandler(channel.alloc());
                 }
 
                 logger.trace("creating outbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
