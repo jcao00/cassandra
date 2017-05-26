@@ -20,10 +20,13 @@ package org.apache.cassandra.streaming.compress;
 
 import java.io.IOException;
 
+import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.RebufferingInputStream;
+import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.memory.BufferPool;
 
 public class StreamCompressionInputStream extends RebufferingInputStream
 {
@@ -32,20 +35,29 @@ public class StreamCompressionInputStream extends RebufferingInputStream
      */
     private final DataInputPlus dataInputPlus;
 
-    private final StreamCompressionSerializer compressionSerializer;
+    private final LZ4FastDecompressor decompressor;
     private final int protocolVersion;
 
-    public StreamCompressionInputStream(DataInputPlus dataInputPlus, int protocolVersion, StreamCompressionSerializer compressionSerializer)
+    public StreamCompressionInputStream(DataInputPlus dataInputPlus, int protocolVersion)
     {
         super(ByteBufferUtil.EMPTY_BYTE_BUFFER);
         this.dataInputPlus = dataInputPlus;
         this.protocolVersion = protocolVersion;
-        this.compressionSerializer = compressionSerializer;
+        this.decompressor = NettyFactory.lz4Factory().fastDecompressor();
     }
 
     @Override
     public void reBuffer() throws IOException
     {
-        buffer = compressionSerializer.deserialize(dataInputPlus, protocolVersion);
+        // release the current backing buffer
+        BufferPool.put(buffer);
+
+        buffer = StreamCompressionSerializer.deserialize(decompressor, dataInputPlus, protocolVersion);
+    }
+
+    @Override
+    public void close()
+    {
+        BufferPool.put(buffer);
     }
 }

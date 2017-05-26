@@ -119,6 +119,10 @@ public class CompressedStreamReader extends StreamReader
                 throw e;
             throw Throwables.propagate(e);
         }
+        finally
+        {
+            cis.close();
+        }
     }
 
     @Override

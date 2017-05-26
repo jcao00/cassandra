@@ -50,7 +50,10 @@ public abstract class StreamMessage
 
     public static StreamMessage deserialize(DataInputPlus in, int version, StreamSession session) throws IOException
     {
-        Type type = Type.get(in.readByte());
+        byte b = in.readByte();
+        if (b == 0)
+            b = -1;
+        Type type = Type.get(b);
         return type.inSerializer.deserialize(in, version, session);
     }
 
@@ -73,7 +76,7 @@ public abstract class StreamMessage
     }
 
     /** StreamMessage types */
-    public static enum Type
+    public enum Type
     {
         PREPARE_SYN(1, 5, PrepareSynMessage.serializer),
         FILE(2, 0, IncomingFileMessage.serializer, OutgoingFileMessage.serializer),

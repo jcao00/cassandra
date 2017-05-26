@@ -20,15 +20,10 @@ package org.apache.cassandra.streaming;
 
 import java.io.IOException;
 
-import org.apache.cassandra.streaming.messages.StreamMessage;
+import io.netty.channel.Channel;
+import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 
-public interface StreamingMessageSender
+public interface StreamConnectionFactory
 {
-    void initialize() throws IOException;
-
-    void sendMessage(StreamMessage message) throws IOException;
-
-    boolean connected();
-
-    void close();
+    Channel createConnection(OutboundConnectionIdentifier connectionId, int protocolVersion) throws IOException;
 }

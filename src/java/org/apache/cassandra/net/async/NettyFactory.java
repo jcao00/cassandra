@@ -1,7 +1,6 @@
 package org.apache.cassandra.net.async;
 
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.util.zip.Checksum;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -10,7 +9,6 @@ import org.slf4j.LoggerFactory;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
@@ -34,7 +32,6 @@ import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.concurrent.DefaultThreadFactory;
-import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
 import net.jpountz.lz4.LZ4Factory;
@@ -46,7 +43,6 @@ import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions.Int
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.NativeTransportService;
-import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.utils.CoalescingStrategies;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -111,8 +107,6 @@ public final class NettyFactory
     private final EventLoopGroup outboundGroup;
     public final EventLoopGroup streamingInboundGroup;
     public final EventLoopGroup streamingOutboundGroup;
-
-    private static final PooledByteBufAllocator INTERNODE_ALLOCATOR = new PooledByteBufAllocator(PlatformDependent.directBufferPreferred());
 
     /**
      * Constructor that allows modifying the {@link NettyFactory#useEpoll} for testing purposes. Otherwise, use the
@@ -181,7 +175,6 @@ public final class NettyFactory
         Class<? extends ServerChannel> transport = useEpoll ? EpollServerSocketChannel.class : NioServerSocketChannel.class;
         ServerBootstrap bootstrap = new ServerBootstrap().group(acceptGroup, inboundGroup)
                                                          .channel(transport)
-                                                         .option(ChannelOption.ALLOCATOR, INTERNODE_ALLOCATOR)
                                                          .option(ChannelOption.SO_BACKLOG, 500)
                                                          .childOption(ChannelOption.SO_KEEPALIVE, true)
                                                          .childOption(ChannelOption.TCP_NODELAY, true)
@@ -274,7 +267,6 @@ public final class NettyFactory
         Class<? extends Channel> transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
         Bootstrap bootstrap = new Bootstrap().group(params.mode == Mode.MESSAGING ? outboundGroup : streamingOutboundGroup)
                               .channel(transport)
-                              .option(ChannelOption.ALLOCATOR, INTERNODE_ALLOCATOR)
                               .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000)
                               .option(ChannelOption.SO_KEEPALIVE, true)
                               .option(ChannelOption.SO_REUSEADDR, true)

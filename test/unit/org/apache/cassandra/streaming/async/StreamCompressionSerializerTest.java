@@ -18,9 +18,6 @@
 
 package org.apache.cassandra.streaming.async;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.ReadableByteChannel;
 import java.util.Random;
 
 import org.junit.After;
@@ -36,12 +33,13 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.exceptions.ChecksumMismatchException;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 
 // TODO:JEB reinstate this
 @Ignore
 public class StreamCompressionSerializerTest
 {
-    private static final int VERSION = StreamSession.CURRENT_VERSION;
+    private static final int VERSION = StreamMessage.CURRENT_VERSION;
     private static final Random random = new Random(2347623847623L);
 
     private StreamCompressionSerializer serializer;
@@ -57,8 +55,8 @@ public class StreamCompressionSerializerTest
     @Before
     public void setUp()
     {
-        serializer = new StreamCompressionSerializer(NettyFactory.lz4Factory().fastCompressor(),
-                                                     NettyFactory.lz4Factory().fastDecompressor());
+        serializer = null;//new StreamCompressionSerializer(NettyFactory.lz4Factory().fastCompressor(),
+                            //                         NettyFactory.lz4Factory().fastDecompressor());
     }
 
     @After

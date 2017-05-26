@@ -23,10 +23,12 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
+import io.netty.buffer.CompositeByteBuf;
 import net.jpountz.lz4.LZ4Compressor;
 import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * A serialiazer for stream compressed files (see package-level documentation). Much like a typical compressed
@@ -35,11 +37,7 @@ import org.apache.cassandra.io.util.DataInputPlus;
  *
  * - int - compressed payload length
  * - int - uncompressed payload length
- * - int - checksum of lengths
  * - bytes - compressed payload
- * - int - checksum of uncompressed data
- *
- * Note: instances are not thread-safe.
  */
 public class StreamCompressionSerializer
 {
@@ -48,63 +46,76 @@ public class StreamCompressionSerializer
      */
     private static final int HEADER_LENGTH = 8;
 
-    private final LZ4Compressor compressor;
-    private final LZ4FastDecompressor decompressor;
-
-    public StreamCompressionSerializer(LZ4Compressor compressor, LZ4FastDecompressor decompressor)
-    {
-        this.compressor = compressor;
-        this.decompressor = decompressor;
-    }
-
-    public ByteBuf serialize(ByteBuffer in, int version) throws IOException
+    public static ByteBuffer serialize(LZ4Compressor compressor, ByteBuffer in, int version)
     {
         final int uncompressedLength = in.remaining();
 
-        // Note: there's better alternatives to creating extra buffers and memcpy'ing all the things,
-        // but there's a bug in the lz4-java 1.3.0 jar wrt using ByteBuffers, and it's unmaintained atm :(
-        final byte[] inBuffer;
-        final int inOffset;
-        if (in.hasArray())
+        int maxLength = compressor.maxCompressedLength(uncompressedLength);
+        ByteBuffer compressed = BufferPool.get(maxLength);
+        try
         {
-            inBuffer = in.array();
-            inOffset = in.arrayOffset();
+            compressor.compress(in, compressed);
+            int compressedLength = compressed.position();
+            compressed.limit(compressedLength).position(0);
+
+            // not sure if it's better to alloc a CompositeByteBuf and add the two buffers to it,
+            // or create another ByteBuf and copy the compressed data to it (after the headers)
+
+            ByteBuffer out = BufferPool.get(HEADER_LENGTH + compressedLength);
+            out.putInt(compressedLength);
+            out.putInt(uncompressedLength);
+            out.put(compressed);
+            out.flip();
+            return out;
         }
-        else
+        finally
         {
-            inBuffer = new byte[uncompressedLength];
-            in.get(inBuffer);
-            inOffset = 0;
+            BufferPool.put(compressed);
         }
-
-        byte[] outBuffer = new byte[compressor.maxCompressedLength(uncompressedLength) + HEADER_LENGTH];
-        final int compressedLength = compressor.compress(inBuffer, 0, uncompressedLength, outBuffer, HEADER_LENGTH);
-
-        ByteBuf out = Unpooled.wrappedBuffer(outBuffer, inOffset, compressedLength + HEADER_LENGTH);
-        out.writerIndex(0);
-        out.writeInt(compressedLength);
-        out.writeInt(uncompressedLength);
-        out.writerIndex(HEADER_LENGTH + compressedLength);
-        return out;
     }
 
     // TODO:JEB document that this is a *blocking* implementation
-    public ByteBuffer deserialize(DataInputPlus in, int version) throws IOException
+
+    /**
+     *
+     * @return A buffer with decompressed data. The returned buffer is possibly taken from the {@link BufferPool}, and
+     * thus you need call {@link BufferPool#put(ByteBuffer)} when it has been consumed to ensure the buffer
+     * is returned to the pool.
+     */
+    public static ByteBuffer deserialize(LZ4FastDecompressor decompressor, DataInputPlus in, int version) throws IOException
     {
         final int compressedLength = in.readInt();
         final int uncompressedLength = in.readInt();
 
         if (in instanceof ReadableByteChannel)
         {
-            ByteBuffer compressed = ByteBuffer.allocateDirect(compressedLength);
-            int readLength = ((ReadableByteChannel)in).read(compressed);
-            assert readLength == compressed.position();
-            compressed.flip();
+            ByteBuffer compressed = BufferPool.get(compressedLength);
+            ByteBuffer uncompressed = null;
+            try
+            {
+                int readLength = ((ReadableByteChannel) in).read(compressed);
+                assert readLength == compressed.position();
+                compressed.flip();
 
-            ByteBuffer uncompressed = ByteBuffer.allocateDirect(uncompressedLength);
-            decompressor.decompress(compressed, uncompressed);
-            uncompressed.flip();
-            return uncompressed;
+                uncompressed = BufferPool.get(uncompressedLength);
+                decompressor.decompress(compressed, uncompressed);
+                uncompressed.flip();
+                FileUtils.clean(compressed);
+                return uncompressed;
+            }
+            catch (Exception e)
+            {
+                // make sure we return the buffer to the pool on errors
+                BufferPool.put(uncompressed);
+
+                if (e instanceof IOException)
+                    throw e;
+                throw new IOException(e);
+            }
+            finally
+            {
+                BufferPool.put(compressed);
+            }
         }
         else
         {

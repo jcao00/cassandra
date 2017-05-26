@@ -74,7 +74,7 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
 
     private StreamResultFuture(UUID planId, String description, boolean keepSSTableLevels, boolean isIncremental, UUID pendingRepair)
     {
-        this(planId, description, new StreamCoordinator(0, keepSSTableLevels, isIncremental, false, pendingRepair));
+        this(planId, description, new StreamCoordinator(0, keepSSTableLevels, new DefaultConnectionFactory(), isIncremental, false, pendingRepair));
     }
 
     static StreamResultFuture init(UUID planId, String description, Collection<StreamEventHandler> listeners,

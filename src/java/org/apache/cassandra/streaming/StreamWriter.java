@@ -25,6 +25,7 @@ import java.util.Collection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.ChannelProxy;
@@ -35,6 +36,7 @@ import org.apache.cassandra.streaming.StreamManager.StreamRateLimiter;
 import org.apache.cassandra.streaming.compress.ByteBufCompressionDataOutputStreamPlus;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * StreamWriter writes given section of the SSTable to given channel.
@@ -99,7 +101,7 @@ public class StreamWriter
                 while (bytesRead < length)
                 {
                     int toTransfer = (int) Math.min(bufferSize, length - bytesRead);
-                    long lastBytesRead = write(proxy, validator, compressedOutput, start, transferOffset, toTransfer);
+                    long lastBytesRead = write(proxy, validator, compressedOutput, start, transferOffset, toTransfer, bufferSize);
                     start += lastBytesRead;
                     bytesRead += lastBytesRead;
                     progress += (lastBytesRead - transferOffset);
@@ -136,29 +138,35 @@ public class StreamWriter
      *
      * @throws java.io.IOException on any I/O error
      */
-    protected long write(ChannelProxy proxy, ChecksumValidator validator, DataOutputStreamPlus output, long start, int transferOffset, int toTransfer) throws IOException
+    protected long write(ChannelProxy proxy, ChecksumValidator validator, DataOutputStreamPlus output, long start, int transferOffset, int toTransfer, int bufferSize) throws IOException
     {
         // the count of bytes to read off disk
-        int minReadable = (int) Math.min(toTransfer, proxy.size() - start);
+        int minReadable = (int) Math.min(bufferSize, proxy.size() - start);
 
-        // TODO once lz4-java is released with fixes (),
-        // we can switch this to a direct buffer so that StreamCompressionSerializer can operate on off-heap arrays
-        ByteBuffer buffer = ByteBuffer.allocate(minReadable);
-        int readCount = proxy.read(buffer, start);
-        assert readCount == minReadable : String.format("could not read required number of bytes from file to be streamed: read %d bytes, wanted %d bytes", readCount, minReadable);
-        buffer.flip();
-
-        if (validator != null)
+        // this buffer will hold the data from disk. as it will be compressed on the fly,
+        // we can release this buffer as soon as we can.
+        ByteBuffer buffer = BufferPool.get(minReadable);
+        try
         {
-            validator.validate(buffer);
+            int readCount = proxy.read(buffer, start);
+            assert readCount == minReadable : String.format("could not read required number of bytes from file to be streamed: read %d bytes, wanted %d bytes", readCount, minReadable);
             buffer.flip();
-        }
 
-        buffer.position(transferOffset);
-        output.write(buffer);
+            if (validator != null)
+            {
+                validator.validate(buffer);
+                buffer.flip();
+            }
+
+            buffer.position(transferOffset);
+            buffer.limit(transferOffset + (toTransfer - transferOffset));
+            output.write(buffer);
+        }
+        finally
+        {
+            BufferPool.put(buffer);
+        }
 
         return toTransfer;
     }
-
-
 }

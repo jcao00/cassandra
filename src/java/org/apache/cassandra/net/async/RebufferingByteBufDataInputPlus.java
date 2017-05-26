@@ -18,17 +18,14 @@
 
 package org.apache.cassandra.net.async;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -38,29 +35,18 @@ import org.apache.cassandra.io.util.RebufferingInputStream;
 
 public class RebufferingByteBufDataInputPlus extends RebufferingInputStream implements ReadableByteChannel
 {
-    private static final Logger logger = LoggerFactory.getLogger(RebufferingByteBufDataInputPlus.class);
-
-    static final int DISABLED_LOW_WATER_MARK = Integer.MIN_VALUE;
-    static final int DISABLED_HIGH_WATER_MARK = Integer.MAX_VALUE;
+    /**
+     * The parent, or owning, buffer of the current buffer being read from ({@link super#buffer}).
+     * Initialize to en empty buffer to avoid needing a null check in every method.
+     */
+    private ByteBuf currentBuf;
 
     private final BlockingQueue<ByteBuf> queue;
 
     /**
-     * The current buffer being read from. Initialize to en empty buffer to avoid needing a null check
-     * in every method.
-     */
-    private ByteBuf currentBuf;
-
-    /**
-     * The count of readable bytes in all {@link ByteBuf}s held by this instance.
+     * The count of live bytes in all {@link ByteBuf}s held by this instance.
      */
     private final AtomicInteger queuedByteCount;
-
-    /**
-     * When a {@link ByteBuf} is pulled off the {@link #queue}, capture it's readable byte count before we start reading
-     * from it, that we we can properly decrement {@link #queuedByteCount} when we're done with the buffer.
-     */
-    private int bufferInitialReadableBytes;
 
     private final int lowWaterMark;
     private final int highWaterMark;
@@ -68,27 +54,22 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
 
     private volatile boolean closed;
 
-    /**
-     * Constructs an instance that disables the low and high water mark checks.
-     */
-    public RebufferingByteBufDataInputPlus(ChannelConfig channelConfig)
-    {
-        this (DISABLED_LOW_WATER_MARK, DISABLED_HIGH_WATER_MARK, channelConfig);
-    }
-
     public RebufferingByteBufDataInputPlus(int lowWaterMark, int highWaterMark, ChannelConfig channelConfig)
     {
         super(Unpooled.EMPTY_BUFFER.nioBuffer());
         currentBuf = Unpooled.EMPTY_BUFFER;
-        queue = new LinkedBlockingQueue<>();
         this.lowWaterMark = lowWaterMark;
         this.highWaterMark = highWaterMark;
         this.channelConfig = channelConfig;
-
+        queue = new LinkedBlockingQueue<>();
         queuedByteCount = new AtomicInteger();
     }
 
-    // it's expected this method is invoked on the netty event loop
+    /**
+     * Append a {@link ByteBuf} to the end of the einternal queue.
+     *
+     * Note: it's expected this method is invoked on the netty event loop.
+     */
     public void append(ByteBuf buf) throws IllegalStateException
     {
         assert buf != null : "buffer cannot be null";
@@ -99,11 +80,15 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
             throw new IllegalStateException("stream is already closed, so cannot add another buffer");
         }
 
-        queue.add(buf);
+        // this slightly undercounts the live count as it doesn't include the currentBuf's size.
+        // that's ok as the worst we'll do is allow another buffer in and add it to the queue,
+        // and that point we'll disable auto-read. this is a tradeoff versus making some other member field
+        // atomic or volatile.
         int queuedCount = queuedByteCount.addAndGet(buf.readableBytes());
-
         if (channelConfig.isAutoRead() && queuedCount > highWaterMark)
             channelConfig.setAutoRead(false);
+
+        queue.add(buf);
     }
 
     /**
@@ -113,26 +98,26 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
      * <p>
      * This is best, and more or less expected, to be invoked on a consuming thread (not the event loop)
      * becasue if we block on the queue we can't fill it on the event loop (as that's where the buffers are coming from).
-     *
-     * @throws IOException
      */
     @Override
     protected void reBuffer() throws IOException
     {
         currentBuf.release();
         buffer = null;
-        int liveByteCount = queuedByteCount.addAndGet(-bufferInitialReadableBytes);
-        bufferInitialReadableBytes = 0;
+        currentBuf = null;
 
-        // decrement the queuedByteCount, and possibly re-enable auto-read, *before* blocking on the queue
-        // because if we block on the queue without enabling auto-read we'll block forever :(
-        if (!channelConfig.isAutoRead() && liveByteCount < lowWaterMark)
+        // possibly re-enable auto-read, *before* blocking on the queue, because if we block on the queue
+        // without enabling auto-read we'll block forever :(
+        if (!channelConfig.isAutoRead() && queuedByteCount.get() < lowWaterMark)
             channelConfig.setAutoRead(true);
 
         while (true)
         {
             if (closed)
-                throw new ClosedChannelException();
+            {
+                releaseResources();
+                throw new EOFException();
+            }
             try
             {
                 currentBuf = queue.poll(1, TimeUnit.SECONDS);
@@ -142,7 +127,7 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
 
                 buffer = currentBuf.nioBuffer(currentBuf.readerIndex(), bytes);
                 assert buffer.remaining() == bytes;
-                bufferInitialReadableBytes = bytes;
+                queuedByteCount.addAndGet(-bytes);
                 return;
             }
             catch (InterruptedException ie)
@@ -174,6 +159,17 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
         return readLength;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * As long as this method is invoked on the consuming thread the returned value will be accurate.
+     */
+    @Override
+    public int available()
+    {
+        return queuedByteCount.get() + buffer.remaining();
+    }
+
     @Override
     public boolean isOpen()
     {
@@ -188,10 +184,12 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
     @Override
     public void close()
     {
-        if (closed)
-            return;
         closed = true;
+        releaseResources();
+    }
 
+    private void releaseResources()
+    {
         if (currentBuf != null)
         {
             currentBuf.release(currentBuf.refCnt());
@@ -202,5 +200,15 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
         ByteBuf buf;
         while ((buf = queue.poll()) != null)
             buf.release(buf.refCnt());
+    }
+
+    /**
+     * Mark this stream as closed, but do not release any of the resources.
+     *
+     * Note: this is best to be called from the producer thread.
+     */
+    public void markClose()
+    {
+        closed = true;
     }
 }

@@ -40,7 +40,6 @@ import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.compress.*;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 
 import static java.lang.String.format;
@@ -571,7 +570,7 @@ public final class CompressionParams
                 out.writeUTF(entry.getValue());
             }
             out.writeInt(parameters.chunkLength());
-            if (version >= StreamSession.VERSION_40)
+            if (version >= StreamMessage.VERSION_40)
                 out.writeInt(parameters.maxCompressedLength);
             else
                 if (parameters.maxCompressedLength != Integer.MAX_VALUE)
@@ -591,7 +590,7 @@ public final class CompressionParams
             }
             int chunkLength = in.readInt();
             int minCompressRatio = Integer.MAX_VALUE;   // Earlier Cassandra cannot use uncompressed chunks.
-            if (version >= StreamSession.VERSION_40)
+            if (version >= StreamMessage.VERSION_40)
                 minCompressRatio = in.readInt();
 
             CompressionParams parameters;
@@ -616,7 +615,7 @@ public final class CompressionParams
                 size += TypeSizes.sizeof(entry.getValue());
             }
             size += TypeSizes.sizeof(parameters.chunkLength());
-            if (version >= StreamSession.VERSION_40)
+            if (version >= StreamMessage.VERSION_40)
                 size += TypeSizes.sizeof(parameters.maxCompressedLength());
             return size;
         }

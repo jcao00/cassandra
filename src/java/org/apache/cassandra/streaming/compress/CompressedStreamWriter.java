@@ -38,6 +38,7 @@ import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamWriter;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * StreamWriter for compressed SSTable.
@@ -87,11 +88,20 @@ public class CompressedStreamWriter extends StreamWriter
                     final int toTransfer = (int) Math.min(CHUNK_SIZE, length - bytesTransferred);
                     limiter.acquire(toTransfer);
 
-                    ByteBuffer outNioBuffer = ByteBuffer.allocateDirect(toTransfer);
-                    long lastWrite = fc.read(outNioBuffer, section.left + bytesTransferred);
-                    assert lastWrite == toTransfer : String.format("could not read required number of bytes from file to be streamed: read %d bytes, wanted %d bytes", lastWrite, toTransfer);
-                    outNioBuffer.flip();
-                    output.write(Unpooled.wrappedBuffer(outNioBuffer));
+                    ByteBuffer outBuffer = BufferPool.get(toTransfer);
+                    long lastWrite;
+                    try
+                    {
+                        lastWrite = fc.read(outBuffer, section.left + bytesTransferred);
+                        assert lastWrite == toTransfer : String.format("could not read required number of bytes from file to be streamed: read %d bytes, wanted %d bytes", lastWrite, toTransfer);
+                        outBuffer.flip();
+                        output.writeToChannel(outBuffer);
+                    }
+                    catch (IOException e)
+                    {
+                        BufferPool.put(outBuffer);
+                        throw e;
+                    }
 
                     bytesTransferred += lastWrite;
                     progress += lastWrite;

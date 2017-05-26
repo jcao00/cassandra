@@ -21,14 +21,14 @@ package org.apache.cassandra.streaming.compress;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-import io.netty.buffer.ByteBuf;
+import net.jpountz.lz4.LZ4Compressor;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
 import org.apache.cassandra.net.async.ByteBufDataOutputStreamPlus;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.streaming.StreamManager.StreamRateLimiter;
-import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 
 /**
  * The intent of this class is to only be used in a very narrow use-case: on the stream compression path of streaming.
@@ -38,25 +38,31 @@ import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
 public class ByteBufCompressionDataOutputStreamPlus extends WrappedDataOutputStreamPlus
 {
     private final StreamRateLimiter limiter;
-    private final StreamCompressionSerializer compressionSerializer;
+    private final LZ4Compressor compressor;
+
 
     public ByteBufCompressionDataOutputStreamPlus(DataOutputStreamPlus out, StreamRateLimiter limiter)
     {
         super(out);
         assert out instanceof ByteBufDataOutputStreamPlus;
-        compressionSerializer = new StreamCompressionSerializer(NettyFactory.lz4Factory().fastCompressor(),
-                                                                NettyFactory.lz4Factory().fastDecompressor());
+        compressor = NettyFactory.lz4Factory().fastCompressor();
         this.limiter = limiter;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Compress the incoming buffer and send the result downstream. The buffer parameter will not be used nor passed
+     * to downstream components, and thus callers can safely free the buffer upon return.
+     */
     @Override
     public void write(ByteBuffer buffer) throws IOException
     {
-        ByteBuf compressed = compressionSerializer.serialize(buffer, StreamSession.CURRENT_VERSION);
+        ByteBuffer compressed = StreamCompressionSerializer.serialize(compressor, buffer, StreamMessage.CURRENT_VERSION);
 
         // this is a blocking call - you have been warned
-        limiter.acquire(compressed.readableBytes());
+        limiter.acquire(compressed.remaining());
 
-        ((ByteBufDataOutputStreamPlus)out).write(compressed);
+        ((ByteBufDataOutputStreamPlus)out).writeToChannel(compressed);
     }
 }

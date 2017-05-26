@@ -26,8 +26,8 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.HandshakeProtocol.FirstHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.SecondHandshakeMessage;
 import org.apache.cassandra.net.async.HandshakeProtocol.ThirdHandshakeMessage;
-import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.async.StreamingInboundHandler;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 
 /**
  * 'Server'-side component that negotiates the internode handshake when establishing a new connection.
@@ -164,7 +164,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
         if (msg.mode == NettyFactory.Mode.STREAMING)
         {
             // streaming connections are per-session and have a fixed version.  we can't do anything with a wrong-version stream connection, so drop it.
-            if (version != StreamSession.CURRENT_VERSION)
+            if (version != StreamMessage.CURRENT_VERSION)
             {
                 logger.warn("Received stream using protocol version %d (my version %d). Terminating connection", version, MessagingService.current_version);
                 ctx.close();
@@ -209,7 +209,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
     {
         ChannelPipeline pipeline = ctx.pipeline();
         InetSocketAddress address = (InetSocketAddress) ctx.channel().remoteAddress();
-        pipeline.addLast(NettyFactory.instance.streamingInboundGroup, "streamInbound", new StreamingInboundHandler(address, protocolVersion));
+        pipeline.addLast(NettyFactory.instance.streamingInboundGroup, "streamInbound", new StreamingInboundHandler(address, protocolVersion, null));
         pipeline.remove(this);
 
         // pass a custom recv ByteBuf allocator to the channel. the default recv ByteBuf size is 1k, but in streaming we're

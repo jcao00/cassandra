@@ -47,18 +47,25 @@ public class StreamCoordinator
 
     private Map<InetAddress, HostStreamingData> peerSessions = new HashMap<>();
     private final int connectionsPerHost;
+    private StreamConnectionFactory factory;
     private final boolean keepSSTableLevel;
     private final boolean isIncremental;
     private Iterator<StreamSession> sessionsToConnect = null;
     private final UUID pendingRepair;
 
-    public StreamCoordinator(int connectionsPerHost, boolean keepSSTableLevel, boolean isIncremental, boolean connectSequentially, UUID pendingRepair)
+    public StreamCoordinator(int connectionsPerHost, boolean keepSSTableLevel, StreamConnectionFactory factory, boolean isIncremental, boolean connectSequentially, UUID pendingRepair)
     {
         this.connectionsPerHost = connectionsPerHost;
         this.keepSSTableLevel = keepSSTableLevel;
+        this.factory = factory;
         this.isIncremental = isIncremental;
         this.connectSequentially = connectSequentially;
         this.pendingRepair = pendingRepair;
+    }
+
+    public void setConnectionFactory(StreamConnectionFactory factory)
+    {
+        this.factory = factory;
     }
 
     /**
@@ -289,7 +296,7 @@ public class StreamCoordinator
             // create
             if (streamSessions.size() < connectionsPerHost)
             {
-                StreamSession session = new StreamSession(peer, connecting, streamSessions.size(), keepSSTableLevel, isIncremental, pendingRepair);
+                StreamSession session = new StreamSession(peer, connecting, factory, streamSessions.size(), keepSSTableLevel, isIncremental, pendingRepair);
                 streamSessions.put(++lastReturned, session);
                 return session;
             }
@@ -321,7 +328,7 @@ public class StreamCoordinator
             StreamSession session = streamSessions.get(id);
             if (session == null)
             {
-                session = new StreamSession(peer, connecting, id, keepSSTableLevel, isIncremental, pendingRepair);
+                session = new StreamSession(peer, connecting, factory, id, keepSSTableLevel, isIncremental, pendingRepair);
                 streamSessions.put(id, session);
             }
             return session;

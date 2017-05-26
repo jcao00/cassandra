@@ -159,7 +159,7 @@ public class SSTableLoader implements StreamEventHandler
         client.init(keyspace);
         outputHandler.output("Established connection to initial hosts");
 
-        StreamPlan plan = new StreamPlan("Bulk Load", 0, connectionsPerHost, false, false, false, null);
+        StreamPlan plan = new StreamPlan("Bulk Load", 0, connectionsPerHost, false, false, false, null).connectionFactory(client.getConnectionFactory());
 
         Map<InetAddress, Collection<Range<Token>>> endpointToRanges = client.getEndpointToRangesMap();
         openSSTables(endpointToRanges);
@@ -255,6 +255,17 @@ public class SSTableLoader implements StreamEventHandler
          */
         public void stop()
         {
+        }
+
+        /**
+         * Provides connection factory.
+         * By default, it uses DefaultConnectionFactory.
+         *
+         * @return StreamConnectionFactory to use
+         */
+        public StreamConnectionFactory getConnectionFactory()
+        {
+            return new DefaultConnectionFactory();
         }
 
         /**

@@ -61,7 +61,7 @@ public class BufferPool
     public static boolean DEBUG = false;
 
     private static final Logger logger = LoggerFactory.getLogger(BufferPool.class);
-    private static final NoSpamLogger noSpamLogger = NoSpamLogger.getLogger(logger, 15L, TimeUnit.MINUTES);
+    private static final NoSpamLogger noSpamLogger = NoSpamLogger.getLogger(logger, 1, TimeUnit.SECONDS);
     private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocateDirect(0);
 
     /** A global pool of chunks (page aligned buffers) */

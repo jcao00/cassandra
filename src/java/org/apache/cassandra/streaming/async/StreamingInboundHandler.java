@@ -21,7 +21,10 @@ package org.apache.cassandra.streaming.async;
 import java.io.EOFException;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.concurrent.TimeUnit;
+import javax.annotation.Nullable;
 
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,16 +40,12 @@ import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.streaming.messages.IncomingFileMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
+import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
- * Handles the inbound side of streaming sstable data. From the incoming data, we reify partitions and rows
- * and write those out to new sstable files. Because deserialization is a blocking affair, we can't block
- * the netty event loop. Thus we have a background thread perform all the blocking deserialization.
- *
- *
- *  * // TODO:JEB document
- * - netty low/high water marks & how it relates to our use of auto-read
- * - netty auto-read, and why we do it on the event loop (keeps things simple from the netty dispatch POV)
+ * Handles the inbound side of streaming messages and sstable data. From the incoming data, we derserialize the message
+ * and potentially reify partitions and rows and write those out to new sstable files. Because deserialization is a blocking affair,
+ * we can't block the netty event loop. Thus we have a background thread perform all the blocking deserialization.
  */
 public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 {
@@ -58,23 +57,25 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     private final InetSocketAddress remoteAddress;
     private final int protocolVersion;
 
+    private final StreamSession session;
+
     /**
      * A collection of {@link ByteBuf}s that are yet to be processed. Incoming buffers are first dropped into this
      * structure, and then consumed.
+     * <p>
+     * For thread safety, this structure's resources are released on the consuming thread
+     * (via {@link RebufferingByteBufDataInputPlus#close()},
+     * but the producing side calls {@link RebufferingByteBufDataInputPlus#markClose()} to notify the input that is should close.
      */
     private RebufferingByteBufDataInputPlus buffers;
 
-    /**
-     * A background thread that performs the deserialization of the sstable data.
-     */
-    private Thread blockingIOThread;
-
     private volatile boolean closed;
 
-    public StreamingInboundHandler(InetSocketAddress remoteAddress, int protocolVersion)
+    public StreamingInboundHandler(InetSocketAddress remoteAddress, int protocolVersion, @Nullable StreamSession session)
     {
         this.remoteAddress = remoteAddress;
         this.protocolVersion = protocolVersion;
+        this.session = session;
     }
 
     @Override
@@ -82,8 +83,8 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     public void handlerAdded(ChannelHandlerContext ctx)
     {
         buffers = new RebufferingByteBufDataInputPlus(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx.channel().config());
-        blockingIOThread = new FastThreadLocalThread(new StreamDeserializingTask(ctx),
-                                                     String.format("Stream-Inbound--%s-%s", ctx.channel().id(), remoteAddress.toString()));
+        Thread blockingIOThread = new FastThreadLocalThread(new StreamDeserializingTask(session, ctx),
+                                                            String.format("Stream-Inbound--%s-%s", ctx.channel().id(), remoteAddress.toString()));
         blockingIOThread.setDaemon(true);
         blockingIOThread.start();
     }
@@ -107,6 +108,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     private void close()
     {
         closed = true;
+        buffers.markClose();
     }
 
     @Override
@@ -126,6 +128,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     }
 
     /**
+     * The task that performs the actual deserialization.
      */
     private class StreamDeserializingTask implements Runnable
     {
@@ -133,8 +136,9 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 
         private StreamSession session;
 
-        StreamDeserializingTask(ChannelHandlerContext ctx)
+        StreamDeserializingTask(StreamSession session, ChannelHandlerContext ctx)
         {
+            this.session = session;
             this.ctx = ctx;
         }
 
@@ -145,13 +149,22 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             {
                 while (!closed)
                 {
-                    StreamMessage message = StreamMessage.deserialize(buffers, protocolVersion, null);
-                    if (message == null)
-                        continue;
+                    // do a check of available bytes and possibly sleep some amount of time (then continue).
+                    // this way we can break out of run() sanely or we end up blocking indefintely in StreamMessage.deserialize()
+                    while (buffers.available() == 0)
+                    {
+                        Uninterruptibles.sleepUninterruptibly(400, TimeUnit.MILLISECONDS);
+                        if (closed || !ctx.channel().isOpen())
+                            return;
+                    }
 
-                    // StreamInitMessage & IncomingFileMessage each start new channels, and IMF needs a session to be established a priori
+                    StreamMessage message = StreamMessage.deserialize(buffers, protocolVersion, null);
+
+                    // StreamInitMessage starts a new channel, and IncomingFileMessage potentially, as well.
+                    // IncomingFileMessage needs a session to be established a priori, though
                     if (message instanceof StreamInitMessage)
                     {
+                        assert session == null : "initiator of stream session received a StreamInitMessage";
                         StreamInitMessage init = (StreamInitMessage) message;
                         StreamResultFuture.initReceivingSide(init.sessionIndex, init.planId, init.description, init.from, ctx.channel(), init.keepSSTableLevel, init.isIncremental, init.pendingRepair);
                         session = StreamManager.instance.findSession(init.from, init.planId, init.sessionIndex);
@@ -164,7 +177,6 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                         session = StreamManager.instance.findSession(header.sender, header.planId, header.sessionIndex);
                     }
 
-                    // TODO:JEB better error handling
                     if (session == null)
                         throw new IllegalStateException("no session found for message " + message);
 
@@ -173,35 +185,25 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                     session.messageReceived(message);
                 }
             }
-            catch (EOFException e)
+            catch (EOFException eof)
             {
-                logger.debug("eof reading from socket; closing", e);
+                // ignore
             }
             catch (Throwable t)
             {
-                // TODO:JEB do we close the session or send complete somewheres on fail?
-
-                // Throwable can be Runtime error containing IOException.
-                // In that case we don't want to retry.
-                // TODO:JEB resolve this
-//                Throwable cause = t;
-//                while ((cause = cause.getCause()) != null)
-//                {
-//                    if (cause instanceof IOException)
-//                        throw (IOException) cause;
-//                }
-//                JVMStabilityInspector.inspectThrowable(t);
-                logger.error("failed in streambackground thread", t);
+                JVMStabilityInspector.inspectThrowable(t);
+                if (session != null)
+                    session.onError(t);
+                else
+                    logger.error("failed to deserialize an incoming streaming message", t);
             }
             finally
             {
                 ctx.close();
+                closed = true;
 
                 if (buffers != null)
                     buffers.close();
-
-                //StreamingInboundHandler.this.state = true;
-                //FileUtils.closeQuietly(inputStream);
             }
         }
     }

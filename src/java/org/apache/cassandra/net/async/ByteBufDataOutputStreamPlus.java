@@ -21,38 +21,60 @@ package org.apache.cassandra.net.async;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelDuplexHandler;
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelFuture;
 import io.netty.util.concurrent.Future;
 import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
-import org.apache.cassandra.utils.concurrent.SimpleCondition;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.utils.memory.BufferPool;
 
+/**
+ * A {@link DataOutputStreamPlus} that writes to a {@link ByteBuf}. The novelty here is that all writes
+ * actually get written in to a {@link ByteBuffer} that shares a backing buffer with a {@link ByteBuf}.
+ * The trick to do that is allocate the ByteBuf, get a ByteBuffer from it by calling {@link ByteBuf#nioBuffer()},
+ * and passing that to the super class as {@link #buffer}. When the {@link #buffer} is full or {@link #doFlush(int)}
+ * is invoked, the {@link #currentBuf} is published to the netty channel.
+ */
 public class ByteBufDataOutputStreamPlus extends BufferedDataOutputStreamPlus
 {
     private static final Logger logger = LoggerFactory.getLogger(ByteBufDataOutputStreamPlus.class);
 
+    private final StreamSession session;
     private final Channel channel;
     private final int bufferSize;
+
+    /**
+     * Tracks how many bytes we've written to the netty channel. This more or less follows the channel's
+     * high/low water marks and ultimately the 'writablility' status of the channel. Unfortunately there's
+     * no notification mechanism that can poke a producer to let it know when the channel becomes writable
+     * (after it was unwritable); hence, the use of a {@link Semaphore}.
+     */
+    private final Semaphore channelRateLimiter;
 
     /**
      * This *must* be the owning {@link ByteBuf} for the {@link BufferedDataOutputStreamPlus#buffer}
      */
     private ByteBuf currentBuf;
 
-    protected ByteBufDataOutputStreamPlus(Channel channel, ByteBuf buffer, int bufferSize)
+    private ByteBufDataOutputStreamPlus(StreamSession session, Channel channel, ByteBuf buffer, int bufferSize)
     {
         super(buffer.nioBuffer(0, bufferSize));
+        this.session = session;
         this.channel = channel;
         this.currentBuf = buffer;
         this.bufferSize = bufferSize;
+
+        channelRateLimiter = new Semaphore(channel.config().getWriteBufferHighWaterMark(), true);
     }
 
     protected WritableByteChannel newDefaultChannel()
@@ -76,115 +98,80 @@ public class ByteBufDataOutputStreamPlus extends BufferedDataOutputStreamPlus
 
             @Override
             public void close()
-            {
-                // TODO:JEB impl this (?) - not sure if it needs to be implemented in this context
-            }
+            {   }
         };
     }
 
-    public static ByteBufDataOutputStreamPlus create(Channel channel, int bufferSize)
+    public static ByteBufDataOutputStreamPlus create(StreamSession session, Channel channel, int bufferSize)
     {
         ByteBuf buf = channel.alloc().directBuffer(bufferSize, bufferSize);
-        return new ByteBufDataOutputStreamPlus(channel, buf, bufferSize);
+        return new ByteBufDataOutputStreamPlus(session, channel, buf, bufferSize);
     }
 
     /**
-     * Writes the buf directly to the backing {@link #channel}, without copying to the intermediate {@link #buffer}.
+     * Writes the buffer directly to the backing {@link #channel}, without copying to the intermediate {@link #buffer}.
+     * The buffer will be automatically released when the netty channel invokes the listeners of success/failure to
+     * send the buffer.
      */
-    public void write(ByteBuf buf) throws IOException
+    public void writeToChannel(ByteBuffer buf) throws IOException
     {
         doFlush(buffer.position());
 
-        if (!waitUntilWritable(channel))
+        int byteCount = buf.remaining();
+        if (!Uninterruptibles.tryAcquireUninterruptibly(channelRateLimiter, byteCount, 2, TimeUnit.MINUTES))
             throw new IOException("outbound channel was not writable");
 
-        // the (possibly naive) assumption that we should always flush this buf
-        channel.writeAndFlush(buf).addListener(future -> handleBuffer(future));
+        // the (possibly naive) assumption that we should always flush after each incoming buf
+        ChannelFuture channelFuture = channel.writeAndFlush(Unpooled.wrappedBuffer(buf));
+        channelFuture.addListener(future -> BufferPool.put(buf));
+        channelFuture.addListener(future -> handleBuffer(future, byteCount));
     }
 
     @Override
     protected void doFlush(int count) throws IOException
     {
         // flush the current backing write buffer only if there's any pending data
-        if (buffer.position() > 0)
+        if (buffer.position() > 0 && channel.isOpen())
         {
-            currentBuf.writerIndex(buffer.position());
+            int byteCount = buffer.position();
+            currentBuf.writerIndex(byteCount);
 
-            if (!waitUntilWritable(channel))
+            if (!Uninterruptibles.tryAcquireUninterruptibly(channelRateLimiter, byteCount, 2, TimeUnit.MINUTES))
                 throw new IOException("outbound channel was not writable");
 
-            channel.writeAndFlush(currentBuf).addListener(future -> handleBuffer(future));
+            channel.writeAndFlush(currentBuf).addListener(future -> handleBuffer(future, byteCount));
             currentBuf = channel.alloc().directBuffer(bufferSize, bufferSize);
             buffer = currentBuf.nioBuffer(0, bufferSize);
         }
     }
 
-    protected boolean waitUntilWritable(Channel channel)
+    /**
+     * Handles the result of publishing a buffer to the channel.
+     *
+     * Note: this will be executed on the event loop.
+     */
+    private void handleBuffer(Future<? super Void> future, int bytesWritten)
     {
-        if (channel.isWritable())
-            return true;
+        channelRateLimiter.release(bytesWritten);
 
-        // wait until the channel is writable again.
-        SimpleCondition condition = new SimpleCondition();
-        ChannelHandler writabilityHandler = new ChannelWritabiliityListsener(condition);
-        channel.pipeline().addLast(writabilityHandler);
-        try
-        {
-            condition.await(2, TimeUnit.MINUTES);
-        }
-        catch (InterruptedException e)
-        {
-            // TODO:JEB handle this better
-            // nop
-        }
-
-        channel.pipeline().remove(writabilityHandler);
-        if (!channel.isWritable())
-        {
-            logger.info("JEB:: waited on condition but channel is still unwritable");
-            channel.close();
-//            session.sessionFailed(); /// ?????
-            return false;
-        }
-        return true;
-    }
-
-    private static class ChannelWritabiliityListsener extends ChannelDuplexHandler
-    {
-        private final SimpleCondition condition;
-
-        private ChannelWritabiliityListsener(SimpleCondition condition)
-        {
-            this.condition = condition;
-        }
-
-        @Override
-        public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception
-        {
-            if (ctx.channel().isWritable())
-                condition.signalAll();
-        }
-    }
-
-
-    private void handleBuffer(Future<? super Void> future)
-    {
-        // TODO:JEB handle errors here!
         if (!future.isSuccess() && channel.isOpen())
-        {
-            logger.error("sending file block failed", future.cause());
-//            channel.close();
-//            session.sessionFailed(); /// ????????
-        }
+            session.onError(future.cause());
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Flush any last buffered (if the channel is open), and release any buffers. *Not* responsible for closing
+     * the netty channel as we might use it again for transferring more files.
+     *
+     * Note: should be called on the producer thread, not the netty event loop.
+     */
     @Override
     public void close() throws IOException
     {
         doFlush(0);
-        // calling close on the super's channel will close the netty channel
-        super.channel.close();
-        currentBuf.release();
+        if (currentBuf.refCnt() > 0)
+            currentBuf.release();
         currentBuf = null;
         buffer = null;
     }

@@ -19,6 +19,7 @@ package org.apache.cassandra.streaming;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,6 +29,7 @@ import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.*;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.lifecycle.SSTableIntervalTree;
 import org.apache.cassandra.db.lifecycle.SSTableSet;
@@ -52,6 +54,7 @@ import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.streaming.async.NettyStreamingMessageSender;
 import org.apache.cassandra.streaming.messages.*;
+import org.apache.cassandra.utils.CassandraVersion;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.Pair;
@@ -117,7 +120,6 @@ import org.apache.cassandra.utils.concurrent.Refs;
  * In brief, the message passing looks like this (I for initiator, F for follwer):
  * (session init)
  * I: StreamInitMessage
- * F: StreamInitAckMessage
  * (session prepare)
  * I: PrepareSynMessage
  * F: PrepareSynAckMessage
@@ -135,11 +137,6 @@ import org.apache.cassandra.utils.concurrent.Refs;
 public class StreamSession implements IEndpointStateChangeSubscriber
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamSession.class);
-
-    /** Streaming protocol version */
-    public static final int VERSION_30 = 3;
-    public static final int VERSION_40 = 4;
-    public static final int CURRENT_VERSION = VERSION_40;
 
     /**
      * Streaming endpoint.
@@ -194,7 +191,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      * @param peer Address of streaming peer
      * @param connecting Actual connecting address
      */
-    public StreamSession(InetAddress peer, InetAddress connecting, int index, boolean keepSSTableLevel, boolean isIncremental, UUID pendingRepair)
+    public StreamSession(InetAddress peer, InetAddress connecting, StreamConnectionFactory factory, int index, boolean keepSSTableLevel, boolean isIncremental, UUID pendingRepair)
     {
         this.peer = peer;
         this.connecting = connecting;
@@ -202,7 +199,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
         OutboundConnectionIdentifier id = OutboundConnectionIdentifier.stream(new InetSocketAddress(FBUtilities.getBroadcastAddress(), 0),
                                                                               new InetSocketAddress(connecting, MessagingService.portFor(connecting)));
-        this.messageSender = new NettyStreamingMessageSender(this, id, CURRENT_VERSION);
+        this.messageSender = new NettyStreamingMessageSender(this, id, factory, StreamMessage.CURRENT_VERSION);
         this.metrics = StreamingMetrics.get(connecting);
         this.keepSSTableLevel = keepSSTableLevel;
         this.isIncremental = isIncremental;
@@ -523,48 +520,39 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
     public void messageReceived(StreamMessage message)
     {
-        logger.debug("**** received stream message: {}", message);
-
-        try
+        switch (message.type)
         {
-            switch (message.type)
-            {
-                case STREAM_INIT:
-                    // nop
-                    break;
-                case PREPARE_SYN:
-                    PrepareSynMessage msg = (PrepareSynMessage) message;
-                    prepare(msg.requests, msg.summaries);
-                    break;
-                case PREPARE_SYNACK:
-                    receive((PrepareSynAckMessage) message);
-                    break;
-                case PREPARE_ACK:
-                    receive((PrepareAckMessage) message);
-                    break;
-                case FILE:
-                    receive((IncomingFileMessage) message);
-                    break;
-                case COMPLETE:
-                    complete();
-                    break;
-                case RECEIVED:
-                    ReceivedMessage received = (ReceivedMessage) message;
-                    received(received.tableId, received.sequenceNumber);
-                    break;
-                case KEEP_ALIVE:
-                    // NOP - we only send/receive the KEEP_ALIVE to force the TCP connection to remain open
-                    break;
-                case SESSION_FAILED:
-                    sessionFailed();
-                    break;
-                default:
-                    throw new AssertionError("unhandled StreamMessage type: " + message.getClass().getName());
-            }
-        }
-        catch (Throwable t)
-        {
-            logger.error("failed to process a streaming message properly", t);
+            case STREAM_INIT:
+                // nop
+                break;
+            case PREPARE_SYN:
+                PrepareSynMessage msg = (PrepareSynMessage) message;
+                prepare(msg.requests, msg.summaries);
+                break;
+            case PREPARE_SYNACK:
+                receive((PrepareSynAckMessage) message);
+                break;
+            case PREPARE_ACK:
+                receive((PrepareAckMessage) message);
+                break;
+            case FILE:
+                receive((IncomingFileMessage) message);
+                break;
+            case RECEIVED:
+                ReceivedMessage received = (ReceivedMessage) message;
+                received(received.tableId, received.sequenceNumber);
+                break;
+            case COMPLETE:
+                complete();
+                break;
+            case KEEP_ALIVE:
+                // NOP - we only send/receive the KEEP_ALIVE to force the TCP connection to remain open
+                break;
+            case SESSION_FAILED:
+                sessionFailed();
+                break;
+            default:
+                throw new AssertionError("unhandled StreamMessage type: " + message.getClass().getName());
         }
     }
 
@@ -587,15 +575,32 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      */
     public void onError(Throwable e)
     {
-        logger.error("[Stream #{}] Streaming error occurred on session with peer {}{}", planId(),
-                     peer.getHostAddress(),
-                     peer.equals(connecting) ? "" : " through " + connecting.getHostAddress(),
-                     e);
+        logError(e);
         // send session failure message
         if (messageSender.connected())
             messageSender.sendMessage(new SessionFailedMessage());
         // fail session
         closeSession(State.FAILED);
+    }
+
+    private void logError(Throwable e)
+    {
+        if (e instanceof SocketTimeoutException)
+        {
+            logger.error("[Stream #{}] Did not receive response from peer {}{} for {} secs. Is peer down? " +
+                         "If not, maybe try increasing streaming_keep_alive_period_in_secs.", planId(),
+                         peer.getHostAddress(),
+                         peer.equals(connecting) ? "" : " through " + connecting.getHostAddress(),
+                         2 * DatabaseDescriptor.getStreamingKeepAlivePeriod(),
+                         e);
+        }
+        else
+        {
+            logger.error("[Stream #{}] Streaming error occurred on session with peer {}{}", planId(),
+                         peer.getHostAddress(),
+                         peer.equals(connecting) ? "" : " through " + connecting.getHostAddress(),
+                         e);
+        }
     }
 
     /**
@@ -642,7 +647,6 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      *
      * @param header sent header
      */
-    // TODO:JEB should this be called?????
     public void fileSent(FileMessageHeader header)
     {
         long headerSize = header.size();

@@ -46,12 +46,13 @@ import org.apache.cassandra.cql3.CQLTester;
 //import org.apache.cassandra.net.async.AppendingByteBufInputPlus;
 //import org.apache.cassandra.net.async.AppendingByteBufInputPlusTest.TestChannelConfig;
 import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.ChecksumType;
 
 @Ignore("JEB to fix this up")
 public class StreamingInboundHandlerTest extends CQLTester
 {
-    private static final int VERSION = StreamSession.CURRENT_VERSION;
+    private static final int VERSION = StreamMessage.CURRENT_VERSION;
     private static final InetSocketAddress REMOTE_ADDR = new InetSocketAddress("127.0.0.2", 0);
     private static final ChecksumType checksum = ChecksumType.CRC32;
 

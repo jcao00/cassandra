@@ -61,7 +61,7 @@ public class StreamPlan
     {
         this.description = description;
         this.repairedAt = repairedAt;
-        this.coordinator = new StreamCoordinator(connectionsPerHost, keepSSTableLevels, isIncremental, connectSequentially, pendingRepair);
+        this.coordinator = new StreamCoordinator(connectionsPerHost, keepSSTableLevels, new DefaultConnectionFactory(), isIncremental, connectSequentially, pendingRepair);
     }
 
     /**
@@ -156,6 +156,18 @@ public class StreamPlan
         this.handlers.add(handler);
         if (handlers != null)
             Collections.addAll(this.handlers, handlers);
+        return this;
+    }
+
+    /**
+     * Set custom StreamConnectionFactory to be used for establishing connection
+     *
+     * @param factory StreamConnectionFactory to use
+     * @return self
+     */
+    public StreamPlan connectionFactory(StreamConnectionFactory factory)
+    {
+        this.coordinator.setConnectionFactory(factory);
         return this;
     }
 
