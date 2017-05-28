@@ -25,7 +25,9 @@ import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.streamhist.StreamingTombstoneHistogramBuilder.DataHolder;
 
-
+/**
+ * A snapshot or finished histrogram of tombstones for a sstable, as generated from {@link StreamingTombstoneHistogramBuilder}.
+ */
 public class TombstoneHistogram
 {
     public static final HistogramSerializer serializer = new HistogramSerializer();
@@ -35,7 +37,6 @@ public class TombstoneHistogram
 
     /**
      * Creates a new histogram with max bin size of maxBinSize
-     *
      */
     TombstoneHistogram(DataHolder holder)
     {

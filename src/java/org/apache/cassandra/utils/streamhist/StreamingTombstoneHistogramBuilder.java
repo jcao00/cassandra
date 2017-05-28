@@ -490,14 +490,15 @@ public class StreamingTombstoneHistogramBuilder
             if (!(o instanceof DataHolder))
                 return false;
 
-
             final DataHolder other = ((DataHolder) o);
 
             if (this.size()!=other.size())
                 return false;
 
-            for (int i=0; i<size(); i++){
-                if (data[i]!=other.data[i]){
+            for (int i=0; i<size(); i++)
+            {
+                if (data[i]!=other.data[i])
+                {
                     return false;
                 }
             }
