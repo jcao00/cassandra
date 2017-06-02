@@ -84,7 +84,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     {
         buffers = new RebufferingByteBufDataInputPlus(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx.channel().config());
         Thread blockingIOThread = new FastThreadLocalThread(new StreamDeserializingTask(session, ctx),
-                                                            String.format("Stream-Inbound--%s-%s", ctx.channel().id(), remoteAddress.toString()));
+                                                            String.format("Stream-Deserializer-%s-%s", ctx.channel().id(), remoteAddress.toString()));
         blockingIOThread.setDaemon(true);
         blockingIOThread.start();
     }

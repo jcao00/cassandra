@@ -520,6 +520,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
     public void messageReceived(StreamMessage message)
     {
+        logger.debug("received stream message {}", message);
         switch (message.type)
         {
             case STREAM_INIT:
@@ -691,6 +692,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      */
     public synchronized void complete()
     {
+        logger.debug("handling Complete message, state = {}, completeSent = {}", state, completeSent);
         if (state == State.WAIT_COMPLETE)
         {
             if (!completeSent)
