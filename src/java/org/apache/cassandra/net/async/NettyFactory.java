@@ -65,7 +65,6 @@ public final class NettyFactory
     public static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
     public static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
     public static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
-    public static final String OUTBOUND_STREAM_HANDLER_NAME = "outboundStreamHandler";
     public static final String INBOUND_STREAM_HANDLER_NAME = "inboundStreamHandler";
 
     /** a useful addition for debugging; simply set to true to get more data in your logs */
@@ -105,8 +104,7 @@ public final class NettyFactory
 
     private final EventLoopGroup inboundGroup;
     private final EventLoopGroup outboundGroup;
-    public final EventLoopGroup streamingInboundGroup;
-    public final EventLoopGroup streamingOutboundGroup;
+    public final EventLoopGroup streamingGroup;
 
     /**
      * Constructor that allows modifying the {@link NettyFactory#useEpoll} for testing purposes. Otherwise, use the
@@ -120,8 +118,7 @@ public final class NettyFactory
                                         "MessagingService-NettyAcceptor-Threads", false);
         inboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyInbound-Threads", false);
         outboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyOutbound-Threads", true);
-        streamingInboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "Streaming-NettyInbound-Threads", false);
-        streamingOutboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "Streaming-NettyOutbound-Threads", true);
+        streamingGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "Streaming-Netty-Threads", false);
     }
 
     /**
@@ -265,7 +262,7 @@ public final class NettyFactory
                     encryptionLogStatement(params.encryptionOptions),
                      params.coalescingStrategy.isPresent() ? params.coalescingStrategy.get() : CoalescingStrategies.Strategy.DISABLED);
         Class<? extends Channel> transport = useEpoll ? EpollSocketChannel.class : NioSocketChannel.class;
-        Bootstrap bootstrap = new Bootstrap().group(params.mode == Mode.MESSAGING ? outboundGroup : streamingOutboundGroup)
+        Bootstrap bootstrap = new Bootstrap().group(params.mode == Mode.MESSAGING ? outboundGroup : streamingGroup)
                               .channel(transport)
                               .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000)
                               .option(ChannelOption.SO_KEEPALIVE, true)
@@ -314,8 +311,7 @@ public final class NettyFactory
         acceptGroup.shutdownGracefully();
         outboundGroup.shutdownGracefully();
         inboundGroup.shutdownGracefully();
-        streamingInboundGroup.shutdownGracefully();
-        streamingOutboundGroup.shutdownGracefully();
+        streamingGroup.shutdownGracefully();
     }
 
     /**

@@ -58,6 +58,15 @@ public class StreamInitMessage extends StreamMessage
         this.pendingRepair = pendingRepair;
     }
 
+    @Override
+    public String toString()
+    {
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("StreamInitMessage: from = ").append(from);
+        sb.append(", planId = ").append(planId).append(", session index = ").append(sessionIndex);
+        return sb.toString();
+    }
+
     private static class StreamInitMessageSerializer implements Serializer<StreamInitMessage>
     {
         public void serialize(StreamInitMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException

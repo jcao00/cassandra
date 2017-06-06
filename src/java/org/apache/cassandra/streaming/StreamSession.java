@@ -54,7 +54,6 @@ import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.streaming.async.NettyStreamingMessageSender;
 import org.apache.cassandra.streaming.messages.*;
-import org.apache.cassandra.utils.CassandraVersion;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.Pair;
@@ -94,7 +93,7 @@ import org.apache.cassandra.utils.concurrent.Refs;
  *
  * 3. Streaming phase
  *
- *   (a) The streaming phase is started at each node by calling {@link StreamSession#startStreamingFiles()}.
+ *   (a) The streaming phase is started at each node by calling {@link StreamSession#startStreamingFiles(boolean)}.
  *       This will send, sequentially on each outbound streaming connection (see {@link NettyStreamingMessageSender}),
  *       an {@link OutgoingFileMessage} for each file in each of the {@link StreamTransferTask}.
  *       Each {@link OutgoingFileMessage} consists of a {@link FileMessageHeader} that contains metadata about the file
@@ -520,7 +519,6 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
     public void messageReceived(StreamMessage message)
     {
-        logger.debug("received stream message {}", message);
         switch (message.type)
         {
             case STREAM_INIT:
@@ -531,10 +529,10 @@ public class StreamSession implements IEndpointStateChangeSubscriber
                 prepare(msg.requests, msg.summaries);
                 break;
             case PREPARE_SYNACK:
-                receive((PrepareSynAckMessage) message);
+                prepareSynAck((PrepareSynAckMessage) message);
                 break;
             case PREPARE_ACK:
-                receive((PrepareAckMessage) message);
+                prepareAck((PrepareAckMessage) message);
                 break;
             case FILE:
                 receive((IncomingFileMessage) message);
@@ -622,9 +620,12 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             for (StreamTransferTask task : transfers.values())
                 prepareSynAck.summaries.add(task.getSummary());
         messageSender.sendMessage(prepareSynAck);
+
+        streamResult.handleSessionPrepared(this);
+        maybeCompleted();
     }
 
-    public void receive(PrepareSynAckMessage msg)
+    public void prepareSynAck(PrepareSynAckMessage msg)
     {
         if (!msg.summaries.isEmpty())
         {
@@ -635,12 +636,12 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             messageSender.sendMessage(new PrepareAckMessage());
         }
 
-        startStreamingFiles();
+        startStreamingFiles(true);
     }
 
-    public void receive(PrepareAckMessage msg)
+    public void prepareAck(PrepareAckMessage msg)
     {
-        startStreamingFiles();
+        startStreamingFiles(false);
     }
 
     /**
@@ -705,7 +706,6 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         else
         {
             state(State.WAIT_COMPLETE);
-            messageSender.close();
         }
     }
 
@@ -806,9 +806,10 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             receivers.put(summary.tableId, new StreamReceiveTask(this, summary.tableId, summary.files, summary.totalSize));
     }
 
-    private void startStreamingFiles()
+    private void startStreamingFiles(boolean notifyPrepared)
     {
-        streamResult.handleSessionPrepared(this);
+        if (notifyPrepared)
+            streamResult.handleSessionPrepared(this);
 
         state(State.STREAMING);
         for (StreamTransferTask task : transfers.values())
@@ -825,7 +826,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             }
             else
             {
-                taskCompleted(task); // there is are files to send
+                taskCompleted(task); // there are no files to send
             }
         }
         maybeCompleted();

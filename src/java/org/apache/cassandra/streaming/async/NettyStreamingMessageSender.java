@@ -148,7 +148,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     {
         Channel channel = factory.createConnection(connectionId, protocolVersion);
         ChannelPipeline pipeline = channel.pipeline();
-        pipeline.addLast(NettyFactory.instance.streamingInboundGroup, NettyFactory.INBOUND_STREAM_HANDLER_NAME, new StreamingInboundHandler(connectionId.remoteAddress(), protocolVersion, session));
+        pipeline.addLast(NettyFactory.instance.streamingGroup, NettyFactory.INBOUND_STREAM_HANDLER_NAME, new StreamingInboundHandler(connectionId.remoteAddress(), protocolVersion, session));
 
         int keepAlivePeriod = DatabaseDescriptor.getStreamingKeepAlivePeriod();
         logger.trace("[Stream #{}] Scheduling keep-alive task with {}s period.", session.planId(), keepAlivePeriod);
@@ -220,7 +220,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             return true;
         }
 
-        logger.error("failed to send a stream message/file: future = {}, msg = {}", future, msg, future.cause());
+        logger.error("failed to send a stream message/file to peer {} on channel {}: msg = {}", connectionId, channel.id(), msg, future.cause());
 
         // TODO:JEB double check this correct
         if (!channel.isOpen())
@@ -348,7 +348,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     @Override
     public void close()
     {
-        logger.debug("[Stream #{}] Closing stream connection channel on {}", session.planId(), session.peer);
+        logger.debug("[Stream #{}] Closing stream connection channels on {}", session.planId(), session.peer);
         closed = true;
         channelKeepAlives.stream().map(scheduledFuture -> scheduledFuture.cancel(false));
         channelKeepAlives.clear();

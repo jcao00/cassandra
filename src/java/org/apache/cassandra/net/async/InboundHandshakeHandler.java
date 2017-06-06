@@ -209,7 +209,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
     {
         ChannelPipeline pipeline = ctx.pipeline();
         InetSocketAddress address = (InetSocketAddress) ctx.channel().remoteAddress();
-        pipeline.addLast(NettyFactory.instance.streamingInboundGroup, "streamInbound", new StreamingInboundHandler(address, protocolVersion, null));
+        pipeline.addLast(NettyFactory.instance.streamingGroup, "streamInbound", new StreamingInboundHandler(address, protocolVersion, null));
         pipeline.remove(this);
 
         // pass a custom recv ByteBuf allocator to the channel. the default recv ByteBuf size is 1k, but in streaming we're

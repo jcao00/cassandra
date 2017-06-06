@@ -34,6 +34,7 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.util.concurrent.FastThreadLocalThread;
 import org.apache.cassandra.net.async.RebufferingByteBufDataInputPlus;
 import org.apache.cassandra.streaming.StreamManager;
+import org.apache.cassandra.streaming.StreamReceiveException;
 import org.apache.cassandra.streaming.StreamResultFuture;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
@@ -84,7 +85,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     {
         buffers = new RebufferingByteBufDataInputPlus(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx.channel().config());
         Thread blockingIOThread = new FastThreadLocalThread(new StreamDeserializingTask(session, ctx),
-                                                            String.format("Stream-Deserializer-%s-%s", ctx.channel().id(), remoteAddress.toString()));
+                                                            String.format("Stream-Deserializer-%s-%s", remoteAddress.toString(), ctx.channel().id()));
         blockingIOThread.setDaemon(true);
         blockingIOThread.start();
     }
@@ -114,7 +115,10 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception
     {
-        logger.error("exception occurred while in processing streaming file", cause);
+        if (cause instanceof IOException)
+            logger.trace("connection problem while streaming", cause);
+        else
+            logger.warn("exception occurred while in processing streaming file", cause);
         close();
         ctx.fireExceptionCaught(cause);
     }
@@ -153,9 +157,10 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                     // this way we can break out of run() sanely or we end up blocking indefintely in StreamMessage.deserialize()
                     while (buffers.available() == 0)
                     {
-                        Uninterruptibles.sleepUninterruptibly(400, TimeUnit.MILLISECONDS);
-                        if (closed || !ctx.channel().isOpen())
+                        if (closed)
                             return;
+
+                        Uninterruptibles.sleepUninterruptibly(400, TimeUnit.MILLISECONDS);
                     }
 
                     StreamMessage message = StreamMessage.deserialize(buffers, protocolVersion, null);
@@ -193,9 +198,17 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             {
                 JVMStabilityInspector.inspectThrowable(t);
                 if (session != null)
+                {
                     session.onError(t);
+                }
+                else if (t instanceof StreamReceiveException)
+                {
+                    ((StreamReceiveException)t).session.onError(t);
+                }
                 else
-                    logger.error("failed to deserialize an incoming streaming message", t);
+                {
+                    logger.error("stream operation failed", t);
+                }
             }
             finally
             {

@@ -111,29 +111,32 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
         if (!channelConfig.isAutoRead() && queuedByteCount.get() < lowWaterMark)
             channelConfig.setAutoRead(true);
 
-        while (true)
+        try
         {
-            if (closed)
+            while (true)
             {
-                releaseResources();
-                throw new EOFException();
-            }
-            try
-            {
+                // consume any buffers from the queue *before* checking (and acting on) the closed status.
+                // that allows us to consume any last buffers before the end-of-stream.
                 currentBuf = queue.poll(1, TimeUnit.SECONDS);
                 int bytes;
                 if (currentBuf == null || (bytes = currentBuf.readableBytes()) == 0)
-                    continue;
+                {
+                    if (!closed)
+                        continue;
+
+                    releaseResources();
+                    throw new EOFException();
+                }
 
                 buffer = currentBuf.nioBuffer(currentBuf.readerIndex(), bytes);
                 assert buffer.remaining() == bytes;
                 queuedByteCount.addAndGet(-bytes);
                 return;
             }
-            catch (InterruptedException ie)
-            {
-                // nop - ignore
-            }
+        }
+        catch (InterruptedException ie)
+        {
+            // nop - ignore
         }
     }
 
@@ -145,6 +148,9 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
 
         while (remaining > 0)
         {
+            if (closed)
+                throw new EOFException();
+
             if (!buffer.hasRemaining())
                 reBuffer();
             int copyLength = Math.min(remaining, buffer.remaining());
