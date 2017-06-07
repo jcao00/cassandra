@@ -114,7 +114,6 @@ public class CompressedInputStream extends RebufferingInputStream
         if (current > bufferOffset + buffer.limit())
         {
             reBuffer(false);
-            // TODO:JEB fix up the buffer pointer here if it's greater than the bufferOffset
             buffer.position((int)(current - bufferOffset));
         }
     }

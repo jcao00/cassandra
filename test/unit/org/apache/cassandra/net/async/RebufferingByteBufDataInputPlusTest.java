@@ -106,6 +106,7 @@ public class RebufferingByteBufDataInputPlusTest
         Assert.assertEquals(4, readCount);
         out.flip();
         Assert.assertEquals(42, out.getInt());
+        Assert.assertEquals(12, inputPlus.available());
 
         out = ByteBuffer.allocate(8);
         readCount = inputPlus.read(out);

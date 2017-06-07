@@ -615,7 +615,6 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             prepareReceiving(summary);
 
         PrepareSynAckMessage prepareSynAck = new PrepareSynAckMessage();
-        // TODO:JEB this is a hack to help out the unit tests
         if (!peer.equals(FBUtilities.getBroadcastAddress()))
             for (StreamTransferTask task : transfers.values())
                 prepareSynAck.summaries.add(task.getSummary());
@@ -819,7 +818,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             {
                 for (OutgoingFileMessage ofm : messages)
                 {
-                    // TODO:JEB beware: hack to pass in the planId (which is only set at start() here, after the transfers have already been created)
+                    // pass the session planId/index to the OFM (which is only set at init(), after the transfers have already been created)
                     ofm.header.addSessionInfo(this);
                     messageSender.sendMessage(ofm);
                 }

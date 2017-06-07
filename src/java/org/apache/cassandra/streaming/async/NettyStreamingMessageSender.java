@@ -59,29 +59,24 @@ import org.apache.cassandra.utils.FBUtilities;
 /**
  * Responsible for sending {@link StreamMessage}s to a given peer. We manage an array of netty {@link Channel}s
  * for sending {@link OutgoingFileMessage} instances; all other {@link StreamMessage} types are sent via
- * a special control channel. The reason for this is to treat those messages.
+ * a special control channel. The reason for this is to treat those messages carefully and not let them get stuck
+ * behind a file transfer.
  *
  * One of the challenges when sending files is we might need to delay shipping the file if:
  *
  * - we've exceeded our network I/O use due to rate limiting (at the cassandra level)
- * - the receiver isn't keeping up, which causes the local socket buffer to not empty, which causes epoll writes to not
+ * - the receiver isn't keeping up, which causes the local TCP socket buffer to not empty, which causes epoll writes to not
  * move any bytes to the socket, which causes buffers to stick around in user-land (a/k/a cassandra) memory.
  *
- * When those conditions occur, it's easy enough to reschedule processing the file once the resouurces pick up
+ * When those conditions occur, it's easy enough to reschedule processing the file once the resources pick up
  * (we acquire the permits from the rate limiter, or the socket drains). However, we need to ensure that
  * no other messages are submitted to the same channel while the current file is still being processed.
- *
- * // TODO:JEB cleanup this comment
- * There's also a couple of tricky sizes that should be pointed out:
- * - amount of data in memory (in netty outbound channel) - not affected by zero-copy transfers as nothing comes into user-space
- * - amount of data going out (network bytes)
- * - buffer sizes for reading chunks off disk - sorta not affected by zero-copy
  */
 public class NettyStreamingMessageSender implements StreamingMessageSender
 {
     private static final Logger logger = LoggerFactory.getLogger(NettyStreamingMessageSender.class);
 
-    // TODO:JEB make me configurable
+    // TODO make me configurable??
     private static final int DEFAULT_MAX_PARALLEL_TRANSFERS = FBUtilities.getAvailableProcessors();
 
     // a simple mechansim for allowing a degree of fairnes across multiple sessions
@@ -222,7 +217,6 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
 
         logger.error("failed to send a stream message/file to peer {} on channel {}: msg = {}", connectionId, channel.id(), msg, future.cause());
 
-        // TODO:JEB double check this correct
         if (!channel.isOpen())
             session.onError(cause);
         close();

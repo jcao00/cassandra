@@ -239,7 +239,6 @@ public class StreamingTransferTest
         ranges.add(new Range<Token>(p.getToken(ByteBufferUtil.bytes("key1")), p.getToken(ByteBufferUtil.bytes("key0"))));
         StreamPlan streamPlan = new StreamPlan("StreamingTransferTest").transferRanges(LOCAL, cfs.keyspace.getName(), ranges, cfs.getTableName());
         streamPlan.execute().get();
-        verifyConnectionsAreClosed();
 
         //cannot add ranges after stream session is finished
         try
@@ -257,7 +256,6 @@ public class StreamingTransferTest
     {
         StreamPlan streamPlan = new StreamPlan("StreamingTransferTest").transferFiles(LOCAL, makeStreamingDetails(ranges, Refs.tryRef(Arrays.asList(sstable))));
         streamPlan.execute().get();
-        verifyConnectionsAreClosed();
 
         //cannot add files after stream session is finished
         try
@@ -269,27 +267,6 @@ public class StreamingTransferTest
         {
             //do nothing
         }
-    }
-
-    /**
-     * Test that finished incoming connections are removed from MessagingService (CASSANDRA-11854)
-     */
-    private void verifyConnectionsAreClosed() throws InterruptedException
-    {
-        // TODO:JEB intentionally breaking this with CASSANDRA-8457 until CASSANDRA-12229
-        //after stream session is finished, message handlers may take several milliseconds to be closed
-//        outer:
-//        for (int i = 0; i <= 100; i++)
-//        {
-//            for (MessagingService.SocketThread socketThread : MessagingService.instance().getSocketThreads())
-//                if (!socketThread.connections.isEmpty())
-//                {
-//                    Thread.sleep(100);
-//                    continue outer;
-//                }
-//            return;
-//        }
-//        fail("Streaming connections remain registered in MessagingService");
     }
 
     private Collection<StreamSession.SSTableStreamingSections> makeStreamingDetails(List<Range<Token>> ranges, Refs<SSTableReader> sstables)
