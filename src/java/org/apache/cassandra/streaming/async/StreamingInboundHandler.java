@@ -20,17 +20,23 @@ package org.apache.cassandra.streaming.async;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import javax.annotation.Nullable;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.FastThreadLocalThread;
 import org.apache.cassandra.net.async.RebufferingByteBufDataInputPlus;
 import org.apache.cassandra.streaming.StreamManager;
@@ -51,6 +57,7 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
 public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamingInboundHandler.class);
+    static final Function<SessionIdentifier, StreamSession> DEFAULT_SESSION_PROVIDER = sid -> StreamManager.instance.findSession(sid.from, sid.planId, sid.sessionIndex);
 
     private static final int AUTO_READ_LOW_WATER_MARK = 1 << 15;
     private static final int AUTO_READ_HIGH_WATER_MARK = 1 << 16;
@@ -84,23 +91,23 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     public void handlerAdded(ChannelHandlerContext ctx)
     {
         buffers = new RebufferingByteBufDataInputPlus(AUTO_READ_LOW_WATER_MARK, AUTO_READ_HIGH_WATER_MARK, ctx.channel().config());
-        Thread blockingIOThread = new FastThreadLocalThread(new StreamDeserializingTask(session, ctx),
+        Thread blockingIOThread = new FastThreadLocalThread(new StreamDeserializingTask(DEFAULT_SESSION_PROVIDER, session, ctx.channel()),
                                                             String.format("Stream-Deserializer-%s-%s", remoteAddress.toString(), ctx.channel().id()));
         blockingIOThread.setDaemon(true);
         blockingIOThread.start();
     }
 
     @Override
-    public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception
+    public void channelRead(ChannelHandlerContext ctx, Object message)
     {
         if (!closed && message instanceof ByteBuf)
             buffers.append((ByteBuf) message);
         else
-            ctx.fireChannelRead(message);
+            ReferenceCountUtil.release(message);
     }
 
     @Override
-    public void channelInactive(ChannelHandlerContext ctx) throws IOException
+    public void channelInactive(ChannelHandlerContext ctx)
     {
         close();
         ctx.fireChannelInactive();
@@ -113,7 +120,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     }
 
     @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
     {
         if (cause instanceof IOException)
             logger.trace("connection problem while streaming", cause);
@@ -132,18 +139,29 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     }
 
     /**
+     * For testing only!!
+     */
+    void setClosed()
+    {
+        closed = true;
+    }
+
+    /**
      * The task that performs the actual deserialization.
      */
-    private class StreamDeserializingTask implements Runnable
+    class StreamDeserializingTask implements Runnable
     {
-        private final ChannelHandlerContext ctx;
+        private final Function<SessionIdentifier, StreamSession> sessionProvider;
+        private final Channel channel;
 
-        private StreamSession session;
+        @VisibleForTesting
+        StreamSession session;
 
-        StreamDeserializingTask(StreamSession session, ChannelHandlerContext ctx)
+        StreamDeserializingTask(Function<SessionIdentifier, StreamSession> sessionProvider, StreamSession session, Channel channel)
         {
+            this.sessionProvider = sessionProvider;
             this.session = session;
-            this.ctx = ctx;
+            this.channel = channel;
         }
 
         @Override
@@ -164,29 +182,9 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                     }
 
                     StreamMessage message = StreamMessage.deserialize(buffers, protocolVersion, null);
-
-                    // StreamInitMessage starts a new channel, and IncomingFileMessage potentially, as well.
-                    // IncomingFileMessage needs a session to be established a priori, though
-                    if (message instanceof StreamInitMessage)
-                    {
-                        assert session == null : "initiator of stream session received a StreamInitMessage";
-                        StreamInitMessage init = (StreamInitMessage) message;
-                        StreamResultFuture.initReceivingSide(init.sessionIndex, init.planId, init.description, init.from, ctx.channel(), init.keepSSTableLevel, init.isIncremental, init.pendingRepair);
-                        session = StreamManager.instance.findSession(init.from, init.planId, init.sessionIndex);
-                    }
-                    else if (message instanceof IncomingFileMessage)
-                    {
-                        // TODO: it'd be great to check if the session actually exists before slurping in the entire sstable,
-                        // but that's a refactoring for another day
-                        FileMessageHeader header = ((IncomingFileMessage) message).header;
-                        session = StreamManager.instance.findSession(header.sender, header.planId, header.sessionIndex);
-                    }
-
                     if (session == null)
-                        throw new IllegalStateException("no session found for message " + message);
-
+                        session = deriveSession(message);
                     logger.debug("[Stream #{}] Received {}", session.planId(), message);
-
                     session.messageReceived(message);
                 }
             }
@@ -212,12 +210,55 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             }
             finally
             {
-                ctx.close();
+                channel.close();
                 closed = true;
 
                 if (buffers != null)
                     buffers.close();
             }
+        }
+
+        StreamSession deriveSession(StreamMessage message) throws IOException
+        {
+            StreamSession streamSession = null;
+            // StreamInitMessage starts a new channel, and IncomingFileMessage potentially, as well.
+            // IncomingFileMessage needs a session to be established a priori, though
+            if (message instanceof StreamInitMessage)
+            {
+                assert session == null : "initiator of stream session received a StreamInitMessage";
+                StreamInitMessage init = (StreamInitMessage) message;
+                StreamResultFuture.initReceivingSide(init.sessionIndex, init.planId, init.description, init.from, channel, init.keepSSTableLevel, init.isIncremental, init.pendingRepair);
+                streamSession = sessionProvider.apply(new SessionIdentifier(init.from, init.planId, init.sessionIndex));
+            }
+            else if (message instanceof IncomingFileMessage)
+            {
+                // TODO: it'd be great to check if the session actually exists before slurping in the entire sstable,
+                // but that's a refactoring for another day
+                FileMessageHeader header = ((IncomingFileMessage) message).header;
+                streamSession = sessionProvider.apply(new SessionIdentifier(header.sender, header.planId, header.sessionIndex));
+            }
+
+            if (streamSession == null)
+                throw new IllegalStateException("no session found for message " + message);
+
+            return streamSession;
+        }
+    }
+
+    /**
+     * A simple struct to wrap the data points required to lookup a {@link StreamSession}
+     */
+    static class SessionIdentifier
+    {
+        final InetAddress from;
+        final UUID planId;
+        final int sessionIndex;
+
+        SessionIdentifier(InetAddress from, UUID planId, int sessionIndex)
+        {
+            this.from = from;
+            this.planId = planId;
+            this.sessionIndex = sessionIndex;
         }
     }
 }

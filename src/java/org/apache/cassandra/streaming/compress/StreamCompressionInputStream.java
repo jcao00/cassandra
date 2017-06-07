@@ -52,7 +52,7 @@ public class StreamCompressionInputStream extends RebufferingInputStream
         // release the current backing buffer
         BufferPool.put(buffer);
 
-        buffer = StreamCompressionSerializer.deserialize(decompressor, dataInputPlus, protocolVersion);
+        buffer = StreamCompressionSerializer.serializer.deserialize(decompressor, dataInputPlus, protocolVersion);
     }
 
     @Override

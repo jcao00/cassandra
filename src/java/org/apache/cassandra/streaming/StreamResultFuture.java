@@ -138,7 +138,7 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
     private void attachConnection(InetAddress from, int sessionIndex, Channel channel)
     {
         SocketAddress addr = channel.remoteAddress();
-        InetAddress connecting = (addr instanceof InetSocketAddress ? ((InetSocketAddress) addr).getAddress() : null);
+        InetAddress connecting = (addr instanceof InetSocketAddress ? ((InetSocketAddress) addr).getAddress() : from);
         StreamSession session = coordinator.getOrCreateSessionById(from, sessionIndex, connecting);
         session.init(this);
         session.attach(channel);

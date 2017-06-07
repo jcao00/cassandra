@@ -41,12 +41,23 @@ import org.apache.cassandra.utils.memory.BufferPool;
  */
 public class StreamCompressionSerializer
 {
+    public static final StreamCompressionSerializer serializer = new StreamCompressionSerializer();
+
+    private StreamCompressionSerializer()
+    {   }
+
     /**
      * Length of heaer data, which includes compressed length, uncompressed length.
      */
     private static final int HEADER_LENGTH = 8;
 
-    public static ByteBuffer serialize(LZ4Compressor compressor, ByteBuffer in, int version)
+    /**
+     *
+     * @return A buffer with decompressed data. The returned buffer is possibly taken from the {@link BufferPool}, and
+     * thus you need call {@link BufferPool#put(ByteBuffer)} when it has been consumed to ensure the buffer
+     * is returned to the pool.
+     */
+    public ByteBuffer serialize(LZ4Compressor compressor, ByteBuffer in, int version)
     {
         final int uncompressedLength = in.remaining();
 
@@ -74,15 +85,13 @@ public class StreamCompressionSerializer
         }
     }
 
-    // TODO:JEB document that this is a *blocking* implementation
-
     /**
      *
      * @return A buffer with decompressed data. The returned buffer is possibly taken from the {@link BufferPool}, and
      * thus you need call {@link BufferPool#put(ByteBuffer)} when it has been consumed to ensure the buffer
      * is returned to the pool.
      */
-    public static ByteBuffer deserialize(LZ4FastDecompressor decompressor, DataInputPlus in, int version) throws IOException
+    public ByteBuffer deserialize(LZ4FastDecompressor decompressor, DataInputPlus in, int version) throws IOException
     {
         final int compressedLength = in.readInt();
         final int uncompressedLength = in.readInt();

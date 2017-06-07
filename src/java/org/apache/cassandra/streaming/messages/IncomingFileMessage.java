@@ -88,7 +88,8 @@ public class IncomingFileMessage extends StreamMessage
     @Override
     public String toString()
     {
-        return "File (" + header + ", file: " + sstable.getFilename() + ")";
+        String filename = sstable != null ? sstable.getFilename() : null;
+        return "File (" + header + ", file: " + filename + ")";
     }
 }
 

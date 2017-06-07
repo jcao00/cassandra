@@ -58,7 +58,7 @@ public class ByteBufCompressionDataOutputStreamPlus extends WrappedDataOutputStr
     @Override
     public void write(ByteBuffer buffer) throws IOException
     {
-        ByteBuffer compressed = StreamCompressionSerializer.serialize(compressor, buffer, StreamMessage.CURRENT_VERSION);
+        ByteBuffer compressed = StreamCompressionSerializer.serializer.serialize(compressor, buffer, StreamMessage.CURRENT_VERSION);
 
         // this is a blocking call - you have been warned
         limiter.acquire(compressed.remaining());

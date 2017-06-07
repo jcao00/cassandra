@@ -18,33 +18,46 @@
 
 package org.apache.cassandra.streaming.async;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Random;
 
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.PooledByteBufAllocator;
+import net.jpountz.lz4.LZ4Compressor;
+import net.jpountz.lz4.LZ4Factory;
+import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.exceptions.ChecksumMismatchException;
-import org.apache.cassandra.net.async.NettyFactory;
-import org.apache.cassandra.streaming.StreamSession;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.streaming.messages.StreamMessage;
+import org.apache.cassandra.utils.memory.BufferPool;
 
-// TODO:JEB reinstate this
-@Ignore
 public class StreamCompressionSerializerTest
 {
     private static final int VERSION = StreamMessage.CURRENT_VERSION;
     private static final Random random = new Random(2347623847623L);
 
-    private StreamCompressionSerializer serializer;
-    private ByteBuf input;
-    private ByteBuf compressed;
+    private final StreamCompressionSerializer serializer = StreamCompressionSerializer.serializer;
+    private final LZ4Compressor compressor = LZ4Factory.fastestInstance().fastCompressor();
+    private final LZ4FastDecompressor decompressor = LZ4Factory.fastestInstance().fastDecompressor();
+
+    private ByteBuffer input;
+    private ByteBuffer compressed;
+    private ByteBuffer output;
+
+    @After
+    public void tearDown()
+    {
+        if (input != null)
+            BufferPool.put(input);
+        if (compressed != null)
+            BufferPool.put(compressed);
+        if (output != null)
+            BufferPool.put(output);
+    }
 
     @BeforeClass
     public static void before()
@@ -52,108 +65,22 @@ public class StreamCompressionSerializerTest
         DatabaseDescriptor.daemonInitialization();
     }
 
-    @Before
-    public void setUp()
+    @Test
+    public void roundTrip_HappyPath() throws IOException
     {
-        serializer = null;//new StreamCompressionSerializer(NettyFactory.lz4Factory().fastCompressor(),
-                            //                         NettyFactory.lz4Factory().fastDecompressor());
+        int bufSize = 1 << 14;
+        input = BufferPool.get(bufSize);
+        for (int i = 0; i < bufSize; i += 4)
+            input.putInt(random.nextInt());
+        input.flip();
+
+        compressed = serializer.serialize(compressor, input, VERSION);
+        input.flip();
+        output = serializer.deserialize(decompressor, new DataInputBuffer(compressed, false), VERSION);
+
+        Assert.assertEquals(input.remaining(), output.remaining());
+        for (int i = 0; i < input.remaining(); i++)
+            Assert.assertEquals(input.get(i), output.get(i));
+        BufferPool.put(output);
     }
-
-    @After
-    public void tearDown()
-    {
-        if (input != null)
-        {
-            while (input.refCnt() > 0)
-                input.release();
-        }
-
-        if (compressed != null)
-        {
-            while (compressed.refCnt() > 0)
-                compressed.release();
-        }
-    }
-
-//    @Test
-//    public void roundTrip_HappyPath() throws IOException
-//    {
-//        int bufSize = 1 << 14;
-//        input = PooledByteBufAllocator.DEFAULT.buffer(bufSize, bufSize);
-//        for (int i = 0; i < bufSize; i += 4)
-//            input.writeInt(random.nextInt());
-//
-//        compressed = serializer.serialize(input, VERSION);
-//        ByteBuffer output = serializer.deserialize(new ByteBufRBC(compressed), VERSION);
-//
-//        input.readerIndex(0);
-//        Assert.assertEquals(input.readableBytes(), output.remaining());
-//
-//        for (int i = 0; i < input.readableBytes(); i++)
-//            Assert.assertEquals(input.getByte(i), output.get(i));
-//    }
-//
-//    @Test (expected = ChecksumMismatchException.class)
-//    @Ignore("not checksumming right now, so test is disabled")
-//    public void roundTrip_CorruptLength() throws IOException
-//    {
-//        int bufSize = 1 << 14;
-//        input = PooledByteBufAllocator.DEFAULT.buffer(bufSize, bufSize);
-//        for (int i = 0; i < bufSize; i += 4)
-//            input.writeInt(random.nextInt());
-//
-//        compressed = serializer.serialize(input, VERSION);
-//        // fip a bit in the an arbitrary middle byte of the length
-//        int b = compressed.getByte(1);
-//        b = (b & 0x01) == 0 ? b + 1 : b - 1;
-//        compressed.setByte(1, (byte) b);
-//
-//        serializer.deserialize(new ByteBufRBC(compressed), VERSION);
-//    }
-//
-//    @Test (expected = ChecksumMismatchException.class)
-//    @Ignore("not checksumming right now, so test is disabled")
-//    public void roundTrip_CorruptPayload() throws IOException
-//    {
-//        int bufSize = 1 << 14;
-//        input = PooledByteBufAllocator.DEFAULT.buffer(bufSize, bufSize);
-//        for (int i = 0; i < bufSize; i += 4)
-//            input.writeInt(random.nextInt());
-//
-//        compressed = serializer.serialize(input, VERSION);
-//        int positionToCorrupt = compressed.writerIndex() - 10;
-//        compressed.setByte(positionToCorrupt, (byte)(compressed.getByte(positionToCorrupt) << 1));
-//
-//        serializer.deserialize(new ByteBufRBC(compressed), VERSION);
-//    }
-//
-//    private static class ByteBufRBC implements ReadableByteChannel
-//    {
-//        private final ByteBuf buf;
-//
-//        private ByteBufRBC(ByteBuf buf)
-//        {
-//            this.buf = buf;
-//        }
-//
-//        @Override
-//        public int read(ByteBuffer dst) throws IOException
-//        {
-//            int len = dst.remaining();
-//            buf.readBytes(dst);
-//            return len;
-//        }
-//
-//        @Override
-//        public boolean isOpen()
-//        {
-//            return true;
-//        }
-//
-//        @Override
-//        public void close() throws IOException
-//        {
-//
-//        }
-//    }
 }

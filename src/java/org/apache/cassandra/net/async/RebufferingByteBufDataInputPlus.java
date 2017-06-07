@@ -198,7 +198,8 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
     {
         if (currentBuf != null)
         {
-            currentBuf.release(currentBuf.refCnt());
+            if (currentBuf.refCnt() > 0)
+                currentBuf.release(currentBuf.refCnt());
             currentBuf = null;
             buffer = null;
         }
