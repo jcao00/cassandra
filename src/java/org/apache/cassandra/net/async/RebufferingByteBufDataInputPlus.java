@@ -57,6 +57,10 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
     public RebufferingByteBufDataInputPlus(int lowWaterMark, int highWaterMark, ChannelConfig channelConfig)
     {
         super(Unpooled.EMPTY_BUFFER.nioBuffer());
+
+        if (lowWaterMark > highWaterMark)
+            throw new IllegalArgumentException(String.format("low water mark is greater than high water mark: %d vs %d", lowWaterMark, highWaterMark));
+
         currentBuf = Unpooled.EMPTY_BUFFER;
         this.lowWaterMark = lowWaterMark;
         this.highWaterMark = highWaterMark;
