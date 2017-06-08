@@ -205,7 +205,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                 }
                 else
                 {
-                    logger.error("stream operation failed", t);
+                    logger.error("stream operation from {} failed", remoteAddress, t);
                 }
             }
             finally
