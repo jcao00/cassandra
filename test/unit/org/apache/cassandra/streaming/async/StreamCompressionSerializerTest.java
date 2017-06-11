@@ -32,8 +32,8 @@ import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.util.DataInputBuffer;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.streaming.messages.StreamMessage;
-import org.apache.cassandra.utils.memory.BufferPool;
 
 public class StreamCompressionSerializerTest
 {
@@ -52,11 +52,11 @@ public class StreamCompressionSerializerTest
     public void tearDown()
     {
         if (input != null)
-            BufferPool.put(input);
+            FileUtils.clean(input);
         if (compressed != null)
-            BufferPool.put(compressed);
+            FileUtils.clean(compressed);
         if (output != null)
-            BufferPool.put(output);
+            FileUtils.clean(output);
     }
 
     @BeforeClass
@@ -69,7 +69,7 @@ public class StreamCompressionSerializerTest
     public void roundTrip_HappyPath() throws IOException
     {
         int bufSize = 1 << 14;
-        input = BufferPool.get(bufSize);
+        input = ByteBuffer.allocateDirect(bufSize);
         for (int i = 0; i < bufSize; i += 4)
             input.putInt(random.nextInt());
         input.flip();
@@ -81,6 +81,6 @@ public class StreamCompressionSerializerTest
         Assert.assertEquals(input.remaining(), output.remaining());
         for (int i = 0; i < input.remaining(); i++)
             Assert.assertEquals(input.get(i), output.get(i));
-        BufferPool.put(output);
+        FileUtils.clean(output);
     }
 }

@@ -22,13 +22,10 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.CompositeByteBuf;
 import net.jpountz.lz4.LZ4Compressor;
 import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * A serialiazer for stream compressed files (see package-level documentation). Much like a typical compressed
@@ -52,23 +49,21 @@ public class StreamCompressionSerializer
     private static final int HEADER_LENGTH = 8;
 
     /**
-     * @return A buffer with decompressed data. The returned buffer is taken from the {@link BufferPool}, and
-     * thus you need call {@link BufferPool#put(ByteBuffer)} when it has been consumed to ensure the buffer
-     * is returned to the pool.
+     * @return A buffer with decompressed data.
      */
     public ByteBuffer serialize(LZ4Compressor compressor, ByteBuffer in, int version)
     {
         final int uncompressedLength = in.remaining();
 
         int maxLength = compressor.maxCompressedLength(uncompressedLength);
-        ByteBuffer compressed = BufferPool.get(maxLength);
+        ByteBuffer compressed = ByteBuffer.allocateDirect(maxLength);
         try
         {
             compressor.compress(in, compressed);
             int compressedLength = compressed.position();
             compressed.limit(compressedLength).position(0);
 
-            ByteBuffer out = BufferPool.get(HEADER_LENGTH + compressedLength);
+            ByteBuffer out = ByteBuffer.allocateDirect(HEADER_LENGTH + compressedLength);
             out.putInt(compressedLength);
             out.putInt(uncompressedLength);
             out.put(compressed);
@@ -77,15 +72,13 @@ public class StreamCompressionSerializer
         }
         finally
         {
-            BufferPool.put(compressed);
+            FileUtils.clean(compressed);
         }
     }
 
     /**
      *
-     * @return A buffer with decompressed data. The returned buffer is possibly taken from the {@link BufferPool}, and
-     * thus you need call {@link BufferPool#put(ByteBuffer)} when it has been consumed to ensure the buffer
-     * is returned to the pool.
+     * @return A buffer with decompressed data.
      */
     public ByteBuffer deserialize(LZ4FastDecompressor decompressor, DataInputPlus in, int version) throws IOException
     {
@@ -94,7 +87,7 @@ public class StreamCompressionSerializer
 
         if (in instanceof ReadableByteChannel)
         {
-            ByteBuffer compressed = BufferPool.get(compressedLength);
+            ByteBuffer compressed = ByteBuffer.allocateDirect(compressedLength);
             ByteBuffer uncompressed = null;
             try
             {
@@ -102,7 +95,7 @@ public class StreamCompressionSerializer
                 assert readLength == compressed.position();
                 compressed.flip();
 
-                uncompressed = BufferPool.get(uncompressedLength);
+                uncompressed = ByteBuffer.allocateDirect(uncompressedLength);
                 decompressor.decompress(compressed, uncompressed);
                 uncompressed.flip();
                 FileUtils.clean(compressed);
@@ -111,7 +104,7 @@ public class StreamCompressionSerializer
             catch (Exception e)
             {
                 // make sure we return the buffer to the pool on errors
-                BufferPool.put(uncompressed);
+                FileUtils.clean(uncompressed);
 
                 if (e instanceof IOException)
                     throw e;
@@ -119,7 +112,7 @@ public class StreamCompressionSerializer
             }
             finally
             {
-                BufferPool.put(compressed);
+                FileUtils.clean(compressed);
             }
         }
         else

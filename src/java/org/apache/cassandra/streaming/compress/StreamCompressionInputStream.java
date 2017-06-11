@@ -22,11 +22,11 @@ import java.io.IOException;
 
 import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RebufferingInputStream;
 import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.memory.BufferPool;
 
 public class StreamCompressionInputStream extends RebufferingInputStream
 {
@@ -50,7 +50,7 @@ public class StreamCompressionInputStream extends RebufferingInputStream
     public void reBuffer() throws IOException
     {
         // release the current backing buffer
-        BufferPool.put(buffer);
+        FileUtils.clean(buffer);
 
         buffer = StreamCompressionSerializer.serializer.deserialize(decompressor, dataInputPlus, protocolVersion);
     }
@@ -58,6 +58,6 @@ public class StreamCompressionInputStream extends RebufferingInputStream
     @Override
     public void close()
     {
-        BufferPool.put(buffer);
+        FileUtils.clean(buffer);
     }
 }

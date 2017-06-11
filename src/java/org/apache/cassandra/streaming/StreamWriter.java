@@ -25,18 +25,17 @@ import java.util.Collection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.ChannelProxy;
 import org.apache.cassandra.io.util.DataIntegrityMetadata;
 import org.apache.cassandra.io.util.DataIntegrityMetadata.ChecksumValidator;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.streaming.StreamManager.StreamRateLimiter;
 import org.apache.cassandra.streaming.compress.ByteBufCompressionDataOutputStreamPlus;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * StreamWriter writes given section of the SSTable to given channel.
@@ -143,9 +142,9 @@ public class StreamWriter
         // the count of bytes to read off disk
         int minReadable = (int) Math.min(bufferSize, proxy.size() - start);
 
-        // this buffer will hold the data from disk. as it will be compressed on the fly,
-        // we can release this buffer as soon as we can.
-        ByteBuffer buffer = BufferPool.get(minReadable);
+        // this buffer will hold the data from disk. as it will be compressed on the fly by
+        // ByteBufCompressionDataOutputStreamPlus.write(ByteBuffer), we can release this buffer as soon as we can.
+        ByteBuffer buffer = ByteBuffer.allocateDirect(minReadable);
         try
         {
             int readCount = proxy.read(buffer, start);
@@ -164,7 +163,7 @@ public class StreamWriter
         }
         finally
         {
-            BufferPool.put(buffer);
+            FileUtils.clean(buffer);
         }
 
         return toTransfer;

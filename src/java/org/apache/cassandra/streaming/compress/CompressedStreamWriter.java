@@ -26,26 +26,25 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.netty.buffer.Unpooled;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.ChannelProxy;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.net.async.ByteBufDataOutputStreamPlus;
 import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamWriter;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * StreamWriter for compressed SSTable.
  */
 public class CompressedStreamWriter extends StreamWriter
 {
-    public static final int CHUNK_SIZE = 1 << 16;
+    private static final int CHUNK_SIZE = 1 << 16;
 
     private static final Logger logger = LoggerFactory.getLogger(CompressedStreamWriter.class);
 
@@ -88,7 +87,7 @@ public class CompressedStreamWriter extends StreamWriter
                     final int toTransfer = (int) Math.min(CHUNK_SIZE, length - bytesTransferred);
                     limiter.acquire(toTransfer);
 
-                    ByteBuffer outBuffer = BufferPool.get(toTransfer);
+                    ByteBuffer outBuffer = ByteBuffer.allocateDirect(toTransfer);
                     long lastWrite;
                     try
                     {
@@ -99,7 +98,7 @@ public class CompressedStreamWriter extends StreamWriter
                     }
                     catch (IOException e)
                     {
-                        BufferPool.put(outBuffer);
+                        FileUtils.clean(outBuffer);
                         throw e;
                     }
 

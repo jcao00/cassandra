@@ -34,18 +34,15 @@ import org.slf4j.LoggerFactory;
 import io.netty.util.concurrent.FastThreadLocalThread;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RebufferingInputStream;
 import org.apache.cassandra.streaming.StreamReader.StreamDeserializer;
 import org.apache.cassandra.utils.ChecksumType;
 import org.apache.cassandra.utils.WrappedRunnable;
-import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * InputStream which reads data from underlining source with given {@link CompressionInfo}. Uses {@link #buffer} as a buffer
  * for uncompressed data (which is read by stream consumers - {@link StreamDeserializer} in this case).
- * <p>
- * All the internally-used {@link ByteBuffer}s, including {@link super#buffer}, are taken from the {@link BufferPool}
- * and must be returned to the pool as buffers are consumed.
  */
 public class CompressedInputStream extends RebufferingInputStream
 {
@@ -90,7 +87,7 @@ public class CompressedInputStream extends RebufferingInputStream
      */
     public CompressedInputStream(DataInputPlus source, CompressionInfo info, ChecksumType checksumType, Supplier<Double> crcCheckChanceSupplier)
     {
-        super(BufferPool.get(info.parameters.chunkLength()));
+        super(ByteBuffer.allocateDirect(info.parameters.chunkLength()));
         buffer.limit(buffer.position()); // force the buffer to appear "consumed" so that it triggers reBuffer on the first read
         this.info = info;
         this.dataBuffer = new ArrayBlockingQueue<>(Math.min(info.chunks.length, 1024));
@@ -127,7 +124,7 @@ public class CompressedInputStream extends RebufferingInputStream
     {
         if (readException != null)
         {
-            BufferPool.put(buffer);
+            FileUtils.clean(buffer);
             buffer = null;
             throw readException;
         }
@@ -171,7 +168,7 @@ public class CompressedInputStream extends RebufferingInputStream
         }
         else
         {
-            BufferPool.put(buffer);
+            FileUtils.clean(buffer);
             buffer = compressed;
             buffer.limit(length - CHECKSUM_LENGTH);
             releaseCompressedBuffer = false;
@@ -192,7 +189,7 @@ public class CompressedInputStream extends RebufferingInputStream
         }
 
         if (releaseCompressedBuffer)
-            BufferPool.put(compressed);
+            FileUtils.clean(compressed);
 
         // buffer offset is always aligned
         bufferOffset = current & ~(compressedChunkLength - 1);
@@ -211,7 +208,7 @@ public class CompressedInputStream extends RebufferingInputStream
     {
         if (buffer != null)
         {
-            BufferPool.put(buffer);
+            FileUtils.clean(buffer);
             buffer = null;
         }
     }
@@ -243,7 +240,7 @@ public class CompressedInputStream extends RebufferingInputStream
                     final int r;
                     if (source instanceof ReadableByteChannel)
                     {
-                        compressedWithCRC = BufferPool.get(readLength);
+                        compressedWithCRC = ByteBuffer.allocateDirect(readLength);
                         r = ((ReadableByteChannel)source).read(compressedWithCRC);
                         compressedWithCRC.flip();
                     }
@@ -254,7 +251,7 @@ public class CompressedInputStream extends RebufferingInputStream
                         if (tmp == null || tmp.length < info.parameters.chunkLength() + CHECKSUM_LENGTH)
                             tmp = new byte[info.parameters.chunkLength() + CHECKSUM_LENGTH];
                         source.readFully(tmp, 0, readLength);
-                        compressedWithCRC = BufferPool.get(readLength);
+                        compressedWithCRC = ByteBuffer.allocateDirect(readLength);
                         compressedWithCRC.put(tmp, 0, readLength);
                         compressedWithCRC.position(0);
                         r = readLength;
@@ -262,7 +259,7 @@ public class CompressedInputStream extends RebufferingInputStream
 
                     if (r < 0)
                     {
-                        BufferPool.put(compressedWithCRC);
+                        FileUtils.clean(compressedWithCRC);
                         readException = new EOFException("No chunk available");
                         dataBuffer.put(POISON_PILL);
                         return; // throw exception where we consume dataBuffer
@@ -272,7 +269,7 @@ public class CompressedInputStream extends RebufferingInputStream
                 {
                     logger.warn("Error while reading compressed input stream.", e);
                     if (compressedWithCRC != null)
-                        BufferPool.put(compressedWithCRC);
+                        FileUtils.clean(compressedWithCRC);
 
                     readException = e;
                     dataBuffer.put(POISON_PILL);
