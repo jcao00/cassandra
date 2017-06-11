@@ -222,27 +222,23 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
      *
      * Note: this is called from the netty event loop.
      *
-     * @return true if the message was processed sucessfully; else, false.
+     * @return null if the message was processed sucessfully; else, a {@link java.util.concurrent.Future} to indicate
+     * the status of aborting any remaining tasks in the session.
      */
-    private boolean onControlMessageComplete(Future<?> future, StreamMessage msg)
+    java.util.concurrent.Future onControlMessageComplete(Future<?> future, StreamMessage msg)
     {
         ChannelFuture channelFuture = (ChannelFuture)future;
-        Channel channel = channelFuture.channel();
         Throwable cause = future.cause();
         if (cause == null)
-        {
-            msg.sent();
-            return true;
-        }
+            return null;
 
+        Channel channel = channelFuture.channel();
         logger.error("[Stream #{}] failed to send a stream message/file to peer {} on channel {}: msg = {}",
                      session.planId(), connectionId, channel.id(), msg, future.cause());
 
-        if (!channel.isOpen())
-            session.onError(cause);
-        close();
-
-        return false;
+        // StreamSession will invoke close(), but we have to mark this sender as closed so the session doesn't try
+        // to send any failure messages
+        return session.onError(cause);
     }
 
     class FileStreamTask implements Runnable
@@ -443,6 +439,11 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         closed = true;
     }
 
+    void setControlMessageChannel(Channel channel)
+    {
+        controlMessageChannel = channel;
+    }
+
     int semaphoreAvailablePermits()
     {
         return fileTransferSemaphore.availablePermits();
@@ -457,8 +458,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     @Override
     public void close()
     {
-        logger.debug("[Stream #{}] Closing stream connection channels on {}", session.planId(), session.peer);
         closed = true;
+        logger.debug("[Stream #{}] Closing stream connection channels on {}", session.planId(), connectionId);
         channelKeepAlives.stream().map(scheduledFuture -> scheduledFuture.cancel(false));
         channelKeepAlives.clear();
         fileTransferExecutor.shutdownNow();

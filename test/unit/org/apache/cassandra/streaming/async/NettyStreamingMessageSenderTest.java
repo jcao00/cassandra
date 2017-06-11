@@ -20,6 +20,10 @@ package org.apache.cassandra.streaming.async;
 
 import java.net.InetSocketAddress;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -27,6 +31,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import io.netty.channel.ChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
@@ -62,7 +67,8 @@ public class NettyStreamingMessageSenderTest
         StreamResultFuture future = StreamResultFuture.initReceivingSide(0, UUID.randomUUID(), "desc", REMOTE_ADDR.getAddress(), channel, true, true, UUID.randomUUID());
         session.init(future);
         OutboundConnectionIdentifier connectionId = OutboundConnectionIdentifier.stream(LOCAL_ADDR, REMOTE_ADDR);
-        sender = new NettyStreamingMessageSender(session, connectionId, (cid, protocolVersion) -> null, VERSION);
+        sender = session.getMessageSender();
+        sender.setControlMessageChannel(channel);
     }
 
     @After
@@ -109,7 +115,6 @@ public class NettyStreamingMessageSenderTest
         Assert.assertFalse(channel.releaseOutbound());
     }
 
-
     @Test
     public void KeepAliveTask_CurrentlyStreaming()
     {
@@ -151,7 +156,7 @@ public class NettyStreamingMessageSenderTest
         fileStreamTask.injectChannel(channel);
         fileStreamTask.run();
         Assert.assertEquals(StreamSession.State.FAILED, session.state());
-        Assert.assertFalse(channel.releaseOutbound());
+        Assert.assertTrue(channel.releaseOutbound()); // when the session fails, it will send a SessionFailed msg
         Assert.assertEquals(permits, sender.semaphoreAvailablePermits());
     }
 
@@ -165,5 +170,34 @@ public class NettyStreamingMessageSenderTest
         Assert.assertNotEquals(StreamSession.State.FAILED, session.state());
         Assert.assertTrue(channel.releaseOutbound());
         Assert.assertEquals(permits, sender.semaphoreAvailablePermits());
+    }
+
+    @Test
+    public void onControlMessageComplete_HappyPath()
+    {
+        Assert.assertTrue(channel.isOpen());
+        Assert.assertTrue(sender.connected());
+        ChannelPromise promise = channel.newPromise();
+        promise.setSuccess();
+        Assert.assertNull(sender.onControlMessageComplete(promise, new CompleteMessage()));
+        Assert.assertTrue(channel.isOpen());
+        Assert.assertTrue(sender.connected());
+        Assert.assertNotEquals(StreamSession.State.FAILED, session.state());
+    }
+
+    @Test
+    public void onControlMessageComplete_Exception() throws InterruptedException, ExecutionException, TimeoutException
+    {
+        Assert.assertTrue(channel.isOpen());
+        Assert.assertTrue(sender.connected());
+        ChannelPromise promise = channel.newPromise();
+        promise.setFailure(new RuntimeException("this is just a testing exception"));
+        Future f = sender.onControlMessageComplete(promise, new CompleteMessage());
+
+        f.get(5, TimeUnit.SECONDS);
+
+        Assert.assertFalse(channel.isOpen());
+        Assert.assertFalse(sender.connected());
+        Assert.assertEquals(StreamSession.State.FAILED, session.state());
     }
 }

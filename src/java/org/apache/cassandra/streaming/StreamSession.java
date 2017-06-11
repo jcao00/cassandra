@@ -470,23 +470,35 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         }
     }
 
-    private synchronized void closeSession(State finalState)
+    private synchronized Future closeSession(State finalState)
     {
+        Future abortedTasksFuture = null;
         if (isAborted.compareAndSet(false, true))
         {
             state(finalState);
 
+            // ensure aborting the tasks do not happen on the network IO thread (read: netty event loop)
+            // as we don't want any blocking disk IO to stop the network thread
             if (finalState == State.FAILED)
-            {
-                for (StreamTask task : Iterables.concat(receivers.values(), transfers.values()))
-                    task.abort();
-            }
+                abortedTasksFuture = ScheduledExecutors.nonPeriodicTasks.submit(this::abortTasks);
 
-            // Note that we shouldn't block on this close because this method is called on the messageSender
-            // incoming thread (so we would deadlock).
             messageSender.close();
 
             streamResult.handleSessionComplete(this);
+        }
+        return abortedTasksFuture;
+    }
+
+    private void abortTasks()
+    {
+        try
+        {
+            receivers.values().forEach(StreamReceiveTask::abort);
+            transfers.values().forEach(StreamTransferTask::abort);
+        }
+        catch (Exception e)
+        {
+            logger.warn("failed to abort some streaming tasks", e);
         }
     }
 
@@ -506,6 +518,11 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     public State state()
     {
         return state;
+    }
+
+    public NettyStreamingMessageSender getMessageSender()
+    {
+        return messageSender;
     }
 
     /**
@@ -573,14 +590,14 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     /**
      * Call back for handling exception during streaming.
      */
-    public void onError(Throwable e)
+    public Future onError(Throwable e)
     {
         logError(e);
         // send session failure message
         if (messageSender.connected())
             messageSender.sendMessage(new SessionFailedMessage());
         // fail session
-        closeSession(State.FAILED);
+        return closeSession(State.FAILED);
     }
 
     private void logError(Throwable e)
