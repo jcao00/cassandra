@@ -29,6 +29,7 @@ import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.*;
 
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.lifecycle.SSTableIntervalTree;
@@ -609,6 +610,16 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     {
         // prepare tasks
         state(State.PREPARING);
+        ScheduledExecutors.nonPeriodicTasks.execute(() -> prepareAsync(requests, summaries));
+    }
+
+    /**
+     * Finish preparing the session. This method is blocking (memtables are flushed in {@link #addTransferRanges}),
+     * so the logic should not execute on the main IO thread (read: netty event loop).
+     */
+    private void prepareAsync(Collection<StreamRequest> requests, Collection<StreamSummary> summaries)
+    {
+
         for (StreamRequest request : requests)
             addTransferRanges(request.keyspace, request.ranges, request.columnFamilies, true, request.repairedAt); // always flush on stream request
         for (StreamSummary summary : summaries)

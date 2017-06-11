@@ -52,8 +52,7 @@ public class StreamCompressionSerializer
     private static final int HEADER_LENGTH = 8;
 
     /**
-     *
-     * @return A buffer with decompressed data. The returned buffer is possibly taken from the {@link BufferPool}, and
+     * @return A buffer with decompressed data. The returned buffer is taken from the {@link BufferPool}, and
      * thus you need call {@link BufferPool#put(ByteBuffer)} when it has been consumed to ensure the buffer
      * is returned to the pool.
      */
@@ -68,9 +67,6 @@ public class StreamCompressionSerializer
             compressor.compress(in, compressed);
             int compressedLength = compressed.position();
             compressed.limit(compressedLength).position(0);
-
-            // not sure if it's better to alloc a CompositeByteBuf and add the two buffers to it,
-            // or create another ByteBuf and copy the compressed data to it (after the headers)
 
             ByteBuffer out = BufferPool.get(HEADER_LENGTH + compressedLength);
             out.putInt(compressedLength);

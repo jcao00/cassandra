@@ -54,4 +54,3 @@ public class BulkLoadConnectionFactory extends DefaultConnectionFactory implemen
         return createConnection(connectionId, protocolVersion, encryptionOptions);
     }
 }
-

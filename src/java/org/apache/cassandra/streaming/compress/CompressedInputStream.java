@@ -157,7 +157,9 @@ public class CompressedInputStream extends RebufferingInputStream
     {
         final int compressedChunkLength = info.parameters.chunkLength();
         int length = compressed.remaining();
-        // uncompress, if the buffer size is less than chunk size
+
+        // uncompress if the buffer size is less than chunk size. else, if the buffer size is equal to the compressedChunkLength,
+        // we assume the buffer is not compressed. see CASSANDRA-10520
         final boolean releaseCompressedBuffer;
         if (length - CHECKSUM_LENGTH < compressedChunkLength)
         {

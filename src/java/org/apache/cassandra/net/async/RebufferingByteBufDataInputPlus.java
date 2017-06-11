@@ -117,26 +117,19 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
 
         try
         {
-            while (true)
+            currentBuf = queue.take();
+            int bytes;
+            // if we get an explicitly empty buffer, we treat that as an indicator that the input is closed
+            if (currentBuf == null || (bytes = currentBuf.readableBytes()) == 0)
             {
-                // consume any buffers from the queue *before* checking (and acting on) the closed status.
-                // that allows us to consume any last buffers before the end-of-stream.
-                currentBuf = queue.poll(1, TimeUnit.SECONDS);
-                int bytes;
-                if (currentBuf == null || (bytes = currentBuf.readableBytes()) == 0)
-                {
-                    if (!closed)
-                        continue;
-
-                    releaseResources();
-                    throw new EOFException();
-                }
-
-                buffer = currentBuf.nioBuffer(currentBuf.readerIndex(), bytes);
-                assert buffer.remaining() == bytes;
-                queuedByteCount.addAndGet(-bytes);
-                return;
+                releaseResources();
+                throw new EOFException();
             }
+
+            buffer = currentBuf.nioBuffer(currentBuf.readerIndex(), bytes);
+            assert buffer.remaining() == bytes;
+            queuedByteCount.addAndGet(-bytes);
+            return;
         }
         catch (InterruptedException ie)
         {
@@ -221,5 +214,6 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
     public void markClose()
     {
         closed = true;
+        queue.add(Unpooled.EMPTY_BUFFER);
     }
 }

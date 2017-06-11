@@ -77,6 +77,7 @@ public class ByteBufDataOutputStreamPlus extends BufferedDataOutputStreamPlus
         channelRateLimiter = new Semaphore(channel.config().getWriteBufferHighWaterMark(), true);
     }
 
+    @Override
     protected WritableByteChannel newDefaultChannel()
     {
         return new WritableByteChannel()

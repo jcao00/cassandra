@@ -148,5 +148,10 @@ public class OutgoingFileMessage extends StreamMessage
     {
         return "File (" + header + ", file: " + filename + ")";
     }
+
+    public String getFilename()
+    {
+        return filename;
+    }
 }
 
