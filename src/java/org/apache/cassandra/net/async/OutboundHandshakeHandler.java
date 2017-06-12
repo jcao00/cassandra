@@ -38,7 +38,6 @@ import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.concurrent.Future;
 import net.jpountz.lz4.LZ4Factory;
-import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.HandshakeProtocol.FirstHandshakeMessage;
@@ -61,8 +60,6 @@ import org.apache.cassandra.net.async.HandshakeProtocol.ThirdHandshakeMessage;
 public class OutboundHandshakeHandler extends ByteToMessageDecoder
 {
     private static final Logger logger = LoggerFactory.getLogger(OutboundHandshakeHandler.class);
-
-    private static final int LZ4_HASH_SEED = 0x9747b28c;
 
     /**
      * The number of milliseconds to wait before closing a channel if there has been no progress.
@@ -196,7 +193,7 @@ public class OutboundHandshakeHandler extends ByteToMessageDecoder
         pipeline.addLast("idleWriteHandler", new IdleStateHandler(true, 0, WRITE_IDLE_MS, 0, TimeUnit.MILLISECONDS));
         if (params.compress)
             pipeline.addLast(NettyFactory.OUTBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameEncoder(LZ4Factory.fastestInstance(), false, 1 << 14,
-                                                                                                XXHashFactory.fastestInstance().newStreamingHash32(LZ4_HASH_SEED).asChecksum()));
+                                                                                                NettyFactory.checksumForFrameEncoders(messagingVersion)));
 
         ChannelWriter channelWriter = ChannelWriter.create(params.connection, channel, params.coalescingStrategy);
         pipeline.addLast("messageOutHandler", new MessageOutHandler(connectionId, messagingVersion, channelWriter, params.backlogSupplier));

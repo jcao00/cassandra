@@ -2,6 +2,7 @@ package org.apache.cassandra.net.async;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.util.zip.Checksum;
 
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLParameters;
@@ -41,6 +42,7 @@ import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
+import net.jpountz.xxhash.XXHashFactory;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
@@ -49,6 +51,7 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.NativeTransportService;
+import org.apache.cassandra.utils.ChecksumType;
 import org.apache.cassandra.utils.CoalescingStrategies;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -59,6 +62,7 @@ import org.apache.cassandra.utils.FBUtilities;
 public final class NettyFactory
 {
     private static final Logger logger = LoggerFactory.getLogger(NettyFactory.class);
+    private static final int LZ4_HASH_SEED = 0x9747b28c;
 
     public enum Mode { MESSAGING, STREAMING }
 
@@ -346,5 +350,12 @@ public final class NettyFactory
     public static EventExecutor executorForChannelGroups()
     {
         return new DefaultEventExecutor();
+    }
+
+    public static Checksum checksumForFrameEncoders(int protocolVersion)
+    {
+        if (protocolVersion >= MessagingService.current_version)
+            return ChecksumType.CRC32.newInstance();
+        return XXHashFactory.fastestInstance().newStreamingHash32(LZ4_HASH_SEED).asChecksum();
     }
 }

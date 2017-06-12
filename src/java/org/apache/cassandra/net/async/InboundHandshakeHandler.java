@@ -20,6 +20,7 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.compression.Lz4FrameDecoder;
 import io.netty.handler.ssl.SslHandler;
+import net.jpountz.lz4.LZ4Factory;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.MessagingService;
@@ -235,7 +236,7 @@ class InboundHandshakeHandler extends ByteToMessageDecoder
     void setupMessagingPipeline(ChannelPipeline pipeline, InetAddress peer, boolean compressed, int messagingVersion)
     {
         if (compressed)
-            pipeline.addLast(NettyFactory.INBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameDecoder());
+            pipeline.addLast(NettyFactory.INBOUND_COMPRESSOR_HANDLER_NAME, new Lz4FrameDecoder(LZ4Factory.fastestInstance(), NettyFactory.checksumForFrameEncoders(messagingVersion)));
 
         pipeline.addLast("messageInHandler", new MessageInHandler(peer, messagingVersion));
         pipeline.remove(this);
