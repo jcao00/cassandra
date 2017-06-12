@@ -190,14 +190,19 @@ public final class NettyFactory
                 channelFuture.channel().close();
 
             Throwable failedChannelCause = channelFuture.cause();
-            if (failedChannelCause.getMessage().contains("in use"))
+
+            String causeString = "";
+            if (failedChannelCause != null && failedChannelCause.getMessage() != null)
+                causeString = failedChannelCause.getMessage();
+
+            if (causeString.contains("in use"))
             {
                 throw new ConfigurationException(localAddr + " is in use by another process.  Change listen_address:storage_port " +
                                                  "in cassandra.yaml to values that do not conflict with other services");
             }
             // looking at the jdk source, solaris/windows bind failue messages both use the phrase "cannot assign requested address".
             // windows message uses "Cannot" (with a capital 'C'), and solaris (a/k/a *nux) doe not. hence we search for "annot" <sigh>
-            else if (failedChannelCause.getMessage().contains("annot assign requested address"))
+            else if (causeString.contains("annot assign requested address"))
             {
                 throw new ConfigurationException("Unable to bind to address " + localAddr
                                                  + ". Set listen_address in cassandra.yaml to an interface you can bind to, e.g., your private IP address on EC2");
