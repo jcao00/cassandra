@@ -83,36 +83,38 @@ public class StreamWriter
             // setting up data compression stream
             long progress = 0L;
 
-            DataOutputStreamPlus compressedOutput = new ByteBufCompressionDataOutputStreamPlus(output, limiter);
-            // stream each of the required sections of the file
-            for (Pair<Long, Long> section : sections)
+            try (DataOutputStreamPlus compressedOutput = new ByteBufCompressionDataOutputStreamPlus(output, limiter))
             {
-                long start = validator == null ? section.left : validator.chunkStart(section.left);
-                // if the transfer does not start on the valididator's chunk boundary, this is the number of bytes to offset by
-                int transferOffset = (int) (section.left - start);
-                if (validator != null)
-                    validator.seek(start);
-
-                // length of the section to read
-                long length = section.right - start;
-                // tracks write progress
-                long bytesRead = 0;
-                while (bytesRead < length)
+                // stream each of the required sections of the file
+                for (Pair<Long, Long> section : sections)
                 {
-                    int toTransfer = (int) Math.min(bufferSize, length - bytesRead);
-                    long lastBytesRead = write(proxy, validator, compressedOutput, start, transferOffset, toTransfer, bufferSize);
-                    start += lastBytesRead;
-                    bytesRead += lastBytesRead;
-                    progress += (lastBytesRead - transferOffset);
-                    session.progress(sstable.descriptor.filenameFor(Component.DATA), ProgressInfo.Direction.OUT, progress, totalSize);
-                    transferOffset = 0;
-                }
+                    long start = validator == null ? section.left : validator.chunkStart(section.left);
+                    // if the transfer does not start on the valididator's chunk boundary, this is the number of bytes to offset by
+                    int transferOffset = (int) (section.left - start);
+                    if (validator != null)
+                        validator.seek(start);
 
-                // make sure that current section is sent
-                output.flush();
+                    // length of the section to read
+                    long length = section.right - start;
+                    // tracks write progress
+                    long bytesRead = 0;
+                    while (bytesRead < length)
+                    {
+                        int toTransfer = (int) Math.min(bufferSize, length - bytesRead);
+                        long lastBytesRead = write(proxy, validator, compressedOutput, start, transferOffset, toTransfer, bufferSize);
+                        start += lastBytesRead;
+                        bytesRead += lastBytesRead;
+                        progress += (lastBytesRead - transferOffset);
+                        session.progress(sstable.descriptor.filenameFor(Component.DATA), ProgressInfo.Direction.OUT, progress, totalSize);
+                        transferOffset = 0;
+                    }
+
+                    // make sure that current section is sent
+                    output.flush();
+                }
+                logger.debug("[Stream #{}] Finished streaming file {} to {}, bytesTransferred = {}, totalSize = {}",
+                             session.planId(), sstable.getFilename(), session.peer, FBUtilities.prettyPrintMemory(progress), FBUtilities.prettyPrintMemory(totalSize));
             }
-            logger.debug("[Stream #{}] Finished streaming file {} to {}, bytesTransferred = {}, totalSize = {}",
-                         session.planId(), sstable.getFilename(), session.peer, FBUtilities.prettyPrintMemory(progress), FBUtilities.prettyPrintMemory(totalSize));
         }
     }
 

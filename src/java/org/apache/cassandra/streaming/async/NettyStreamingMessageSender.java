@@ -209,7 +209,9 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         // as control messages are (expected to be) small, we can simply allocate a ByteBuf here, wrap it, and send via the channel
         ByteBuf buf = channel.alloc().directBuffer((int) messageSize, (int) messageSize);
         ByteBuffer nioBuf = buf.nioBuffer(0, (int) messageSize);
-        StreamMessage.serialize(message, new DataOutputBufferFixed(nioBuf), protocolVersion, session);
+        @SuppressWarnings("resource")
+        DataOutputBufferFixed out = new DataOutputBufferFixed(nioBuf);
+        StreamMessage.serialize(message, out, protocolVersion, session);
         assert nioBuf.position() == nioBuf.limit();
         buf.writerIndex(nioBuf.position());
 

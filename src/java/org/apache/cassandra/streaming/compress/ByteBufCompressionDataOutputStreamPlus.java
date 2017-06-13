@@ -65,4 +65,10 @@ public class ByteBufCompressionDataOutputStreamPlus extends WrappedDataOutputStr
 
         ((ByteBufDataOutputStreamPlus)out).writeToChannel(compressed);
     }
+
+    @Override
+    public void close()
+    {
+        // explicitly overriding close() to avoid closing the wrapped stream; it will be closed via other means
+    }
 }
