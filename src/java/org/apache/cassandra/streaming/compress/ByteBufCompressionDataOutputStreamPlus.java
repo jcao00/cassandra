@@ -21,6 +21,7 @@ package org.apache.cassandra.streaming.compress;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
+import io.netty.buffer.ByteBuf;
 import net.jpountz.lz4.LZ4Compressor;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
@@ -39,13 +40,14 @@ public class ByteBufCompressionDataOutputStreamPlus extends WrappedDataOutputStr
 {
     private final StreamRateLimiter limiter;
     private final LZ4Compressor compressor;
-
+    private final StreamCompressionSerializer serializer;
 
     public ByteBufCompressionDataOutputStreamPlus(DataOutputStreamPlus out, StreamRateLimiter limiter)
     {
         super(out);
         assert out instanceof ByteBufDataOutputStreamPlus;
         compressor = NettyFactory.lz4Factory().fastCompressor();
+        serializer = new StreamCompressionSerializer(((ByteBufDataOutputStreamPlus)out).getAllocator());
         this.limiter = limiter;
     }
 
@@ -58,10 +60,10 @@ public class ByteBufCompressionDataOutputStreamPlus extends WrappedDataOutputStr
     @Override
     public void write(ByteBuffer buffer) throws IOException
     {
-        ByteBuffer compressed = StreamCompressionSerializer.serializer.serialize(compressor, buffer, StreamMessage.CURRENT_VERSION);
+        ByteBuf compressed = serializer.serialize(compressor, buffer, StreamMessage.CURRENT_VERSION);
 
         // this is a blocking call - you have been warned
-        limiter.acquire(compressed.remaining());
+        limiter.acquire(compressed.readableBytes());
 
         ((ByteBufDataOutputStreamPlus)out).writeToChannel(compressed);
     }

@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelConfig;
 import io.netty.util.ReferenceCountUtil;
@@ -37,7 +38,6 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
 {
     /**
      * The parent, or owning, buffer of the current buffer being read from ({@link super#buffer}).
-     * Initialize to en empty buffer to avoid needing a null check in every method.
      */
     private ByteBuf currentBuf;
 
@@ -215,5 +215,10 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
     {
         closed = true;
         queue.add(Unpooled.EMPTY_BUFFER);
+    }
+
+    public ByteBufAllocator getAllocator()
+    {
+        return channelConfig.getAllocator();
     }
 }

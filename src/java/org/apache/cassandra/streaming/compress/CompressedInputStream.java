@@ -267,7 +267,8 @@ public class CompressedInputStream extends RebufferingInputStream
                 }
                 catch (IOException e)
                 {
-                    logger.warn("Error while reading compressed input stream.", e);
+                    if (!(e instanceof EOFException))
+                        logger.warn("Error while reading compressed input stream.", e);
                     if (compressedWithCRC != null)
                         FileUtils.clean(compressedWithCRC);
 

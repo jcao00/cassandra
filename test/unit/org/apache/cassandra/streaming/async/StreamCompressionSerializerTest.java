@@ -20,6 +20,7 @@ package org.apache.cassandra.streaming.async;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Random;
 
 import org.junit.After;
@@ -27,6 +28,9 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.PooledByteBufAllocator;
 import net.jpountz.lz4.LZ4Compressor;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
@@ -40,24 +44,14 @@ public class StreamCompressionSerializerTest
     private static final int VERSION = StreamMessage.CURRENT_VERSION;
     private static final Random random = new Random(2347623847623L);
 
-    private final StreamCompressionSerializer serializer = StreamCompressionSerializer.serializer;
+    private final ByteBufAllocator allocator = PooledByteBufAllocator.DEFAULT;
+    private final StreamCompressionSerializer serializer = new StreamCompressionSerializer(allocator);
     private final LZ4Compressor compressor = LZ4Factory.fastestInstance().fastCompressor();
     private final LZ4FastDecompressor decompressor = LZ4Factory.fastestInstance().fastDecompressor();
 
     private ByteBuffer input;
-    private ByteBuffer compressed;
-    private ByteBuffer output;
-
-    @After
-    public void tearDown()
-    {
-        if (input != null)
-            FileUtils.clean(input);
-        if (compressed != null)
-            FileUtils.clean(compressed);
-        if (output != null)
-            FileUtils.clean(output);
-    }
+    private ByteBuf compressed;
+    private ByteBuf output;
 
     @BeforeClass
     public static void before()
@@ -65,22 +59,77 @@ public class StreamCompressionSerializerTest
         DatabaseDescriptor.daemonInitialization();
     }
 
+    @After
+    public void tearDown()
+    {
+        if (input != null)
+            FileUtils.clean(input);
+        if (compressed != null && compressed.refCnt() > 0)
+            compressed.release(compressed.refCnt());
+        if (output != null && output.refCnt() > 0)
+            output.release(output.refCnt());
+    }
+
     @Test
-    public void roundTrip_HappyPath() throws IOException
+    public void roundTrip_HappyPath_NotReadabaleByteBuffer() throws IOException
+    {
+        populateInput();
+        compressed = serializer.serialize(compressor, input, VERSION);
+        input.flip();
+        ByteBuffer compressedNioBuffer = compressed.nioBuffer(0, compressed.writerIndex());
+        output = serializer.deserialize(decompressor, new DataInputBuffer(compressedNioBuffer, false), VERSION);
+        validateResults();
+    }
+
+    private void populateInput()
     {
         int bufSize = 1 << 14;
         input = ByteBuffer.allocateDirect(bufSize);
         for (int i = 0; i < bufSize; i += 4)
             input.putInt(random.nextInt());
         input.flip();
+    }
 
+    private void validateResults()
+    {
+        Assert.assertEquals(input.remaining(), output.readableBytes());
+        for (int i = 0; i < input.remaining(); i++)
+            Assert.assertEquals(input.get(i), output.readByte());
+    }
+
+    @Test
+    public void roundTrip_HappyPath_ReadabaleByteBuffer() throws IOException
+    {
+        populateInput();
         compressed = serializer.serialize(compressor, input, VERSION);
         input.flip();
-        output = serializer.deserialize(decompressor, new DataInputBuffer(compressed, false), VERSION);
+        output = serializer.deserialize(decompressor, new ByteBufRCH(compressed), VERSION);
+        validateResults();
+    }
 
-        Assert.assertEquals(input.remaining(), output.remaining());
-        for (int i = 0; i < input.remaining(); i++)
-            Assert.assertEquals(input.get(i), output.get(i));
-        FileUtils.clean(output);
+    private static class ByteBufRCH extends DataInputBuffer implements ReadableByteChannel
+    {
+        public ByteBufRCH(ByteBuf compressed)
+        {
+            super (compressed.nioBuffer(0, compressed.readableBytes()), false);
+        }
+
+        @Override
+        public int read(ByteBuffer dst) throws IOException
+        {
+            int len = dst.remaining();
+            dst.put(buffer);
+            return len;
+        }
+
+        @Override
+        public boolean isOpen()
+        {
+            return true;
+        }
+
+        @Override
+        public void close()
+        {   }
     }
 }

@@ -25,18 +25,17 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.util.concurrent.Uninterruptibles;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.util.concurrent.Future;
 import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.streaming.StreamSession;
-import org.apache.cassandra.utils.memory.BufferPool;
 
 /**
  * A {@link DataOutputStreamPlus} that writes to a {@link ByteBuf}. The novelty here is that all writes
@@ -47,8 +46,6 @@ import org.apache.cassandra.utils.memory.BufferPool;
  */
 public class ByteBufDataOutputStreamPlus extends BufferedDataOutputStreamPlus
 {
-    private static final Logger logger = LoggerFactory.getLogger(ByteBufDataOutputStreamPlus.class);
-
     private final StreamSession session;
     private final Channel channel;
     private final int bufferSize;
@@ -110,22 +107,32 @@ public class ByteBufDataOutputStreamPlus extends BufferedDataOutputStreamPlus
     }
 
     /**
-     * Writes the buffer directly to the backing {@link #channel}, without copying to the intermediate {@link #buffer}.
-     * The buffer will be automatically released when the netty channel invokes the listeners of success/failure to
-     * send the buffer.
+     * Writes the incoming buffer directly to the backing {@link #channel}, without copying to the intermediate {@link #buffer}.
      */
-    public void writeToChannel(ByteBuffer buf) throws IOException
+    public ChannelFuture writeToChannel(ByteBuf buf) throws IOException
     {
         doFlush(buffer.position());
 
-        int byteCount = buf.remaining();
-        if (!Uninterruptibles.tryAcquireUninterruptibly(channelRateLimiter, byteCount, 2, TimeUnit.MINUTES))
+        int byteCount = buf.readableBytes();
+        if (!Uninterruptibles.tryAcquireUninterruptibly(channelRateLimiter, byteCount, 5, TimeUnit.MINUTES))
             throw new IOException("outbound channel was not writable");
 
         // the (possibly naive) assumption that we should always flush after each incoming buf
-        ChannelFuture channelFuture = channel.writeAndFlush(Unpooled.wrappedBuffer(buf));
-        channelFuture.addListener(future -> BufferPool.put(buf));
+        ChannelFuture channelFuture = channel.writeAndFlush(buf);
         channelFuture.addListener(future -> handleBuffer(future, byteCount));
+        return channelFuture;
+    }
+
+    /**
+     * Writes the incoming buffer directly to the backing {@link #channel}, without copying to the intermediate {@link #buffer}.
+     * The incoming buffer will be automatically released when the netty channel invokes the listeners of success/failure to
+     * send the buffer.
+     */
+    public ChannelFuture writeToChannel(ByteBuffer buffer) throws IOException
+    {
+        ChannelFuture channelFuture = writeToChannel(Unpooled.wrappedBuffer(buffer));
+        channelFuture.addListener(future -> FileUtils.clean(buffer));
+        return channelFuture;
     }
 
     @Override
@@ -157,6 +164,11 @@ public class ByteBufDataOutputStreamPlus extends BufferedDataOutputStreamPlus
 
         if (!future.isSuccess() && channel.isOpen())
             session.onError(future.cause());
+    }
+
+    public ByteBufAllocator getAllocator()
+    {
+        return channel.alloc();
     }
 
     /**

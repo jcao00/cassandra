@@ -22,10 +22,11 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import net.jpountz.lz4.LZ4Compressor;
 import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.FileUtils;
 
 /**
  * A serialiazer for stream compressed files (see package-level documentation). Much like a typical compressed
@@ -38,10 +39,12 @@ import org.apache.cassandra.io.util.FileUtils;
  */
 public class StreamCompressionSerializer
 {
-    public static final StreamCompressionSerializer serializer = new StreamCompressionSerializer();
+    private final ByteBufAllocator allocator;
 
-    private StreamCompressionSerializer()
-    {   }
+    public StreamCompressionSerializer(ByteBufAllocator allocator)
+    {
+        this.allocator = allocator;
+    }
 
     /**
      * Length of heaer data, which includes compressed length, uncompressed length.
@@ -51,79 +54,80 @@ public class StreamCompressionSerializer
     /**
      * @return A buffer with decompressed data.
      */
-    public ByteBuffer serialize(LZ4Compressor compressor, ByteBuffer in, int version)
+    public ByteBuf serialize(LZ4Compressor compressor, ByteBuffer in, int version)
     {
         final int uncompressedLength = in.remaining();
-
         int maxLength = compressor.maxCompressedLength(uncompressedLength);
-        ByteBuffer compressed = ByteBuffer.allocateDirect(maxLength);
+        ByteBuf out = allocator.directBuffer(maxLength);
         try
         {
-            compressor.compress(in, compressed);
-            int compressedLength = compressed.position();
-            compressed.limit(compressedLength).position(0);
-
-            ByteBuffer out = ByteBuffer.allocateDirect(HEADER_LENGTH + compressedLength);
-            out.putInt(compressedLength);
-            out.putInt(uncompressedLength);
-            out.put(compressed);
-            out.flip();
-            return out;
+            ByteBuffer compressedNioBuffer = out.nioBuffer(HEADER_LENGTH, maxLength - HEADER_LENGTH);
+            compressor.compress(in, compressedNioBuffer);
+            final int compressedLength = compressedNioBuffer.position();
+            out.setInt(0, compressedLength);
+            out.setInt(4, uncompressedLength);
+            out.writerIndex(HEADER_LENGTH + compressedLength);
         }
-        finally
+        catch (Exception e)
         {
-            FileUtils.clean(compressed);
+            if (out != null)
+                out.release();
         }
+        return out;
     }
 
     /**
-     *
      * @return A buffer with decompressed data.
      */
-    public ByteBuffer deserialize(LZ4FastDecompressor decompressor, DataInputPlus in, int version) throws IOException
+    public ByteBuf deserialize(LZ4FastDecompressor decompressor, DataInputPlus in, int version) throws IOException
     {
         final int compressedLength = in.readInt();
         final int uncompressedLength = in.readInt();
 
-        if (in instanceof ReadableByteChannel)
+        // there's no guarantee the next compressed block is contained within one buffer in the input,
+        // so hence we need a 'staging' buffer to get all the bytes into one contiguous buffer for the decompressor
+        ByteBuf compressed = null;
+        ByteBuf uncompressed = null;
+        try
         {
-            ByteBuffer compressed = ByteBuffer.allocateDirect(compressedLength);
-            ByteBuffer uncompressed = null;
-            try
-            {
-                int readLength = ((ReadableByteChannel) in).read(compressed);
-                assert readLength == compressed.position();
-                compressed.flip();
+            final ByteBuffer compressedNioBuffer;
 
-                uncompressed = ByteBuffer.allocateDirect(uncompressedLength);
-                decompressor.decompress(compressed, uncompressed);
-                uncompressed.flip();
-                FileUtils.clean(compressed);
-                return uncompressed;
-            }
-            catch (Exception e)
+            // ReadableByteChannel allows us to keep the bytes off-heap because we pass a ByteBuffer to RBC.read(BB),
+            // DataInputPlus.read() takes a byte array (thus, an on-heap array).
+            if (in instanceof ReadableByteChannel)
             {
-                // make sure we return the buffer to the pool on errors
-                FileUtils.clean(uncompressed);
+                compressed = allocator.directBuffer(compressedLength);
+                compressedNioBuffer = compressed.nioBuffer(0, compressedLength);
+                int readLength = ((ReadableByteChannel) in).read(compressedNioBuffer);
+                assert readLength == compressedNioBuffer.position();
+                compressedNioBuffer.flip();
+            }
+            else
+            {
+                byte[] compressedBytes = new byte[compressedLength];
+                in.readFully(compressedBytes);
+                compressedNioBuffer = ByteBuffer.wrap(compressedBytes);
+            }
 
-                if (e instanceof IOException)
-                    throw e;
-                throw new IOException(e);
-            }
-            finally
-            {
-                FileUtils.clean(compressed);
-            }
+            uncompressed = allocator.directBuffer(uncompressedLength);
+            ByteBuffer uncompressedNioBuffer = uncompressed.nioBuffer(0, uncompressedLength);
+            decompressor.decompress(compressedNioBuffer, uncompressedNioBuffer);
+            uncompressed.writerIndex(uncompressedLength);
+            return uncompressed;
         }
-        else
+        catch (Exception e)
         {
-            // Note: there's better alternatives to creating extra buffers and memcpy'ing all the things,
-            // but there's a bug in the lz4-java 1.3.0 jar wrt using ByteBuffers, and it's unmaintained atm :(
-            byte[] compressed = new byte[compressedLength];
-            in.readFully(compressed);
-            byte[] uncompressed = new byte[uncompressedLength];
-            decompressor.decompress(compressed, uncompressed);
-            return ByteBuffer.wrap(uncompressed);
+            if (uncompressed != null)
+                uncompressed.release();
+
+            if (e instanceof IOException)
+                throw e;
+            throw new IOException(e);
+        }
+        finally
+        {
+            if (compressed != null)
+                compressed.release();
         }
     }
 }

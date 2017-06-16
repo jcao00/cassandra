@@ -20,11 +20,16 @@ package org.apache.cassandra.streaming.compress;
 
 import java.io.IOException;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.buffer.Unpooled;
 import net.jpountz.lz4.LZ4FastDecompressor;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RebufferingInputStream;
 import org.apache.cassandra.net.async.NettyFactory;
+import org.apache.cassandra.net.async.RebufferingByteBufDataInputPlus;
 import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -37,27 +42,39 @@ public class StreamCompressionInputStream extends RebufferingInputStream
 
     private final LZ4FastDecompressor decompressor;
     private final int protocolVersion;
+    private final StreamCompressionSerializer deserializer;
+
+    /**
+     * The parent, or owning, buffer of the current buffer being read from ({@link super#buffer}).
+     */
+    private ByteBuf currentBuf;
 
     public StreamCompressionInputStream(DataInputPlus dataInputPlus, int protocolVersion)
     {
-        super(ByteBufferUtil.EMPTY_BYTE_BUFFER);
+        super(Unpooled.EMPTY_BUFFER.nioBuffer());
+        currentBuf = Unpooled.EMPTY_BUFFER;
+
         this.dataInputPlus = dataInputPlus;
         this.protocolVersion = protocolVersion;
         this.decompressor = NettyFactory.lz4Factory().fastDecompressor();
+
+        ByteBufAllocator allocator = dataInputPlus instanceof RebufferingByteBufDataInputPlus
+                                     ? ((RebufferingByteBufDataInputPlus)dataInputPlus).getAllocator()
+                                     : PooledByteBufAllocator.DEFAULT;
+        deserializer = new StreamCompressionSerializer(allocator);
     }
 
     @Override
     public void reBuffer() throws IOException
     {
-        // release the current backing buffer
-        FileUtils.clean(buffer);
-
-        buffer = StreamCompressionSerializer.serializer.deserialize(decompressor, dataInputPlus, protocolVersion);
+        currentBuf.release();
+        currentBuf = deserializer.deserialize(decompressor, dataInputPlus, protocolVersion);
+        buffer = currentBuf.nioBuffer(0, currentBuf.readableBytes());
     }
 
     @Override
     public void close()
     {
-        FileUtils.clean(buffer);
+        currentBuf.release();
     }
 }
