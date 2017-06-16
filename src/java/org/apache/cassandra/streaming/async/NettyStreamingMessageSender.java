@@ -54,6 +54,7 @@ import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.streaming.StreamConnectionFactory;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingMessageSender;
+import org.apache.cassandra.streaming.messages.IncomingFileMessage;
 import org.apache.cassandra.streaming.messages.KeepAliveMessage;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
@@ -92,6 +93,11 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     private final StreamConnectionFactory factory;
 
     private volatile boolean closed;
+
+    /**
+     * A special {@link Channel} for sending non-file streaming messages, basically anything that isn't an
+     * {@link OutgoingFileMessage} (or an {@link IncomingFileMessage}, but a node doesn't send that, it's only received).
+     */
     private Channel controlMessageChannel;
 
     // note: this really doesn't need to be a LBQ, just something that's thread safe
@@ -279,15 +285,12 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             try
             {
                 Channel channel = getOrCreateChannel();
-                Attribute<Boolean> attr = channel.attr(TRANSFERRING_FILE_ATTR);
-
-                if (attr.get())
+                if (!channel.attr(TRANSFERRING_FILE_ATTR).compareAndSet(false, true))
                     throw new IllegalStateException("channel's transferring state is currently set to true. refusing to start new stream");
 
                 // close the DataOutputStreamPlus as we're done with it - but don't close the channel
                 try (DataOutputStreamPlus outPlus = ByteBufDataOutputStreamPlus.create(session, channel, 1 << 16))
                 {
-                    attr.set(Boolean.FALSE);
                     StreamMessage.serialize(msg, outPlus, protocolVersion, session);
                 }
                 finally
@@ -407,20 +410,15 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
                 return;
             }
 
-            // if the channel is currently processing streaming, skip this execution
+            // if the channel is currently processing streaming, skip this execution. As this task executes
+            // on the event loop, even if there is a race with a FileStreamTask which changes the channel attribute
+            // after we check it, the FileStreamTask cannot send out any bytes as this KeepAliveTask is executing
+            // on the event loop (and FileStreamTask publishes it's buffer to the channel, consumed after we're done here).
             if (channel.attr(TRANSFERRING_FILE_ATTR).get())
                 return;
 
-            UUID planId = session.planId();
-            try
-            {
-                logger.trace("[Stream #{}] Sending keep-alive to {}.", planId, session.peer);
-                sendControlMessage(channel, new KeepAliveMessage(), this::keepAliveListener);
-            }
-            catch (IOException e)
-            {
-                logger.warn("[Stream #{}] failed to send streaming keep-alive message to {}", planId, session.peer, e);
-            }
+            logger.trace("[Stream #{}] Sending keep-alive to {}.", session.planId(), session.peer);
+            channel.writeAndFlush(new KeepAliveMessage()).addListener(this::keepAliveListener);
         }
 
         private void keepAliveListener(Future<? super Void> future)
