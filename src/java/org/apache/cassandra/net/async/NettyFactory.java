@@ -238,7 +238,8 @@ public final class NettyFactory
                 SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, true, true);
                 SslHandler sslHandler = sslContext.newHandler(channel.alloc());
                 logger.trace("creating inbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
-                pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);            }
+                pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
+            }
 
             if (WIRETRACE)
                 pipeline.addLast("logger", new LoggingHandler(LogLevel.INFO));
