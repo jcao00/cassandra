@@ -22,7 +22,6 @@ import java.io.IOError;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Collection;
-import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
@@ -37,7 +36,6 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelPipeline;
-import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.FastThreadLocal;
 import io.netty.util.concurrent.Future;
@@ -155,6 +153,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     public void injectControlMessageChannel(Channel channel)
     {
         this.controlMessageChannel = channel;
+        scheduleKeepAliveTask(channel);
     }
 
     private void setupControlMessageChannel() throws IOException
@@ -163,21 +162,41 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             controlMessageChannel = createChannel();
     }
 
+    private void scheduleKeepAliveTask(Channel channel)
+    {
+        int keepAlivePeriod = DatabaseDescriptor.getStreamingKeepAlivePeriod();
+        logger.debug("{} Scheduling keep-alive task with {}s period.", createLogTag(session, channel), keepAlivePeriod);
+
+        KeepAliveTask task = new KeepAliveTask(channel, session);
+        ScheduledFuture<?> scheduledFuture = channel.eventLoop().scheduleAtFixedRate(task, 0, keepAlivePeriod, TimeUnit.SECONDS);
+        channelKeepAlives.add(scheduledFuture);
+        task.future = scheduledFuture;
+    }
+
     private Channel createChannel() throws IOException
     {
         Channel channel = factory.createConnection(connectionId, protocolVersion);
         ChannelPipeline pipeline = channel.pipeline();
         pipeline.addLast(NettyFactory.instance.streamingGroup, NettyFactory.INBOUND_STREAM_HANDLER_NAME, new StreamingInboundHandler(connectionId.remoteAddress(), protocolVersion, session));
         channel.attr(TRANSFERRING_FILE_ATTR).set(Boolean.FALSE);
+        scheduleKeepAliveTask(channel);
 
-        int keepAlivePeriod = DatabaseDescriptor.getStreamingKeepAlivePeriod();
-        logger.trace("[Stream #{}] Scheduling keep-alive task with {}s period.", session.planId(), keepAlivePeriod);
-
-        KeepAliveTask task = new KeepAliveTask(channel, session);
-        ScheduledFuture<?> scheduledFuture = channel.eventLoop().scheduleAtFixedRate(task, keepAlivePeriod * 2, keepAlivePeriod, TimeUnit.SECONDS);
-        channelKeepAlives.add(scheduledFuture);
-        task.future = scheduledFuture;
         return channel;
+    }
+
+    static String createLogTag(StreamSession session, Channel channel)
+    {
+        StringBuilder sb = new StringBuilder(64);
+        sb.append("[Stream ");
+
+        if (session != null)
+            sb.append('#').append(session.planId());
+
+        if (channel != null)
+            sb.append(" channel: ").append(channel.id());
+
+        sb.append(']');
+        return sb.toString();
     }
 
     @Override
@@ -190,7 +209,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         {
             if (isPreview)
                 throw new RuntimeException("Cannot send file messages for preview streaming sessions");
-            logger.debug("[Stream #{}] Sending {}", session.planId(), message);
+            logger.debug("{} Sending {}", createLogTag(session, null), message);
             fileTransferExecutor.submit(new FileStreamTask((OutgoingFileMessage)message));
             return;
         }
@@ -209,14 +228,14 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
 
     private void sendControlMessage(Channel channel, StreamMessage message, GenericFutureListener listener) throws IOException
     {
-        logger.debug("[Stream #{}] on channel {} Sending {}", session.planId(), channel.id(), message);
+        logger.debug("{} Sending {}", createLogTag(session, channel), message);
 
         // we anticipate that the control messages are rather small, so allocating a ByteBuf shouldn't  blow out of memory.
         long messageSize = StreamMessage.serializedSize(message, protocolVersion);
         if (messageSize > 1 << 30)
         {
-            throw new IllegalStateException(String.format("[Stream #%s] something is seriously wrong with the calculated stream control message's size: %d bytes, type is %s",
-                                                          session.planId(), messageSize, message.type));
+            throw new IllegalStateException(String.format("%s something is seriously wrong with the calculated stream control message's size: %d bytes, type is %s",
+                                                          createLogTag(session, channel), messageSize, message.type));
         }
 
         // as control messages are (expected to be) small, we can simply allocate a ByteBuf here, wrap it, and send via the channel
@@ -248,8 +267,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             return null;
 
         Channel channel = channelFuture.channel();
-        logger.error("[Stream #{}] failed to send a stream message/file to peer {} on channel {}: msg = {}",
-                     session.planId(), connectionId, channel.id(), msg, future.cause());
+        logger.error("{} failed to send a stream message/file to peer {} on channel {}: msg = {}",
+                     createLogTag(session, channel), connectionId, channel.id(), msg, future.cause());
 
         // StreamSession will invoke close(), but we have to mark this sender as closed so the session doesn't try
         // to send any failure messages
@@ -332,14 +351,14 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
                     if (fileTransferSemaphore.tryAcquire(1, TimeUnit.SECONDS))
                         return true;
 
-                    // log a helpful message to operators in case they are wondering a given session might not be making progress.
+                    // log a helpful message to operators in case they are wondering why a given session might not be making progress.
                     long now = System.nanoTime();
                     if (now - timeOfLastLogging > logIntervalNanos)
                     {
                         timeOfLastLogging = now;
                         OutgoingFileMessage ofm = (OutgoingFileMessage)msg;
-                        logger.info("[Stream #{}] waiting to acquire a permit to begin streaming file {}. This message logs every {} minutes",
-                                    session.planId(), ofm.getFilename(), logInterval);
+                        logger.info("{} waiting to acquire a permit to begin streaming file {}. This message logs every {} minutes",
+                                    createLogTag(session, null), ofm.getFilename(), logInterval);
                     }
                 }
                 catch (InterruptedException ie)
@@ -424,8 +443,15 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             if (channel.attr(TRANSFERRING_FILE_ATTR).get())
                 return;
 
-            logger.trace("[Stream #{}] Sending keep-alive to {}.", session.planId(), session.peer);
-            channel.writeAndFlush(new KeepAliveMessage()).addListener(this::keepAliveListener);
+            try
+            {
+                logger.trace("{} Sending keep-alive to {}.", createLogTag(session, channel), session.peer);
+                sendControlMessage(channel, new KeepAliveMessage(), this::keepAliveListener);
+            }
+            catch (IOException ioe)
+            {
+                future.cancel(false);
+            }
         }
 
         private void keepAliveListener(Future<? super Void> future)
@@ -433,8 +459,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             if (future.isSuccess() || future.isCancelled())
                 return;
 
-            logger.debug("[Stream #{}] Could not send keep-alive message (perhaps stream session is finished?).",
-                         session.planId(), future.cause());
+            logger.debug("{} Could not send keep-alive message (perhaps stream session is finished?).",
+                         createLogTag(session, channel), future.cause());
         }
     }
 
@@ -466,7 +492,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     public void close()
     {
         closed = true;
-        logger.debug("[Stream #{}] Closing stream connection channels on {}", session.planId(), connectionId);
+        logger.debug("{} Closing stream connection channels on {}", createLogTag(session, null), connectionId);
         channelKeepAlives.stream().map(scheduledFuture -> scheduledFuture.cancel(false));
         channelKeepAlives.clear();
         fileTransferExecutor.shutdownNow();

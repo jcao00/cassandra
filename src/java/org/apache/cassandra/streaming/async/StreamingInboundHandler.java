@@ -45,9 +45,12 @@ import org.apache.cassandra.streaming.StreamResultFuture;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.messages.FileMessageHeader;
 import org.apache.cassandra.streaming.messages.IncomingFileMessage;
+import org.apache.cassandra.streaming.messages.KeepAliveMessage;
 import org.apache.cassandra.streaming.messages.StreamInitMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
 import org.apache.cassandra.utils.JVMStabilityInspector;
+
+import static org.apache.cassandra.streaming.async.NettyStreamingMessageSender.createLogTag;
 
 /**
  * Handles the inbound side of streaming messages and sstable data. From the incoming data, we derserialize the message
@@ -182,9 +185,19 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                     }
 
                     StreamMessage message = StreamMessage.deserialize(buffers, protocolVersion, null);
+
+                    // this is a bit of a hack, but as we don't necessarily need keep-alives to be tied to a session
+                    // (they could be arrive before or after wrt session lifecycle, due to races), just log that we received
+                    // the message and carry on
+                    if (message instanceof KeepAliveMessage)
+                    {
+                        logger.debug("{} Received {}", createLogTag(session, channel), message);
+                        continue;
+                    }
+
                     if (session == null)
                         session = deriveSession(message);
-                    logger.debug("[Stream #{}] Received {}", session.planId(), message);
+                    logger.debug("{} Received {}", createLogTag(session, channel), message);
                     session.messageReceived(message);
                 }
             }
@@ -205,7 +218,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
                 }
                 else
                 {
-                    logger.error("stream operation from {} failed", remoteAddress, t);
+                    logger.error("{} stream operation from {} failed", createLogTag(session, channel), remoteAddress, t);
                 }
             }
             finally
@@ -239,7 +252,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             }
 
             if (streamSession == null)
-                throw new IllegalStateException("no session found for message " + message);
+                throw new IllegalStateException(createLogTag(null, channel) + " no session found for message " + message);
 
             return streamSession;
         }

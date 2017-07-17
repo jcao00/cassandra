@@ -139,7 +139,7 @@ public class OutboundConnectionIdentifier
     /**
      * The remote node identifying address (the one to use for anything else than connecting to the node).
      */
-    public  InetAddress remote()
+    public InetAddress remote()
     {
         return remoteAddr.getAddress();
     }
@@ -163,7 +163,7 @@ public class OutboundConnectionIdentifier
     @Override
     public String toString()
     {
-        return remoteAddr == remoteConnectionAddr
+        return remoteAddr.equals(remoteConnectionAddr)
                ? String.format("%s (%s)", remoteAddr, connectionType)
                : String.format("%s on %s (%s)", remoteAddr, remoteConnectionAddr, connectionType);
     }

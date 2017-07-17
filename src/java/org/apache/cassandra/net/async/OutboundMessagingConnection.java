@@ -1,4 +1,4 @@
-/*
+    /*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -177,6 +177,9 @@ public class OutboundMessagingConnection
         // In that case we won't rely on that targetVersion before we're actually connected and so the version
         // detection in connect() will do its job.
         targetVersion = MessagingService.instance().getVersion(connectionId.remote());
+        logger.info("JEB::OMC.ctor - protocol version = {} for peer {} - versions = {}, contains = {}",
+                    targetVersion, connectionId, MessagingService.instance().getVersions(),
+                    MessagingService.instance().knowsVersion(connectionId.remote()));
     }
 
     /**
@@ -444,6 +447,7 @@ public class OutboundMessagingConnection
                 break;
             case DISCONNECT:
                 setStateIfNotClosed(state, State.NOT_READY);
+                reconnect();
                 break;
             case NEGOTIATION_FAILURE:
                 setStateIfNotClosed(state, State.NOT_READY);

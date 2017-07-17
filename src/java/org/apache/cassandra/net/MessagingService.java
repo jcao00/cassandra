@@ -1066,6 +1066,7 @@ public final class MessagingService implements MessagingServiceMBean
 
     public void receive(MessageIn message, int id)
     {
+        logger.trace("{} message received from {}", message.verb, message.from);
         TraceState state = Tracing.instance.initializeFromMessage(message);
         if (state != null)
             state.trace("{} message received from {}", message.verb, message.from);
@@ -1096,8 +1097,8 @@ public final class MessagingService implements MessagingServiceMBean
     {
         return callbacks.remove(messageId);
     }
-
     /**
+
      * @return System.nanoTime() when callback was created.
      */
     public long getRegisteredCallbackAge(int messageId)
@@ -1125,6 +1126,11 @@ public final class MessagingService implements MessagingServiceMBean
 
         Integer v = versions.put(endpoint, version);
         return v == null ? version : v;
+    }
+
+    public ConcurrentMap<InetAddress, Integer> getVersions()
+    {
+        return versions;
     }
 
     public void resetVersion(InetAddress endpoint)
