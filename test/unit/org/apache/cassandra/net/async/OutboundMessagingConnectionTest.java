@@ -403,7 +403,7 @@ public class OutboundMessagingConnectionTest
         HandshakeResult result = HandshakeResult.disconnect(MESSAGING_VERSION);
         omc.finishHandshake(result);
         Assert.assertNotNull(omc.getChannelWriter());
-        Assert.assertEquals(NOT_READY, omc.getState());
+        Assert.assertEquals(State.CREATING_CHANNEL, omc.getState());
         Assert.assertEquals(MESSAGING_VERSION, MessagingService.instance().getVersion(REMOTE_ADDR.getAddress()));
         Assert.assertEquals(count, omc.backlogSize());
     }

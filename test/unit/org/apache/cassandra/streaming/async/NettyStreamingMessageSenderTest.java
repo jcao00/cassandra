@@ -95,7 +95,7 @@ public class NettyStreamingMessageSenderTest
         Assert.assertFalse(task.future.isCancelled());
         task.run();
         Assert.assertTrue(task.future.isCancelled());
-        Assert.assertFalse(channel.releaseOutbound());
+        Assert.assertTrue(channel.releaseOutbound());
     }
 
     @Test
