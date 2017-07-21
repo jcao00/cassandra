@@ -648,11 +648,6 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         messageSender.sendMessage(prepareSynAck);
 
 
-        if (isPreview())
-        {
-            completePreview();
-            return;
-        }
         streamResult.handleSessionPrepared(this);
         maybeCompleted();
     }
@@ -668,12 +663,18 @@ public class StreamSession implements IEndpointStateChangeSubscriber
             messageSender.sendMessage(new PrepareAckMessage());
         }
 
-        startStreamingFiles(true);
+        if (isPreview())
+            completePreview();
+        else
+            startStreamingFiles(true);
     }
 
     private void prepareAck(PrepareAckMessage msg)
     {
-        startStreamingFiles(false);
+        if (isPreview())
+            completePreview();
+        else
+            startStreamingFiles(false);
     }
 
     /**
