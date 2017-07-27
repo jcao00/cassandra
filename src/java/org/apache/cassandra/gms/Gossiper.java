@@ -1541,7 +1541,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     public boolean isEnabled()
     {
-        return (scheduledGossipTask != null) && (!scheduledGossipTask.isCancelled());
+        return true;//(scheduledGossipTask != null) && (!scheduledGossipTask.isCancelled());
     }
 
     protected void maybeFinishShadowRound(InetAddress respondent, boolean isInShadowRound, Map<InetAddress, EndpointState> epStateMap)

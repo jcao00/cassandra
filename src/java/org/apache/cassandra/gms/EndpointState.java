@@ -62,12 +62,12 @@ public class EndpointState
         isAlive = true;
     }
 
-    HeartBeatState getHeartBeatState()
+    public HeartBeatState getHeartBeatState()
     {
         return hbState;
     }
 
-    void setHeartBeatState(HeartBeatState newHbState)
+    public void setHeartBeatState(HeartBeatState newHbState)
     {
         updateTimestamp();
         hbState = newHbState;

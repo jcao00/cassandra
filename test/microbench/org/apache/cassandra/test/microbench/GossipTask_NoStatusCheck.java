@@ -20,7 +20,10 @@ package org.apache.cassandra.test.microbench;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -39,6 +42,9 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.GossipDigest;
+import org.apache.cassandra.gms.GossipDigestSyn;
+import org.apache.cassandra.gms.GossipDigestSynVerbHandler;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gms.HeartBeatState;
 import org.apache.cassandra.gms.VersionedValue;
@@ -60,8 +66,8 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
 @State(Scope.Thread)
-@Warmup(iterations = 4, time = 5)
-@Measurement(iterations = 8, time = 20)
+@Warmup(iterations = 4, time = 4)
+@Measurement(iterations = 4, time = 10)
 @Fork(4)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @BenchmarkMode(Mode.SampleTime)
@@ -69,13 +75,14 @@ public class GossipTask_NoStatusCheck
 {
     private final Random random = new Random(238746234L);
     private final VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(Murmur3Partitioner.instance);
+    private final GossipDigestSynVerbHandler synVerbHandler = new GossipDigestSynVerbHandler();
 
     private Gossiper.GossipTask gossipTask;
-
+    private MessageIn<GossipDigestSyn> synMessage;
 
     // TODO:: FBUtil.bcast addr
 
-    @Param({ "16", "128", "512", "1024", "4096", "8192", "12000", "15000"})
+    @Param({ "16", "128", "512", "1024", "4096", "8192", "12000"})
     private int clusterSize;
 
     @Setup
@@ -104,11 +111,13 @@ public class GossipTask_NoStatusCheck
         int seedCount = 4;
         Set<InetAddress> seeds = endpoints.stream().limit(seedCount).collect(Collectors.toSet());
         Gossiper.instance.injectEndpointStateMap(endpointStateMap, seeds, endpoints);
+
+
+        synMessage = buildSyn(endpointStateMap);
     }
 
     private EndpointState generateEndpointState(InetAddress addr)
     {
-
         HeartBeatState hbs = new HeartBeatState(random.nextInt(), random.nextInt());
         Map<ApplicationState, VersionedValue> states = new HashMap<>();
         states.put(ApplicationState.RACK, valueFactory.rack("rack1"));
@@ -124,10 +133,38 @@ public class GossipTask_NoStatusCheck
         return new EndpointState(hbs, states);
     }
 
+    private MessageIn<GossipDigestSyn> buildSyn(ConcurrentMap<InetAddress, EndpointState> endpointStateMap)
+    {
+        List<GossipDigest> digests = new ArrayList<>(clusterSize);
+
+        for (Map.Entry<InetAddress, EndpointState> e : endpointStateMap.entrySet())
+            digests.add(new GossipDigest(e.getKey(), e.getValue().getHeartBeatState().getGeneration(), e.getValue().getHeartBeatState().getHeartBeatVersion() + 1));
+
+        GossipDigestSyn syn = new GossipDigestSyn(DatabaseDescriptor.getClusterName(), DatabaseDescriptor.getPartitionerName(), digests);
+        return MessageIn.create(InetAddresses.increment(FBUtilities.getBroadcastAddress()),
+                                syn,
+                                Collections.emptyMap(),
+                                MessagingService.Verb.GOSSIP_DIGEST_SYN,
+                                (int)System.currentTimeMillis());
+    }
+
     @Benchmark
-    public void run()
+    public void gossipTask_run()
     {
         gossipTask.run();
+    }
+
+    @Benchmark
+    public void doSynVerbHandler()
+    {
+        synVerbHandler.doVerb(synMessage, 42);
+    }
+
+    public static void main(String[] args) throws IOException
+    {
+        GossipTask_NoStatusCheck c = new GossipTask_NoStatusCheck();
+        c.setup();
+        c.doSynVerbHandler();
     }
 
     private static class MessageDropper implements IMessageSink
