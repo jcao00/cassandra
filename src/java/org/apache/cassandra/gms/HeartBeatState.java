@@ -27,19 +27,19 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 /**
  * HeartBeat State associated with any given endpoint.
  */
-class HeartBeatState
+public class HeartBeatState
 {
     public static final IVersionedSerializer<HeartBeatState> serializer = new HeartBeatStateSerializer();
 
     private volatile int generation;
     private volatile int version;
 
-    HeartBeatState(int gen)
+    public HeartBeatState(int gen)
     {
         this(gen, 0);
     }
 
-    HeartBeatState(int gen, int ver)
+    public HeartBeatState(int gen, int ver)
     {
         generation = gen;
         version = ver;

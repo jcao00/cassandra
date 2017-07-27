@@ -366,6 +366,7 @@ public final class MessagingService implements MessagingServiceMBean
     public static final EnumMap<Verb, IVersionedSerializer<?>> callbackDeserializers = new EnumMap<Verb, IVersionedSerializer<?>>(Verb.class)
     {{
         put(Verb.MUTATION, WriteResponse.serializer);
+        put(Verb.MUTATION, WriteResponse.serializer);
         put(Verb.HINT, HintResponse.serializer);
         put(Verb.READ_REPAIR, WriteResponse.serializer);
         put(Verb.COUNTER_MUTATION, WriteResponse.serializer);
@@ -1544,5 +1545,10 @@ public final class MessagingService implements MessagingServiceMBean
     public List<SocketThread> getSocketThreads()
     {
         return socketThreads;
+    }
+
+    public void setListening()
+    {
+        listenGate.signalAll();
     }
 }

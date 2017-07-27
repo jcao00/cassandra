@@ -54,7 +54,7 @@ public class EndpointState
         this(initialHbState, new EnumMap<ApplicationState, VersionedValue>(ApplicationState.class));
     }
 
-    EndpointState(HeartBeatState initialHbState, Map<ApplicationState, VersionedValue> states)
+    public EndpointState(HeartBeatState initialHbState, Map<ApplicationState, VersionedValue> states)
     {
         hbState = initialHbState;
         applicationState = new AtomicReference<Map<ApplicationState, VersionedValue>>(new EnumMap<>(states));

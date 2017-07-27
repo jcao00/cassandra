@@ -138,7 +138,9 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     private volatile long lastProcessedMessageAt = System.currentTimeMillis();
 
-    private class GossipTask implements Runnable
+    public volatile boolean executeDoStatusCheck;
+
+    public class GossipTask implements Runnable
     {
         public void run()
         {
@@ -189,7 +191,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                     if (!gossipedToSeed || liveEndpoints.size() < seeds.size())
                         maybeGossipToSeed(message);
 
-                    doStatusCheck();
+                    if (executeDoStatusCheck)
+                        doStatusCheck();
                 }
             }
             catch (Exception e)
@@ -1680,4 +1683,15 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             logger.info("No gossip backlog; proceeding");
     }
 
+    public void injectEndpointStateMap(ConcurrentMap<InetAddress, EndpointState> endpointStateMap, Set<InetAddress> seeds, Set<InetAddress> liveEndpoints)
+    {
+        this.endpointStateMap.clear();
+        this.endpointStateMap.putAll(endpointStateMap);
+
+        this.seeds.clear();
+        this.seeds.addAll(seeds);
+
+        this.liveEndpoints.clear();
+        this.liveEndpoints.addAll(liveEndpoints);
+    }
 }
