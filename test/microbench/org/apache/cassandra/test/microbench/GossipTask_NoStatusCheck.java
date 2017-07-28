@@ -43,6 +43,8 @@ import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
 import org.apache.cassandra.gms.GossipDigest;
+import org.apache.cassandra.gms.GossipDigestAck;
+import org.apache.cassandra.gms.GossipDigestAckVerbHandler;
 import org.apache.cassandra.gms.GossipDigestSyn;
 import org.apache.cassandra.gms.GossipDigestSynVerbHandler;
 import org.apache.cassandra.gms.Gossiper;
@@ -76,9 +78,11 @@ public class GossipTask_NoStatusCheck
     private final Random random = new Random(238746234L);
     private final VersionedValue.VersionedValueFactory valueFactory = new VersionedValue.VersionedValueFactory(Murmur3Partitioner.instance);
     private final GossipDigestSynVerbHandler synVerbHandler = new GossipDigestSynVerbHandler();
+    private final GossipDigestAckVerbHandler ackVerbHandler = new GossipDigestAckVerbHandler();
 
     private Gossiper.GossipTask gossipTask;
     private MessageIn<GossipDigestSyn> synMessage;
+    private MessageIn<GossipDigestAck> ackMessage;
 
     // TODO:: FBUtil.bcast addr
 
@@ -112,8 +116,8 @@ public class GossipTask_NoStatusCheck
         Set<InetAddress> seeds = endpoints.stream().limit(seedCount).collect(Collectors.toSet());
         Gossiper.instance.injectEndpointStateMap(endpointStateMap, seeds, endpoints);
 
-
         synMessage = buildSyn(endpointStateMap);
+        ackMessage = buildAck(endpointStateMap);
     }
 
     private EndpointState generateEndpointState(InetAddress addr)
@@ -148,6 +152,33 @@ public class GossipTask_NoStatusCheck
                                 (int)System.currentTimeMillis());
     }
 
+    private MessageIn<GossipDigestAck> buildAck(ConcurrentMap<InetAddress, EndpointState> endpointStateMap)
+    {
+        List<GossipDigest> digests = new ArrayList<>(clusterSize / 2 + 1);
+        Map<InetAddress, EndpointState> epStateMap = new HashMap<>(clusterSize / 2 + 1);
+        int i = 0;
+        for (Map.Entry<InetAddress, EndpointState> e : endpointStateMap.entrySet())
+        {
+            if (i % 2 == 0)
+            {
+                digests.add(new GossipDigest(e.getKey(), e.getValue().getHeartBeatState().getGeneration(), e.getValue().getHeartBeatState().getHeartBeatVersion() + 1));
+            }
+            else
+            {
+                HeartBeatState heartBeatState = new HeartBeatState(e.getValue().getHeartBeatState().getGeneration(), e.getValue().getHeartBeatState().getHeartBeatVersion() + 1);
+                EndpointState endpointState = new EndpointState(heartBeatState, Collections.emptyMap());
+                epStateMap.put(e.getKey(), endpointState);
+            }
+        }
+
+        GossipDigestAck ack = new GossipDigestAck(digests, epStateMap);
+        return MessageIn.create(InetAddresses.increment(FBUtilities.getBroadcastAddress()),
+                                ack,
+                                Collections.emptyMap(),
+                                MessagingService.Verb.GOSSIP_DIGEST_ACK,
+                                (int)System.currentTimeMillis());
+    }
+
     @Benchmark
     public void gossipTask_run()
     {
@@ -158,6 +189,12 @@ public class GossipTask_NoStatusCheck
     public void doSynVerbHandler()
     {
         synVerbHandler.doVerb(synMessage, 42);
+    }
+
+    @Benchmark
+    public void doAckVerbHandler()
+    {
+        ackVerbHandler.doVerb(ackMessage, 42);
     }
 
     public static void main(String[] args) throws IOException
