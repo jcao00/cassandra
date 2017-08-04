@@ -33,6 +33,17 @@ import io.netty.channel.ChannelConfig;
 import io.netty.util.ReferenceCountUtil;
 import org.apache.cassandra.io.util.RebufferingInputStream;
 
+/**
+ * Queues up netty {@link ByteBuf}s are exposes them as an {@link java.io.InputStream}/{@link org.apache.cassandra.io.util.DataInputPlus}.
+ * The intended use is for processing those buffers is not on the netty event loop, but on some other thread - assumably
+ * because processing the buffer(s) would chew up too many CPU cycles or the data is too large (spread over many buffers)
+ * to chew through in one pass.
+ *
+ * This class also takes advantage of netty's high/low water marks and can disable auto-read on the channel when there are
+ * too many unconsumed bytes (high water mark) in the queue, and will reenable auto-read when the byte count goes down
+ * (low-water mark). This is to prevent from memory problems due to the channel pulling in buffers as fast as it can
+ * while the processing thread is slow or getting bogged down.
+ */
 public class RebufferingByteBufDataInputPlus extends RebufferingInputStream implements ReadableByteChannel
 {
     /**

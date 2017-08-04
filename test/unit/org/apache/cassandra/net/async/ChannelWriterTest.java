@@ -29,12 +29,9 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
-import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.MessageOut;
@@ -99,37 +96,6 @@ public class ChannelWriterTest
     }
 
     @Test
-    public void write_NotWritable()
-    {
-        channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
-
-        // send one message through, which will trigger the writability check (and turn it off)
-        Assert.assertTrue(channel.isWritable());
-        ByteBuf buf = channel.alloc().buffer(8, 8);
-        channel.unsafe().outboundBuffer().addMessage(buf, buf.capacity(), channel.newPromise());
-        Assert.assertFalse(channel.isWritable());
-        Assert.assertFalse(channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42), true));
-        Assert.assertFalse(channel.isWritable());
-        Assert.assertFalse(channel.releaseOutbound());
-        buf.release();
-    }
-
-    @Test
-    public void write_NotWritableButWriteAnyway()
-    {
-        channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
-
-        // send one message through, which will trigger the writability check (and turn it off)
-        Assert.assertTrue(channel.isWritable());
-        ByteBuf buf = channel.alloc().buffer(8, 8);
-        channel.unsafe().outboundBuffer().addMessage(buf, buf.capacity(), channel.newPromise());
-        Assert.assertFalse(channel.isWritable());
-        Assert.assertTrue(channelWriter.write(new QueuedMessage(new MessageOut<>(ECHO), 42), false));
-        Assert.assertTrue(channel.isWritable());
-        Assert.assertTrue(channel.releaseOutbound());
-    }
-
-    @Test
     public void write_Coalescing_LostRaceForFlushTask()
     {
         CoalescingChannelWriter channelWriter = resetEnvForCoalescing(DatabaseDescriptor.getOtcCoalescingEnoughCoalescedMessages());
@@ -168,7 +134,7 @@ public class ChannelWriterTest
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() > 0);
         Assert.assertTrue(channelWriter.scheduledFlush.get());
 
-        // this unfortunately know a little too much about how the sausage is made in CoalescingChannelWriter :-/
+        // this unfortunately knows a little too much about how the sausage is made in CoalescingChannelWriter :-/
         channel.runScheduledPendingTasks();
         channel.runPendingTasks();
         Assert.assertTrue(channel.unsafe().outboundBuffer().totalPendingWriteBytes() == 0);
@@ -184,7 +150,8 @@ public class ChannelWriterTest
         {
             public void flush(ChannelHandlerContext ctx) throws Exception
             {
-                cw.onTriggeredFlush(ctx);
+                if (cw.onTriggeredFlush(ctx))
+                    ctx.flush();
             }
         });
         omc.setChannelWriter(cw);
@@ -197,22 +164,6 @@ public class ChannelWriterTest
         BlockingQueue<QueuedMessage> queue = new LinkedBlockingQueue<>();
         Assert.assertEquals(0, channelWriter.writeBacklog(queue, false));
         Assert.assertFalse(channel.releaseOutbound());
-    }
-
-    @Test
-    public void writeBacklog_ChannelNotWritable()
-    {
-        Assert.assertTrue(channel.isWritable());
-        // force the channel to be non writable
-        channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
-        ByteBuf buf = channel.alloc().buffer(8, 8);
-        channel.unsafe().outboundBuffer().addMessage(buf, buf.capacity(), channel.newPromise());
-        Assert.assertFalse(channel.isWritable());
-
-        Assert.assertEquals(0, channelWriter.writeBacklog(new LinkedBlockingQueue<>(), false));
-        Assert.assertFalse(channel.releaseOutbound());
-        Assert.assertFalse(channel.isWritable());
-        buf.release();
     }
 
     @Test

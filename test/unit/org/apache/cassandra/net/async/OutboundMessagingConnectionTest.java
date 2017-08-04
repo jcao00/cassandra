@@ -21,10 +21,13 @@ package org.apache.cassandra.net.async;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLHandshakeException;
 
@@ -55,6 +58,8 @@ import static org.apache.cassandra.net.async.OutboundMessagingConnection.State.C
 import static org.apache.cassandra.net.async.OutboundMessagingConnection.State.CREATING_CHANNEL;
 import static org.apache.cassandra.net.async.OutboundMessagingConnection.State.NOT_READY;
 import static org.apache.cassandra.net.async.OutboundMessagingConnection.State.READY;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class OutboundMessagingConnectionTest
 {
@@ -69,10 +74,35 @@ public class OutboundMessagingConnectionTest
 
     private IEndpointSnitch snitch;
 
+
+    private final AtomicInteger messageId = new AtomicInteger(0);
+    private final static MessagingService.Verb VERB_DROPPABLE = MessagingService.Verb.MUTATION; // Droppable, 2s timeout
+    private final static MessagingService.Verb VERB_NONDROPPABLE = MessagingService.Verb.GOSSIP_DIGEST_ACK; // Not droppable
+
+    private final static long NANOS_FOR_TIMEOUT;
+    static
+    {
+        DatabaseDescriptor.daemonInitialization();
+        NANOS_FOR_TIMEOUT = TimeUnit.MILLISECONDS.toNanos(VERB_DROPPABLE.getTimeout()*2);
+    }
+
     @BeforeClass
     public static void before()
     {
         DatabaseDescriptor.daemonInitialization();
+    }
+
+    /**
+     * Verifies our assumptions whether a Verb can be dropped or not. The tests make use of droppabilty, and
+     * may produce wrong test results if their droppabilty is changed.
+     */
+    @BeforeClass
+    public static void assertDroppability()
+    {
+        if (!MessagingService.DROPPABLE_VERBS.contains(VERB_DROPPABLE))
+            throw new AssertionError("Expected " + VERB_DROPPABLE + " to be droppable");
+        if (MessagingService.DROPPABLE_VERBS.contains(VERB_NONDROPPABLE))
+            throw new AssertionError("Expected " + VERB_NONDROPPABLE + " not to be droppable");
     }
 
     @Before
@@ -470,5 +500,107 @@ public class OutboundMessagingConnectionTest
         omc.reconnectWithNewIp(RECONNECT_ADDR);
         Assert.assertNotSame(omc.getConnectionId(), originalId);
         Assert.assertSame(NOT_READY, omc.getState());
+    }
+
+    /**
+     * Tests that non-droppable messages are never expired
+     */
+    @Test
+    public void testNondroppable() throws UnknownHostException
+    {
+        long nanoTimeBeforeEnqueue = System.nanoTime();
+
+        assertFalse("Fresh OutboundMessagingConnection contains expired messages",
+                    omc.backlogContainsExpiredMessages(nanoTimeBeforeEnqueue));
+
+        fillToPurgeSize(omc, VERB_NONDROPPABLE);
+        fillToPurgeSize(omc, VERB_NONDROPPABLE);
+        omc.expireMessages(expirationTimeNanos());
+
+        assertFalse("OutboundMessagingConnection with non-droppable verbs should not expire",
+                    omc.backlogContainsExpiredMessages(expirationTimeNanos()));
+    }
+
+    /**
+     * Tests that droppable messages will be dropped after they expire, but not before.
+     *
+     * @throws UnknownHostException
+     */
+    @Test
+    public void testDroppable() throws UnknownHostException
+    {
+        long nanoTimeBeforeEnqueue = System.nanoTime();
+
+        initialFill(omc, VERB_DROPPABLE);
+        assertFalse("OutboundMessagingConnection with droppable verbs should not expire immediately",
+                    omc.backlogContainsExpiredMessages(nanoTimeBeforeEnqueue));
+
+        omc.expireMessages(nanoTimeBeforeEnqueue);
+        assertFalse("OutboundMessagingConnection with droppable verbs should not expire with enqueue-time expiration",
+                    omc.backlogContainsExpiredMessages(nanoTimeBeforeEnqueue));
+
+        // Lets presume, expiration time have passed => At that time there shall be expired messages in the Queue
+        long nanoTimeWhenExpired = expirationTimeNanos();
+        assertTrue("OutboundMessagingConnection with droppable verbs should have expired",
+                   omc.backlogContainsExpiredMessages(nanoTimeWhenExpired));
+
+        // Using the same timestamp, lets expire them and check whether they have gone
+        omc.expireMessages(nanoTimeWhenExpired);
+        assertFalse("OutboundMessagingConnection should not have expired entries",
+                    omc.backlogContainsExpiredMessages(nanoTimeWhenExpired));
+
+        // Actually the previous test can be done in a harder way: As expireMessages() has run, we cannot have
+        // ANY expired values, thus lets test also against nanoTimeBeforeEnqueue
+        assertFalse("OutboundMessagingConnection should not have any expired entries",
+                    omc.backlogContainsExpiredMessages(nanoTimeBeforeEnqueue));
+
+    }
+
+    /**
+     * Fills the given {@link OutboundMessagingConnection} with (1 + BACKLOG_PURGE_SIZE), elements. The first
+     * BACKLOG_PURGE_SIZE elements are non-droppable, the last one is a message with the given Verb and can be
+     * droppable or non-droppable.
+     */
+    private void initialFill(OutboundMessagingConnection omc, MessagingService.Verb verb)
+    {
+        assertFalse("Fresh OutboundMessagingConnection contains expired messages",
+                    omc.backlogContainsExpiredMessages(System.nanoTime()));
+
+        fillToPurgeSize(omc, VERB_NONDROPPABLE);
+        MessageOut<?> messageDroppable10s = new MessageOut<>(verb);
+        omc.sendMessage(messageDroppable10s, nextMessageId());
+        omc.expireMessages(System.nanoTime());
+    }
+
+    /**
+     * Returns a nano timestamp in the far future, when expiration should have been performed for VERB_DROPPABLE.
+     * The offset is chosen as 2 times of the expiration time of VERB_DROPPABLE.
+     *
+     * @return The future nano timestamp
+     */
+    private long expirationTimeNanos()
+    {
+        return System.nanoTime() + NANOS_FOR_TIMEOUT;
+    }
+
+    private int nextMessageId()
+    {
+        return messageId.incrementAndGet();
+    }
+
+    /**
+     * Adds BACKLOG_PURGE_SIZE messages to the queue. Hint: At BACKLOG_PURGE_SIZE expiration starts to work.
+     *
+     * @param omc
+     *            The {@link OutboundMessagingConnection}
+     * @param verb
+     *            The verb that defines the message type
+     */
+    private void fillToPurgeSize(OutboundMessagingConnection omc, MessagingService.Verb verb)
+    {
+        for (int i = 0; i < OutboundMessagingConnection.BACKLOG_PURGE_SIZE; i++)
+        {
+            omc.sendMessage(new MessageOut<>(verb), nextMessageId());
+        }
     }
 }

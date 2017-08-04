@@ -37,6 +37,11 @@ public class QueuedMessage implements CoalescingStrategies.Coalescable
     public final boolean droppable;
     private final boolean retryable;
 
+    /**
+     * Flag to indicate if this message was ever added to a backlog queue such as {@link OutboundMessagingConnection#backlog}.
+     */
+    public boolean wasBacklogged;
+
     public QueuedMessage(MessageOut<?> message, int id)
     {
         this(message, id, System.nanoTime(), MessagingService.DROPPABLE_VERBS.contains(message.verb), true);
@@ -53,9 +58,9 @@ public class QueuedMessage implements CoalescingStrategies.Coalescable
     }
 
     /** don't drop a non-droppable message just because it's timestamp is expired */
-    public boolean isTimedOut()
+    public boolean isTimedOut(long nowNanos)
     {
-        return droppable && timestampNanos < System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(message.getTimeout());
+        return droppable && nowNanos - timestampNanos > TimeUnit.MILLISECONDS.toNanos(message.getTimeout());
     }
 
     public boolean shouldRetry()
@@ -65,7 +70,9 @@ public class QueuedMessage implements CoalescingStrategies.Coalescable
 
     public QueuedMessage createRetry()
     {
-        return new QueuedMessage(message, id, System.nanoTime(), droppable, false);
+        QueuedMessage msg = new QueuedMessage(message, id, System.nanoTime(), droppable, false);
+        msg.wasBacklogged = this.wasBacklogged;
+        return msg;
     }
 
     public long timestampNanos()

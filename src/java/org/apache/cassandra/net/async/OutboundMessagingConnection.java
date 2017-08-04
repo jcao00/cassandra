@@ -21,12 +21,14 @@ package org.apache.cassandra.net.async;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.Iterator;
 import java.util.Optional;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -37,6 +39,7 @@ import org.slf4j.LoggerFactory;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.util.concurrent.Future;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
@@ -51,6 +54,8 @@ import org.apache.cassandra.utils.CoalescingStrategies;
 import org.apache.cassandra.utils.CoalescingStrategies.CoalescingStrategy;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.NoSpamLogger;
+import org.jctools.queues.QueueFactory;
+import org.jctools.queues.spec.ConcurrentQueueSpec;
 
 /**
  * Represents one connection to a peer, and handles the state transistions on the connection and the netty {@link Channel}
@@ -84,6 +89,20 @@ public class OutboundMessagingConnection
      * A minimum number of milliseconds to wait for a connection (TCP socket connect + handshake)
      */
     private static final int MINIMUM_CONNECT_TIMEOUT_MS = 2000;
+
+    static
+    {
+        int otc_backlog_expiration_interval_in_ms = DatabaseDescriptor.getOtcBacklogExpirationInterval();
+        if (otc_backlog_expiration_interval_in_ms != Config.otc_backlog_expiration_interval_ms_default)
+            logger.info("OutboundTcpConnection backlog expiration interval set to to {}ms", otc_backlog_expiration_interval_in_ms);
+    }
+    private static final String BACKLOG_PURGE_SIZE_PROPERTY = Config.PROPERTY_PREFIX + "otc_backlog_purge_size";
+    @VisibleForTesting
+    static final int BACKLOG_PURGE_SIZE = Integer.getInteger(BACKLOG_PURGE_SIZE_PROPERTY, 1024);
+    private final AtomicBoolean backlogExpirationActive = new AtomicBoolean(false);
+    private volatile long backlogNextExpirationTime;
+
+
     private final IInternodeAuthenticator authenticator;
 
     /**
@@ -168,7 +187,7 @@ public class OutboundMessagingConnection
         this.connectionId = connectionId;
         this.encryptionOptions = encryptionOptions;
         this.authenticator = authenticator;
-        backlog = new ConcurrentLinkedQueue<>();
+        backlog = QueueFactory.newQueue(ConcurrentQueueSpec.createBoundedMpmc(0));
         droppedMessageCount = new AtomicLong(0);
         completedMessageCount = new AtomicLong(0);
         state = new AtomicReference<>(State.NOT_READY);
@@ -204,9 +223,11 @@ public class OutboundMessagingConnection
         State state = this.state.get();
         if (state == State.READY)
         {
+            expireMessages(System.nanoTime());
             if (channelWriter.write(queuedMessage, false))
                 return true;
 
+            queuedMessage.wasBacklogged = true;
             backlog.add(queuedMessage);
             return false;
         }
@@ -217,10 +238,73 @@ public class OutboundMessagingConnection
         }
         else
         {
+            queuedMessage.wasBacklogged = true;
             backlog.add(queuedMessage);
             connect();
             return true;
         }
+    }
+
+    /**
+     * Expire elements from the {@link #backlog} if the queue is pretty full and an expiration run is not already in progress.
+     * This method will only remove droppable expired entries. If no such element exists, nothing is removed from the queue.
+     *
+     * @param timestampNanos The current time as from System.nanoTime()
+     */
+    @VisibleForTesting
+    void expireMessages(long timestampNanos)
+    {
+        if (backlog.size() <= BACKLOG_PURGE_SIZE)
+            return; // Plenty of space
+
+        if (backlogNextExpirationTime - timestampNanos > 0)
+            return; // Expiration is not due.
+
+        /**
+         * Expiration is an expensive process. Iterating the queue locks the queue for both writes and
+         * reads during iter.next() and iter.remove(). Thus letting only a single Thread do expiration.
+         */
+        if (backlogExpirationActive.compareAndSet(false, true))
+        {
+            try
+            {
+                Iterator<QueuedMessage> iter = backlog.iterator();
+                while (iter.hasNext())
+                {
+                    QueuedMessage qm = iter.next();
+                    if (!qm.droppable)
+                        continue;
+                    if (!qm.isTimedOut(timestampNanos))
+                        continue;
+                    iter.remove();
+                    droppedMessageCount.incrementAndGet();
+                }
+
+                if (logger.isTraceEnabled())
+                {
+                    long duration = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - timestampNanos);
+                    logger.trace("Expiration of {} took {}μs", connectionId, duration);
+                }
+            }
+            finally
+            {
+                long backlogExpirationIntervalNanos = TimeUnit.MILLISECONDS.toNanos(DatabaseDescriptor.getOtcBacklogExpirationInterval());
+                backlogNextExpirationTime = timestampNanos + backlogExpirationIntervalNanos;
+                backlogExpirationActive.set(false);
+            }
+        }
+    }
+
+    /**
+     * This is a helper method for unit testing. Disclaimer: Do not use this method outside unit tests, as
+     * this method is iterating the queue which can be an expensive operation (CPU time, queue locking).
+     *
+     * @return true, if the queue contains at least one expired element
+     */
+    @VisibleForTesting // (otherwise = VisibleForTesting.NONE)
+    boolean backlogContainsExpiredMessages(long nowNanos)
+    {
+        return backlog.stream().anyMatch(entry -> entry.isTimedOut(nowNanos));
     }
 
     /**
@@ -291,6 +375,13 @@ public class OutboundMessagingConnection
 
     private Bootstrap buildBootstrap(boolean compress)
     {
+        final WriteBufferWaterMark waterMark;
+        // disable any nuttiness with water marking on the gossip channel
+        if (connectionId.type() == OutboundConnectionIdentifier.ConnectionType.GOSSIP)
+            waterMark = new WriteBufferWaterMark(Integer.MAX_VALUE, Integer.MAX_VALUE);
+        else
+            waterMark = WriteBufferWaterMark.DEFAULT;
+
         boolean tcpNoDelay = isLocalDC(connectionId.local(), connectionId.remote()) ? INTRADC_TCP_NODELAY : DatabaseDescriptor.getInterDCTcpNoDelay();
         int sendBufferSize = DatabaseDescriptor.getInternodeSendBufferSize() > 0
                              ? DatabaseDescriptor.getInternodeSendBufferSize()
@@ -307,6 +398,7 @@ public class OutboundMessagingConnection
                                                                   .backlogSupplier(() -> nextBackloggedMessage())
                                                                   .messageResultConsumer(this::handleMessageResult)
                                                                   .protocolVersion(targetVersion)
+                                                                  .waterMark(waterMark)
                                                                   .build();
 
         return NettyFactory.instance.createOutboundBootstrap(params);
@@ -318,7 +410,7 @@ public class OutboundMessagingConnection
         if (msg == null)
             return null;
 
-        if (!msg.isTimedOut())
+        if (!msg.isTimedOut(System.nanoTime()))
             return msg;
 
         if (msg.shouldRetry())
@@ -658,6 +750,7 @@ public class OutboundMessagingConnection
     @VisibleForTesting
     void addToBacklog(QueuedMessage msg)
     {
+        msg.wasBacklogged = true;
         backlog.add(msg);
     }
 

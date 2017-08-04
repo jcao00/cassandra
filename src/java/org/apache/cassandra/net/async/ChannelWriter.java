@@ -266,6 +266,15 @@ abstract class ChannelWriter
     }
 
     /**
+     * For testing purposes only
+     */
+    @VisibleForTesting
+    void setPendingMessageCount(int count)
+    {
+        pendingMessageCount.set(count);
+    }
+
+    /**
      * Close the underlying channel but only after having make sure every pending message has been properly sent.
      */
     void softClose()
@@ -295,14 +304,14 @@ abstract class ChannelWriter
      * <p>
      * Note: this method is invoked on the netty event loop.
      */
-    abstract void onMessageProcessed(ChannelHandlerContext ctx);
+    abstract boolean onMessageProcessed(ChannelHandlerContext ctx);
 
     /**
      * Invoked when pipeline receives a flush request.
      * <p>
      * Note: this method is invoked on the netty event loop.
      */
-    abstract void onTriggeredFlush(ChannelHandlerContext ctx);
+    abstract boolean onTriggeredFlush(ChannelHandlerContext ctx);
 
     /**
      * Handles the non-coalescing flush case.
@@ -326,15 +335,15 @@ abstract class ChannelWriter
             return channel.writeAndFlush(message);
         }
 
-        void onMessageProcessed(ChannelHandlerContext ctx)
+        boolean onMessageProcessed(ChannelHandlerContext ctx)
         {
-            if (pendingMessageCount.decrementAndGet() == 0)
-                ctx.flush();
+            return pendingMessageCount.decrementAndGet() == 0;
         }
 
-        void onTriggeredFlush(ChannelHandlerContext ctx)
+        boolean onTriggeredFlush(ChannelHandlerContext ctx)
         {
             // Don't actually flush on "normal" flush calls to the channel.
+            return false;
         }
     }
 
@@ -393,7 +402,7 @@ abstract class ChannelWriter
                     scheduledFlush.set(false);
                     // we execute() the flush() as an additional task rather than immediately in-line as there is a
                     // race condition when this task runs (executing on the event loop) and a thread that writes the channel (top of this method).
-                    // If this task is picked up but before the scheduledFlush falg is flipped, the other thread writes
+                    // If this task is picked up but before the scheduledFlush flag is flipped, the other thread writes
                     // and then checks the scheduledFlush (which is still true) and exits.
                     // This task changes the flag and if it calls flush() in-line, and netty flushs everything immediately (that is, what's been serialized)
                     // to the transport as we're on the event loop. The other thread's write became a task that executes *after* this task in the netty queue,
@@ -404,15 +413,16 @@ abstract class ChannelWriter
             return future;
         }
 
-        void onMessageProcessed(ChannelHandlerContext ctx)
+        boolean onMessageProcessed(ChannelHandlerContext ctx)
         {
             pendingMessageCount.decrementAndGet();
+            return false;
         }
 
-        void onTriggeredFlush(ChannelHandlerContext ctx)
+        boolean onTriggeredFlush(ChannelHandlerContext ctx)
         {
             // When coalescing, obey the flush calls normally
-            ctx.flush();
+            return true;
         }
     }
 }

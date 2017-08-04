@@ -24,9 +24,10 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
+
+import javax.annotation.Resource;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
@@ -34,7 +35,10 @@ import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.ByteToMessageDecoder;
+import io.netty.util.ReferenceCountUtil;
+import io.netty.util.concurrent.FastThreadLocalThread;
 import org.apache.cassandra.db.monitoring.ApproximateTime;
 import org.apache.cassandra.exceptions.UnknownTableException;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
@@ -43,20 +47,40 @@ import org.apache.cassandra.net.MessagingService;
 
 /**
  * Parses out individual messages from the incoming buffers. Each message, both header and payload, is incrementally built up
- * from the available input data, then passed to the {@link #messageConsumer}.
+ * from the available input data, then passed to the {@link #messageConsumer}. There are two "modes" of execution:
  *
- * Note: this class derives from {@link ByteToMessageDecoder} to take advantage of the {@link ByteToMessageDecoder.Cumulator}
- * behavior across {@link #decode(ChannelHandlerContext, ByteBuf, List)} invocations. That way we don't have to maintain
- * the not-fully consumed {@link ByteBuf}s.
+ * - {@link Mode#INLINE} - messages are built up incrementally, in a non-blocking manner, which is more natural to the
+ * asynchronous behavior of netty.
+ * - {@link Mode#OFFLOAD} - messages are built up in a blocking manner. To achieve this, as cassandra's derserialization functions
+ * are blocking, incoming buffers must be added to a queue ({@link #queuedBuffers}), which are then consumed by a task
+ * on a background thread (see {@link #process(ChannelHandlerContext)}).
+ *
+ * Each instance deafults to {@link Mode#INLINE}, but on the first occurance of a message's payload exceeding {@link #largeMessageThreshold},
+ * we switch the mode to {@link Mode#OFFLOAD}. Once the mode is switched we never change back because:
+ *
+ * - the code complexity, and dealing with the contending threads, is non-trivial of switching back-and-forth-and-back-and-forth-and-...
+ * - we already send messages on different sockets/channels based on message size (see {@link OutboundMessagingPool}), and we
+ * use that threshold as the default for instances here (see {@link #largeMessageThreshold}).
  */
-class MessageInHandler extends ByteToMessageDecoder
+class MessageInHandler extends ChannelInboundHandlerAdapter
 {
     public static final Logger logger = LoggerFactory.getLogger(MessageInHandler.class);
 
     /**
+     * Determines how to process incoming {@link ByteBuf}s.
+     */
+    enum Mode
+    {
+        /** Process buffers on the netty event loop */
+        INLINE,
+        /** Process buffers on a background thread */
+        OFFLOAD
+    }
+
+    /**
      * The default target for consuming deserialized {@link MessageIn}.
      */
-    static final BiConsumer<MessageIn, Integer> MESSAGING_SERVICE_CONSUMER = (messageIn, id) -> MessagingService.instance().receive(messageIn, id);
+    private static final BiConsumer<MessageIn, Integer> MESSAGING_SERVICE_CONSUMER = (messageIn, id) -> MessagingService.instance().receive(messageIn, id);
 
     private enum State
     {
@@ -79,6 +103,18 @@ class MessageInHandler extends ByteToMessageDecoder
      */
     private static final int SECOND_SECTION_BYTE_COUNT = 8;
 
+    /**
+     * The default low-water mark to set on {@link #queuedBuffers} when in {@link Mode#OFFLOAD}.
+     * See {@link RebufferingByteBufDataInputPlus} for more information.
+     */
+    private static final int OFFLINE_QUEUE_LOW_WATER_MARK = 1 << 14;
+
+    /**
+     * The default high-water mark to set on {@link #queuedBuffers} when in {@link Mode#OFFLOAD}.
+     * See {@link RebufferingByteBufDataInputPlus} for more information.
+     */
+    private static final int OFFLINE_QUEUE_HIGH_WATER_MARK = 1 << 15;
+
     private final InetAddress peer;
     private final int messagingVersion;
 
@@ -88,30 +124,107 @@ class MessageInHandler extends ByteToMessageDecoder
      */
     private final BiConsumer<MessageIn, Integer> messageConsumer;
 
+    /**
+     * The byte of a message at which we switch modes from {@link Mode#INLINE} to {@link Mode#OFFLOAD}.
+     */
+    private final long largeMessageThreshold;
+
     private State state;
     private MessageHeader messageHeader;
 
+    /**
+     * Only used when {@link #mode} is {@link Mode#OFFLOAD} as a way to communicate across threads.
+     */
+    private volatile boolean closed;
+
+    private Mode mode;
+
+    /**
+     * When in {@link Mode#INLINE}, if a buffer is not completely consumed, stash it here for the next invocation of
+     * {@link #channelRead(ChannelHandlerContext, Object)}.
+     */
+    private ByteBuf retainedInlineBuffer;
+
+    /**
+     * A queue in which to stash incoming {@link ByteBuf}s when in {@link Mode#OFFLOAD} mode.
+     */
+    private RebufferingByteBufDataInputPlus queuedBuffers;
+
     MessageInHandler(InetAddress peer, int messagingVersion)
     {
-        this (peer, messagingVersion, MESSAGING_SERVICE_CONSUMER);
+        this (peer, messagingVersion, MESSAGING_SERVICE_CONSUMER, OutboundMessagingPool.LARGE_MESSAGE_THRESHOLD);
     }
 
-    MessageInHandler(InetAddress peer, int messagingVersion, BiConsumer<MessageIn, Integer> messageConsumer)
+    MessageInHandler(InetAddress peer, int messagingVersion, BiConsumer<MessageIn, Integer> messageConsumer, long largeMessageThreshold)
     {
         this.peer = peer;
         this.messagingVersion = messagingVersion;
         this.messageConsumer = messageConsumer;
         state = State.READ_FIRST_CHUNK;
+        mode = Mode.INLINE;
+        this.largeMessageThreshold = largeMessageThreshold;
     }
 
     /**
-     * For each new message coming in, builds up a {@link MessageHeader} instance incrementally. This method
-     * attempts to deserialize as much header information as it can out of the incoming {@link ByteBuf}, and
+     * {@inheritDoc}
+     *
+     * When in {@link Mode#INLINE} mode, we want to do some special buffer handling when the incoming {@link ByteBuf}
+     * is not completely consumed. Based on the implemenetation of {@link ByteToMessageDecoder}, we keep around
+     * a single 'retained' buffer ({@link #retainedInlineBuffer}) of unconsumed bytes. Copying bytes into another buffer
+     * (when you have a second incoming buffer whose bytes are not consumed) is less complex and performs better than
+     * using an array of queue buffers. Of course, we need to use a {@link RebufferingByteBufDataInputPlus} for
+     * {@link Mode#OFFLOAD}, but that's a slightly different case and we don't want to allocate large buffers.
+     */
+    public void channelRead(ChannelHandlerContext ctx, Object msg)
+    {
+        if (closed || !(msg instanceof ByteBuf))
+        {
+            ReferenceCountUtil.release(msg);
+            return;
+        }
+
+        ByteBuf in = (ByteBuf)msg;
+        if (mode == Mode.INLINE)
+        {
+            ByteBuf toProcess;
+            if (retainedInlineBuffer != null)
+                toProcess = ByteToMessageDecoder.MERGE_CUMULATOR.cumulate(ctx.alloc(), retainedInlineBuffer, in);
+            else
+                toProcess = in;
+
+            process(ctx, toProcess);
+
+            // do not retain as a meber field if we've switched modes
+            if (mode == Mode.INLINE)
+            {
+                if (toProcess.isReadable())
+                {
+                    retainedInlineBuffer = toProcess;
+                }
+                else
+                {
+                    toProcess.release();
+                    retainedInlineBuffer = null;
+                }
+            }
+        }
+        else
+        {
+            queuedBuffers.append(in);
+        }
+    }
+
+    /**
+     * For each new message coming in, builds up a {@link MessageHeader} instance incrementally, in a non-blocking manner.
+     * This method attempts to deserialize as much header information as it can out of the incoming {@link ByteBuf}, and
      * maintains a trivial state machine to remember progress across invocations.
      */
     @SuppressWarnings("resource")
-    public void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
+    private void process(ChannelHandlerContext ctx, ByteBuf in)
     {
+        assert mode == Mode.INLINE;
+
+        // do *not* close this stream as it will release the buffer
         ByteBufDataInputPlus inputPlus = new ByteBufDataInputPlus(in);
         try
         {
@@ -119,7 +232,6 @@ class MessageInHandler extends ByteToMessageDecoder
             {
                 // an imperfect optimization around calling in.readableBytes() all the time
                 int readableBytes = in.readableBytes();
-
                 switch (state)
                 {
                     case READ_FIRST_CHUNK:
@@ -169,6 +281,13 @@ class MessageInHandler extends ByteToMessageDecoder
                         messageHeader.payloadSize = in.readInt();
                         state = State.READ_PAYLOAD;
                         readableBytes -= 4;
+
+                        if (messageHeader.payloadSize > largeMessageThreshold && mode == Mode.INLINE)
+                        {
+                            changeMode(ctx, inputPlus);
+                            return;
+                        }
+
                         // fall-through
                     case READ_PAYLOAD:
                         if (readableBytes < messageHeader.payloadSize)
@@ -264,6 +383,66 @@ class MessageInHandler extends ByteToMessageDecoder
         return true;
     }
 
+    private void changeMode(ChannelHandlerContext ctx, ByteBufDataInputPlus in)
+    {
+        assert mode == Mode.INLINE;
+        mode = Mode.OFFLOAD;
+        logger.debug("switching message processing mode of peer/channel {}[{}] to {} ", peer, ctx.channel().id(), mode);
+        ByteBuf buf = in.buffer();
+        buf.retain();
+
+        queuedBuffers = new RebufferingByteBufDataInputPlus(OFFLINE_QUEUE_LOW_WATER_MARK, OFFLINE_QUEUE_HIGH_WATER_MARK, ctx.channel().config());
+        queuedBuffers.append(buf);
+
+        Thread blockingIOThread = new FastThreadLocalThread(() -> process(ctx));
+        blockingIOThread.setDaemon(true);
+        blockingIOThread.start();
+    }
+
+    /**
+     * Handles reading from {@link #queuedBuffers} and deriving messages from the bytes. This method uses blocking IO
+     * and thus must not execute on the netty event loop. This is primary method that will run when in {@link Mode#OFFLOAD}.
+     */
+    private void process(ChannelHandlerContext ctx)
+    {
+        try
+        {
+            // first, finish the current message that we've half-way read
+            MessageIn<Object> messageIn = MessageIn.read(queuedBuffers, messagingVersion,
+                                                         messageHeader.messageId, messageHeader.constructionTime, messageHeader.from,
+                                                         messageHeader.payloadSize, messageHeader.verb, messageHeader.parameters);
+            if (messageIn != null)
+                messageConsumer.accept(messageIn, messageHeader.messageId);
+            messageHeader = null;
+
+            // now, we can just loop for messages (as we're already blocking)
+            while (!closed)
+            {
+                MessagingService.validateMagic(queuedBuffers.readInt());
+                int messageId = queuedBuffers.readInt();
+                int messageTimestamp = queuedBuffers.readInt(); // make sure to read the sent timestamp, even if DatabaseDescriptor.hasCrossNodeTimeout() is not enabled
+                long constructionTime = MessageIn.deriveConstructionTime(peer, messageTimestamp, ApproximateTime.currentTimeMillis());
+
+                messageIn = MessageIn.read(queuedBuffers, messagingVersion, messageId, constructionTime);
+                if (messageIn != null)
+                    messageConsumer.accept(messageIn, messageId);
+            }
+        }
+        catch (EOFException eof)
+        {
+            // ignore
+        }
+        catch(Throwable t)
+        {
+            exceptionCaught(ctx, t);
+        }
+        finally
+        {
+            if (queuedBuffers != null)
+                queuedBuffers.close();
+        }
+    }
+
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
     {
@@ -276,13 +455,29 @@ class MessageInHandler extends ByteToMessageDecoder
         else
             logger.warn("Unexpected exception caught in inbound channel pipeline from " + ctx.channel().remoteAddress(), cause);
 
+        close();
         ctx.close();
+    }
+
+    void close()
+    {
+        if (!closed)
+        {
+            closed = true;
+
+            if (queuedBuffers != null)
+                queuedBuffers.markClose();
+
+            if (retainedInlineBuffer != null)
+                retainedInlineBuffer.release();
+        }
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception
     {
         logger.debug("received channel closed message for peer {} on local addr {}", ctx.channel().remoteAddress(), ctx.channel().localAddress());
+        close();
         ctx.fireChannelInactive();
     }
 
@@ -291,6 +486,39 @@ class MessageInHandler extends ByteToMessageDecoder
     MessageHeader getMessageHeader()
     {
         return messageHeader;
+    }
+
+    // should ony be used for testing!!!
+    @VisibleForTesting
+    void setMode(Mode m)
+    {
+        mode = m;
+    }
+
+    @VisibleForTesting
+    Mode getMode()
+    {
+        return mode;
+    }
+
+    // should ony be used for testing!!!
+    @VisibleForTesting
+    RebufferingByteBufDataInputPlus getQueuedBuffers()
+    {
+        return queuedBuffers;
+    }
+
+    // should ony be used for testing!!!
+    @VisibleForTesting
+    void setQueuedBuffers(RebufferingByteBufDataInputPlus buffers)
+    {
+        queuedBuffers = buffers;
+    }
+
+    @VisibleForTesting
+    ByteBuf getRetainedInlineBuffer()
+    {
+        return retainedInlineBuffer;
     }
 
     /**

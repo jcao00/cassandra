@@ -20,18 +20,21 @@ package org.apache.cassandra.net.async;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.sun.org.apache.bcel.internal.generic.DDIV;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
@@ -44,6 +47,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.tracing.Tracing;
@@ -67,17 +71,17 @@ public class MessageOutHandlerTest
     @Before
     public void setup()
     {
-        setup(MessageOutHandler.AUTO_FLUSH_THRESHOLD);
+        setup(MessageOutHandler.BUFFER_SIZE, () -> null);
     }
 
-    private void setup(int flushThreshold)
+    private void setup(int bufferCapacity, Supplier<QueuedMessage> backlogSupplier)
     {
         OutboundConnectionIdentifier connectionId = OutboundConnectionIdentifier.small(new InetSocketAddress("127.0.0.1", 0),
                                                                                        new InetSocketAddress("127.0.0.2", 0));
         OutboundMessagingConnection omc = new NonSendingOutboundMessagingConnection(connectionId, null, Optional.empty());
         channel = new EmbeddedChannel();
         channelWriter = ChannelWriter.create(channel, omc::handleMessageResult, Optional.empty());
-        handler = new MessageOutHandler(connectionId, MESSAGING_VERSION, channelWriter, () -> null, flushThreshold);
+        handler = new MessageOutHandler(connectionId, MESSAGING_VERSION, channelWriter, backlogSupplier, bufferCapacity);
         channel.pipeline().addLast(handler);
     }
 
@@ -93,8 +97,9 @@ public class MessageOutHandlerTest
     @Test
     public void write_WithFlush() throws ExecutionException, InterruptedException, TimeoutException
     {
-        setup(1);
+        setup(1, () -> null);
         MessageOut message = new MessageOut(MessagingService.Verb.ECHO);
+        channelWriter.setPendingMessageCount(1);
         ChannelFuture future = channel.write(new QueuedMessage(message, 42));
         Assert.assertTrue(future.isSuccess());
         Assert.assertTrue(channel.releaseOutbound());
@@ -150,7 +155,7 @@ public class MessageOutHandlerTest
     @Test
     public void write_MessageTooLarge()
     {
-        write_BadMessageSize(Integer.MAX_VALUE + 1);
+        write_BadMessageSize((long)Integer.MAX_VALUE + 1);
     }
 
     @Test
@@ -177,12 +182,11 @@ public class MessageOutHandlerTest
             }
         };
         MessageOut message = new MessageOut(MessagingService.Verb.UNUSED_5, "payload", serializer);
+        channelWriter.setPendingMessageCount(1);
         ChannelFuture future = channel.write(new QueuedMessage(message, 42));
-        Throwable t = future.cause();
-        Assert.assertNotNull(t);
-        Assert.assertSame(IllegalStateException.class, t.getClass());
+        future.isSuccess();
         Assert.assertTrue(channel.isOpen());
-        Assert.assertFalse(channel.releaseOutbound());
+        Assert.assertTrue(channel.releaseOutbound());
     }
 
     @Test
@@ -211,6 +215,36 @@ public class MessageOutHandlerTest
         Assert.assertNotNull(t);
         Assert.assertFalse(channel.isOpen());
         Assert.assertFalse(channel.releaseOutbound());
+    }
+
+    @Test
+    public void write_WithBacklog() throws IOException
+    {
+        QueuedMessage backloggedMessage = new QueuedMessage(new MessageOut(MessagingService.Verb.GOSSIP_SHUTDOWN), 1);
+        Iterator<QueuedMessage> backlog = Collections.singletonList(backloggedMessage).iterator();
+        setup(MessageOutHandler.BUFFER_SIZE, () -> backlog.hasNext() ? backlog.next() : null);
+
+        QueuedMessage msg = new QueuedMessage(new MessageOut(MessagingService.Verb.ECHO), 2);
+        Assert.assertTrue(channelWriter.write(msg, true));
+        Assert.assertEquals(1, channel.outboundMessages().size());
+
+        ByteBuf outBuf = (ByteBuf) channel.outboundMessages().poll();
+        ByteBufDataInputPlus inPlus = new ByteBufDataInputPlus(outBuf);
+
+        MessageIn firstMsg = readMessage(inPlus);
+        Assert.assertNotNull(firstMsg);
+        Assert.assertEquals(MessagingService.Verb.GOSSIP_SHUTDOWN, firstMsg.verb);
+        MessageIn secondMsg = readMessage(inPlus);
+        Assert.assertNotNull(secondMsg);
+        Assert.assertEquals(MessagingService.Verb.ECHO, secondMsg.verb);
+    }
+
+    private MessageIn readMessage(ByteBufDataInputPlus inPlus) throws IOException
+    {
+        MessagingService.validateMagic(inPlus.readInt());
+        int id = inPlus.readInt();
+        int messageTimestamp = inPlus.readInt();
+        return MessageIn.read(inPlus, MessagingService.current_version, id, messageTimestamp);
     }
 
     @Test
@@ -261,10 +295,12 @@ public class MessageOutHandlerTest
     @Test
     public void userEventTriggered_Idle_WithPendingBytes()
     {
+        setup(10, () -> null);
         Assert.assertTrue(channel.isOpen());
         ChannelUserEventSender sender = new ChannelUserEventSender();
         channel.pipeline().addFirst(sender);
 
+        // intentionally not flushing as that 'consumes' the buffers in the channel
         MessageOut message = new MessageOut(MessagingService.Verb.INTERNAL_RESPONSE);
         channel.writeOutbound(new QueuedMessage(message, 42));
         sender.sendEvent(IdleStateEvent.WRITER_IDLE_STATE_EVENT);

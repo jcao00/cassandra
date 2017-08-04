@@ -20,8 +20,11 @@ package org.apache.cassandra.net.async;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
+import java.nio.channels.WritableByteChannel;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -38,12 +41,14 @@ import io.netty.handler.codec.UnsupportedMessageTypeException;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 
-import org.apache.cassandra.io.util.DataOutputPlus;
+import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.PromiseCombiner;
+import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.NanoTimeToCurrentTimeMillis;
-import org.apache.cassandra.utils.NoSpamLogger;
 import org.apache.cassandra.utils.UUIDGen;
 
 import static org.apache.cassandra.config.Config.PROPERTY_PREFIX;
@@ -57,11 +62,12 @@ import static org.apache.cassandra.config.Config.PROPERTY_PREFIX;
  *<p>
  * Note: this class derives from {@link ChannelDuplexHandler} so we can intercept calls to
  * {@link #userEventTriggered(ChannelHandlerContext, Object)} and {@link #channelWritabilityChanged(ChannelHandlerContext)}.
+ *
+ * // TODO:JEB add docs on how dataOutputPlus is used
  */
 class MessageOutHandler extends ChannelDuplexHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(MessageOutHandler.class);
-    private static final NoSpamLogger errorLogger = NoSpamLogger.getLogger(logger, 1, TimeUnit.SECONDS);
 
     /**
      * The default size threshold for deciding when to auto-flush the channel.
@@ -69,8 +75,8 @@ class MessageOutHandler extends ChannelDuplexHandler
     private static final int DEFAULT_AUTO_FLUSH_THRESHOLD = 1 << 16;
 
     // reatining the pre 4.0 property name for backward compatibility.
-    private static final String AUTO_FLUSH_PROPERTY = PROPERTY_PREFIX + "otc_buffer_size";
-    static final int AUTO_FLUSH_THRESHOLD = Integer.getInteger(AUTO_FLUSH_PROPERTY, DEFAULT_AUTO_FLUSH_THRESHOLD);
+    private static final String BUFFER_SIZE_PROPERTY = PROPERTY_PREFIX + "otc_buffer_size";
+    static final int BUFFER_SIZE = Integer.getInteger(BUFFER_SIZE_PROPERTY, DEFAULT_AUTO_FLUSH_THRESHOLD);
 
     /**
      * The amount of prefix data, in bytes, before the serialized message.
@@ -85,9 +91,11 @@ class MessageOutHandler extends ChannelDuplexHandler
     private final int targetMessagingVersion;
 
     /**
-     * The minumum size at which we'll automatically flush the channel.
+     * The size of the backing buffer used in {@link ByteBufDataOutputStreamPlus}.
      */
-    private final int flushSizeThreshold;
+    private final int bufferCapacity;
+
+    private ByteBufDataOutputStreamPlus dataOutputPlus;
 
     private final ChannelWriter channelWriter;
 
@@ -95,70 +103,65 @@ class MessageOutHandler extends ChannelDuplexHandler
 
     MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter, Supplier<QueuedMessage> backlogSupplier)
     {
-        this (connectionId, targetMessagingVersion, channelWriter, backlogSupplier, AUTO_FLUSH_THRESHOLD);
+        this (connectionId, targetMessagingVersion, channelWriter, backlogSupplier, BUFFER_SIZE);
     }
 
-    MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter, Supplier<QueuedMessage> backlogSupplier, int flushThreshold)
+    MessageOutHandler(OutboundConnectionIdentifier connectionId, int targetMessagingVersion, ChannelWriter channelWriter,
+                      Supplier<QueuedMessage> backlogSupplier, int bufferCapacity)
     {
         this.connectionId = connectionId;
         this.targetMessagingVersion = targetMessagingVersion;
         this.channelWriter = channelWriter;
-        this.flushSizeThreshold = flushThreshold;
         this.backlogSupplier = backlogSupplier;
+        this.bufferCapacity = bufferCapacity;
     }
 
     @Override
-    public void write(ChannelHandlerContext ctx, Object o, ChannelPromise promise)
+    public void handlerAdded(ChannelHandlerContext ctx)
     {
-        // this is a temporary fix until https://github.com/netty/netty/pull/6867 is released (probably netty 4.1.13).
-        // TL;DR a closed channel can still process messages in the pipeline that were queued before the close.
-        // the channel handlers are removed from the channel potentially saync from the close operation.
-        if (!ctx.channel().isOpen())
-        {
-            logger.debug("attempting to process a message in the pipeline, but the channel is closed", ctx.channel().id());
-            return;
-        }
+        dataOutputPlus = ByteBufDataOutputStreamPlus.create(ctx, bufferCapacity);
+    }
 
-        ByteBuf out = null;
+    /**
+     * {@inheritDoc}
+     *
+     * //TODO:JEB comments
+     */
+    @Override
+    public void write(ChannelHandlerContext ctx, Object o, ChannelPromise promise) throws IOException
+    {
         try
         {
             if (!isMessageValid(o, promise))
                 return;
+            final QueuedMessage msg = (QueuedMessage)o;
 
-            QueuedMessage msg = (QueuedMessage) o;
-
-            // frame size includes the magic and and other values *before* the actual serialized message.
-            // note: don't even bother to check the compressed size (if compression is enabled for the channel),
-            // cuz if it's this large already, we're probably screwed anyway
-            long currentFrameSize = MESSAGE_PREFIX_SIZE + msg.message.serializedSize(targetMessagingVersion);
-            if (currentFrameSize > Integer.MAX_VALUE || currentFrameSize < 0)
+            // chew through the backlog first as there are some application behaviors/flows
+            // that will not work properly without correct ordering (repair)
+            if (!msg.wasBacklogged)
             {
-                promise.tryFailure(new IllegalStateException(String.format("%s illegal frame size: %d, ignoring message", connectionId, currentFrameSize)));
-                return;
+                while (true)
+                {
+                    QueuedMessage messageFromBacklog = backlogSupplier.get();
+                    if (messageFromBacklog == null || !channelWriter.write(messageFromBacklog, false))
+                        break;
+                }
             }
 
-            out = ctx.alloc().ioBuffer((int)currentFrameSize);
-
             captureTracingInfo(msg);
-            serializeMessage(msg, out);
-            ctx.write(out, promise);
-
-            // check to see if we should flush based on buffered size
-            ChannelOutboundBuffer outboundBuffer = ctx.channel().unsafe().outboundBuffer();
-            if (outboundBuffer != null && outboundBuffer.totalPendingWriteBytes() >= flushSizeThreshold)
-                ctx.flush();
+            serializeMessage(msg, promise);
         }
         catch(Exception e)
         {
-            if (out != null && out.refCnt() > 0)
-                out.release(out.refCnt());
             exceptionCaught(ctx, e);
             promise.tryFailure(e);
         }
         finally
         {
+            dataOutputPlus.resetPromises();
             // Make sure we signal the outChanel even in case of errors.
-            channelWriter.onMessageProcessed(ctx);
+            if (channelWriter.onMessageProcessed(ctx))
+                dataOutputPlus.flush();
         }
     }
 
@@ -171,7 +174,7 @@ class MessageOutHandler extends ChannelDuplexHandler
         // optimize for the common case
         if (o instanceof QueuedMessage)
         {
-            if (!((QueuedMessage)o).isTimedOut())
+            if (!((QueuedMessage)o).isTimedOut(System.nanoTime()))
             {
                 return true;
             }
@@ -225,58 +228,54 @@ class MessageOutHandler extends ChannelDuplexHandler
         }
     }
 
-    private void serializeMessage(QueuedMessage msg, ByteBuf out) throws IOException
+    private void serializeMessage(QueuedMessage msg, ChannelPromise promise) throws IOException
     {
-        out.writeInt(MessagingService.PROTOCOL_MAGIC);
-        out.writeInt(msg.id);
+        dataOutputPlus.writeInt(MessagingService.PROTOCOL_MAGIC);
+        dataOutputPlus.writeInt(msg.id);
 
         // int cast cuts off the high-order half of the timestamp, which we can assume remains
         // the same between now and when the recipient reconstructs it.
-        out.writeInt((int) NanoTimeToCurrentTimeMillis.convert(msg.timestampNanos));
-        @SuppressWarnings("resource")
-        DataOutputPlus outStream = new ByteBufDataOutputPlus(out);
-        msg.message.serialize(outStream, targetMessagingVersion);
+        dataOutputPlus.writeInt((int) NanoTimeToCurrentTimeMillis.convert(msg.timestampNanos));
+        msg.message.serialize(dataOutputPlus, targetMessagingVersion);
 
-        // next few lines are for debugging ... massively helpful!!
-        // if we allocated too much buffer for this message, we'll log here.
-        // if we allocated to little buffer space, we would have hit an exception when trying to write more bytes to it
-        if (out.isWritable())
-            errorLogger.error("{} reported message size {}, actual message size {}, msg {}",
-                         connectionId, out.capacity(), out.writerIndex(), msg.message);
+        PromiseCombiner promiseCombiner = new PromiseCombiner();
+        for (int i = 0; i < dataOutputPlus.promises.size(); i++)
+            promiseCombiner.add((Future)dataOutputPlus.promises.get(i));
+        promiseCombiner.finish(promise);
     }
 
     @Override
-    public void flush(ChannelHandlerContext ctx)
+    public void flush(ChannelHandlerContext ctx) throws IOException
     {
-        channelWriter.onTriggeredFlush(ctx);
+        if (channelWriter.onTriggeredFlush(ctx))
+            dataOutputPlus.flush();
     }
-
 
     /**
      * {@inheritDoc}
      *
+     * // TODO:JEB fix comment
      * When the channel becomes writable (assuming it was previously unwritable), try to eat through any backlogged messages
      * {@link #backlogSupplier}. As we're on the event loop when this is invoked, no one else can fill up the netty
      * {@link ChannelOutboundBuffer}, so we should be able to make decent progress chewing through the backlog
      * (assuming not large messages). Any messages messages written from {@link OutboundMessagingConnection} threads won't
-     * be processed immediately; they'll be queued up as tasks, and once this function return, those messages can begin
+     * be processed immediately; they'll be queued up as tasks, and once this function returns, those messages can begin
      * to be consumed.
      * <p>
      * Note: this is invoked on the netty event loop.
      */
     @Override
-    public void channelWritabilityChanged(ChannelHandlerContext ctx)
+    public void channelWritabilityChanged(ChannelHandlerContext ctx) throws ClosedChannelException
     {
         if (!ctx.channel().isWritable())
-            return;
-
-        // guarantee at least a minimal amount of progress (one messge from the backlog) by using a do-while loop.
-        do
         {
-            QueuedMessage msg = backlogSupplier.get();
-            if (msg == null || !channelWriter.write(msg, false))
-                break;
-        } while (ctx.channel().isWritable());
+            logger.debug("flushing on channel unwritable");
+            dataOutputPlus.onlyFlush();
+            ctx.fireChannelWritabilityChanged();
+        }
+
+        // do not try to consume the backlog here as there's a pertty much zero chance of being at the end of message.
+        // meaning, we are probably in the middle of another message, and serializing another message will corrupt the stream.
     }
 
     /**
@@ -316,9 +315,179 @@ class MessageOutHandler extends ChannelDuplexHandler
     }
 
     @Override
-    public void close(ChannelHandlerContext ctx, ChannelPromise promise)
+    public void close(ChannelHandlerContext ctx, ChannelPromise promise) throws IOException
     {
+        dataOutputPlus.close();
         ctx.flush();
         ctx.close(promise);
+    }
+
+    /**
+     * // TODO:JEB fix this comment
+     *
+     * A {@link DataOutputStreamPlus} implementation that is backed by a {@link ByteBuf} that is swapped out with another when full.
+     * Each buffer has a {@link ChannelPromise} associated with it,
+     * so the downstream progress of buffer (as it is flushed) can be observed. Each message will be serialized into one
+     * or more buffers, and each of those buffer's promises are associated with the message. That way the message's promise
+     * and be assocaited with the promises of the buffers into which it was serialized. Several messages may be packed into
+     * the same buffer, so each of those messages will share the same promise.
+     */
+    private static class ByteBufDataOutputStreamPlus extends BufferedDataOutputStreamPlus
+    {
+        private final ChannelHandlerContext ctx;
+        private final int bufferCapacity;
+
+        /**
+         * A collection of {@link ChannelPromise}s that should be associated with the current {@link QueuedMessage}
+         * that is being serialized. These promises will be matched up with the promise that was passed in at
+         * {@link MessageOutHandler#write(ChannelHandlerContext, Object, ChannelPromise)}, so that promise can be properly
+         * notified when all the buffers (and their own respective promises) have been handled downstream.
+         */
+        private final List<ChannelPromise> promises;
+
+        /**
+         * The current {@link ByteBuf} that is being written to.
+         */
+        private ByteBuf buf;
+
+        /**
+         * A promise to be used with the current {@code buf} when calling
+         * {@link ChannelHandlerContext#write(Object, ChannelPromise)}.
+         */
+        private ChannelPromise promise;
+
+        ByteBufDataOutputStreamPlus(ChannelHandlerContext ctx, int bufferCapacity, ByteBuf buf, ByteBuffer buffer)
+        {
+            super(buffer);
+            this.ctx = ctx;
+            this.buf = buf;
+            this.bufferCapacity = bufferCapacity;
+
+            promises = new ArrayList<>(2);
+            promise = ctx.newPromise();
+            promises.add(promise);
+        }
+
+        static ByteBufDataOutputStreamPlus create(ChannelHandlerContext ctx, int bufferCapacity)
+        {
+            ByteBuf buf = ctx.alloc().directBuffer(bufferCapacity);
+            ByteBuffer buffer = buf.nioBuffer(0, bufferCapacity);
+            return new ByteBufDataOutputStreamPlus(ctx, bufferCapacity, buf, buffer);
+        }
+
+        @Override
+        protected WritableByteChannel newDefaultChannel()
+        {
+            return new WritableByteChannel()
+            {
+                @Override
+                public int write(ByteBuffer src) throws IOException
+                {
+                    assert src == buffer;
+                    int size = src.position();
+                    doFlush(size);
+                    return size;
+                }
+
+                @Override
+                public boolean isOpen()
+                {
+                    return channel.isOpen();
+                }
+
+                @Override
+                public void close()
+                {   }
+            };
+        }
+
+        void writeAndMaybeFlush(boolean flush) throws ClosedChannelException
+        {
+            if (buffer.position() > 0)
+            {
+                if (!ctx.channel().isOpen())
+                    throw new ClosedChannelException();
+
+                int byteCount = buffer.position();
+                buf.writerIndex(byteCount);
+
+                if (flush)
+                {
+                    ctx.writeAndFlush(buf, promise);
+                }
+                else
+                {
+                    ctx.write(buf, promise);
+                }
+
+                buf = ctx.alloc().directBuffer(bufferCapacity);
+                buffer = buf.nioBuffer(0, bufferCapacity);
+                promise = ctx.newPromise();
+                promises.add(promise);
+            }
+            else if (flush)
+            {
+                // we don't have any data in buffer, but we still want to flush anything that's in the channel
+                ctx.flush();
+            }
+        }
+
+        protected void onlyFlush()
+        {
+            ctx.flush();
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * @param count If greater than 0, it means {@link super#buffer} is full.
+         *              If equal to 0, then an operational function, like {@link #flush()} or {@link #close()}
+         *              was invoked on this {@link DataOutputStreamPlus}, not necessarily on the channel or
+         *              channel handler (unless the owning {@link MessageOutHandler} calls those functions).
+         */
+        @Override
+        protected void doFlush(int count) throws IOException
+        {
+            // if count == 0, flush() or close() was invoked. -in this
+            // if count > 0, we are invoked because the backing buffer is full
+            writeAndMaybeFlush(count == 0);
+        }
+
+        /**
+         * //TODO:JEB clean up comment
+         * This should be called when serializing a message is complete. If a the backing {@link super#buffer} is completely
+         * filled up when this method is invoked, the next message will not need a reference to the current {@link #promise}
+         * as none of the next message's bytes will be inserted into the current {@link super#buffer}. Thus, only add a reference
+         * to the current {@link #promise} into {@link #promises} if there is space in the buffer
+         */
+        void resetPromises()
+        {
+            promises.clear();
+
+            if (buffer.hasRemaining())
+            {
+                promises.add(promise);
+            }
+        }
+
+        @Override
+        public void close() throws IOException
+        {
+            if (ctx.channel().isOpen())
+            {
+                writeAndMaybeFlush(true);
+            }
+            else if (buffer.position() > 0)
+            {
+                // if there's unflushed data, and the channel is closed, fail the promise
+                buf.release();
+                promise.tryFailure(new ClosedChannelException());
+
+                buf = null;
+                buffer = null;
+                promise = null;
+                promises.clear();
+            }
+        }
     }
 }
