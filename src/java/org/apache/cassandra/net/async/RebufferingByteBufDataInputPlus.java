@@ -170,7 +170,7 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
     @Override
     public int available()
     {
-        return queuedByteCount.get() + buffer.remaining();
+        return queuedByteCount.get() + (buffer != null ? buffer.remaining() : 0);
     }
 
     @Override
