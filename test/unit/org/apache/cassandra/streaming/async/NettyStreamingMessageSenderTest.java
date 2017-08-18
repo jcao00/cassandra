@@ -90,7 +90,7 @@ public class NettyStreamingMessageSenderTest
     {
         channel.close();
         Assert.assertFalse(channel.isOpen());
-        Assert.assertTrue(channel.releaseOutbound());
+        channel.releaseOutbound();
         NettyStreamingMessageSender.KeepAliveTask task = sender.new KeepAliveTask(channel, session);
         task.future = new TestScheduledFuture();
         Assert.assertFalse(task.future.isCancelled());

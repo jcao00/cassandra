@@ -36,8 +36,6 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelPipeline;
-import io.netty.handler.logging.LogLevel;
-import io.netty.handler.logging.LoggingHandler;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.FastThreadLocal;
 import io.netty.util.concurrent.Future;
@@ -162,7 +160,10 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     private void setupControlMessageChannel() throws IOException
     {
         if (controlMessageChannel == null)
+        {
             controlMessageChannel = createChannel();
+            scheduleKeepAliveTask(controlMessageChannel);
+        }
     }
 
     private void scheduleKeepAliveTask(Channel channel)
@@ -172,7 +173,6 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
 
         KeepAliveTask task = new KeepAliveTask(channel, session);
         ScheduledFuture<?> scheduledFuture = channel.eventLoop().scheduleAtFixedRate(task, 0, keepAlivePeriod, TimeUnit.SECONDS);
-        scheduledFuture.cancel(false);
         channelKeepAlives.add(scheduledFuture);
         task.future = scheduledFuture;
     }
@@ -183,7 +183,6 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         ChannelPipeline pipeline = channel.pipeline();
         pipeline.addLast(NettyFactory.instance.streamingGroup, NettyFactory.INBOUND_STREAM_HANDLER_NAME, new StreamingInboundHandler(connectionId.remoteAddress(), protocolVersion, session));
         channel.attr(TRANSFERRING_FILE_ATTR).set(Boolean.FALSE);
-        scheduleKeepAliveTask(channel);
         return channel;
     }
 
@@ -412,7 +411,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     /**
      * Periodically sends the {@link KeepAliveMessage}.
      *
-     * NOTE: this task, and the callback function {@link #keepAliveListener(Future)} is executes in the netty event loop.
+     * NOTE: this task, and the callback function {@link #keepAliveListener(Future)} is executed in the netty event loop.
      */
     class KeepAliveTask implements Runnable
     {
