@@ -165,13 +165,14 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             controlMessageChannel = createChannel();
     }
 
-     private void scheduleKeepAliveTask(Channel channel)
+    private void scheduleKeepAliveTask(Channel channel)
     {
         int keepAlivePeriod = DatabaseDescriptor.getStreamingKeepAlivePeriod();
         logger.debug("{} Scheduling keep-alive task with {}s period.", createLogTag(session, channel), keepAlivePeriod);
 
         KeepAliveTask task = new KeepAliveTask(channel, session);
         ScheduledFuture<?> scheduledFuture = channel.eventLoop().scheduleAtFixedRate(task, 0, keepAlivePeriod, TimeUnit.SECONDS);
+        scheduledFuture.cancel(false);
         channelKeepAlives.add(scheduledFuture);
         task.future = scheduledFuture;
     }
