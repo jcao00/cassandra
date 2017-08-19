@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.streaming.async;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -86,7 +87,7 @@ public class StreamingInboundHandlerTest
     }
 
     @Test
-    public void channelRead_Normal()
+    public void channelRead_Normal() throws EOFException
     {
         Assert.assertEquals(0, buffers.available());
         int size = 8;
@@ -98,7 +99,7 @@ public class StreamingInboundHandlerTest
     }
 
     @Test
-    public void channelRead_Closed()
+    public void channelRead_Closed() throws EOFException
     {
         int size = 8;
         buf = channel.alloc().buffer(size);
@@ -112,7 +113,7 @@ public class StreamingInboundHandlerTest
     }
 
     @Test
-    public void channelRead_WrongObject()
+    public void channelRead_WrongObject() throws EOFException
     {
         channel.writeInbound("homer");
         Assert.assertEquals(0, buffers.available());

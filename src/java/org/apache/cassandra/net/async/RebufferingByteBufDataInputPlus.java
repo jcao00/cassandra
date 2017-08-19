@@ -24,7 +24,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.buffer.ByteBuf;
@@ -168,9 +167,17 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
      * As long as this method is invoked on the consuming thread the returned value will be accurate.
      */
     @Override
-    public int available()
+    public int available() throws EOFException
     {
-        return queuedByteCount.get() + (buffer != null ? buffer.remaining() : 0);
+        if (closed)
+            throw new EOFException();
+
+       final  int availableBytes = queuedByteCount.get() + (buffer != null ? buffer.remaining() : 0);
+
+        if (!channelConfig.isAutoRead() && availableBytes < lowWaterMark)
+            channelConfig.setAutoRead(true);
+
+        return availableBytes;
     }
 
     @Override
@@ -228,9 +235,12 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
     @Override
     public String toString()
     {
-        return "RebufferingByteBufDataInputPlus: currentBuf = " + currentBuf +
-               ", queuedByteCount = " + queuedByteCount +
-               ", queue buffers = " + queue;
+        return new StringBuilder(128).append("RebufferingByteBufDataInputPlus: currentBuf = ").append(currentBuf)
+                                  .append(" (super.buffer = ").append(buffer).append(')')
+                                  .append(", queuedByteCount = ").append(queuedByteCount)
+                                  .append(", queue buffers = ").append(queue)
+                                  .append(", closed = ").append(closed)
+                                  .toString();
     }
 
     public ByteBufAllocator getAllocator()

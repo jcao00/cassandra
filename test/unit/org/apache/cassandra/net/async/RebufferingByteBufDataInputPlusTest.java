@@ -76,7 +76,7 @@ public class RebufferingByteBufDataInputPlusTest
     }
 
     @Test
-    public void append_normal()
+    public void append_normal() throws EOFException
     {
         int size = 4;
         buf = channel.alloc().buffer(size);
