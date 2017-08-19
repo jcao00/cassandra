@@ -130,7 +130,6 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
         else
             logger.warn("exception occurred while in processing streaming file", cause);
         close();
-        ctx.fireExceptionCaught(cause);
     }
 
     /**
@@ -253,6 +252,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
             if (streamSession == null)
                 throw new IllegalStateException(createLogTag(null, channel) + " no session found for message " + message);
 
+            streamSession.attach(channel);
             return streamSession;
         }
     }
