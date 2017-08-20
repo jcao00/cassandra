@@ -98,14 +98,14 @@ public class StreamingInboundHandlerTest
         Assert.assertFalse(channel.releaseInbound());
     }
 
-    @Test
+    @Test (expected = EOFException.class)
     public void channelRead_Closed() throws EOFException
     {
         int size = 8;
         buf = channel.alloc().buffer(size);
         Assert.assertEquals(1, buf.refCnt());
         buf.writerIndex(size);
-        handler.setClosed();
+        handler.close();
         channel.writeInbound(buf);
         Assert.assertEquals(0, buffers.available());
         Assert.assertEquals(0, buf.refCnt());

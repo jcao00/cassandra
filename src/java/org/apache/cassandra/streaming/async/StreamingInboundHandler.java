@@ -116,7 +116,7 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
         ctx.fireChannelInactive();
     }
 
-    private void close()
+    void close()
     {
         closed = true;
         buffers.markClose();
@@ -138,14 +138,6 @@ public class StreamingInboundHandler extends ChannelInboundHandlerAdapter
     void setPendingBuffers(RebufferingByteBufDataInputPlus bufChannel)
     {
         this.buffers = bufChannel;
-    }
-
-    /**
-     * For testing only!!
-     */
-    void setClosed()
-    {
-        closed = true;
     }
 
     /**

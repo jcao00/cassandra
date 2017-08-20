@@ -209,7 +209,7 @@ public class RebufferingByteBufDataInputPlus extends RebufferingInputStream impl
         }
 
         ByteBuf buf;
-        while ((buf = queue.poll()) != null)
+        while ((buf = queue.poll()) != null && buf.refCnt() > 0)
             buf.release(buf.refCnt());
     }
 
