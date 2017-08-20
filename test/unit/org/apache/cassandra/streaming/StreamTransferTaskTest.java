@@ -160,7 +160,7 @@ public class StreamTransferTaskTest
         }
 
         //fail stream session mid-transfer
-        session.onError(new Exception("Fake exception"));
+        session.onError(new Exception("Fake exception")).get(5, TimeUnit.SECONDS);
 
         //make sure reference was not released
         for (Ref<SSTableReader> ref : refs)

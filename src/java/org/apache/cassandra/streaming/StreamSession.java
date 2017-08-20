@@ -28,6 +28,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.*;
+import com.google.common.util.concurrent.Futures;
 
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -486,7 +487,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
             streamResult.handleSessionComplete(this);
         }
-        return abortedTasksFuture;
+        return abortedTasksFuture != null ? abortedTasksFuture : Futures.immediateFuture(null);
     }
 
     private void abortTasks()
