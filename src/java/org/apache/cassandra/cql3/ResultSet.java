@@ -310,7 +310,10 @@ public class ResultSet
 
                 PagingState state = null;
                 if (flags.contains(Flag.HAS_MORE_PAGES))
-                    state = PagingState.deserialize(CBUtil.readValue(body), version);
+                {
+                    // Call CBUtil.readValueNoCopy(body) as we not need to do a copy of the bytes to deserialize the PagingState.
+                    state = PagingState.deserialize(CBUtil.readValueNoCopy(body), version);
+                }
 
                 if (flags.contains(Flag.NO_METADATA))
                     return new ResultMetadata(flags, null, columnCount, state);
