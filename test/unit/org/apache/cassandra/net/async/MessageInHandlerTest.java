@@ -253,18 +253,18 @@ public class MessageInHandlerTest
     }
 
     @Test
-    public void channelRead_INLINE()
+    public void channelRead_INLINE() throws EOFException
     {
         channelRead(MessageInHandler.Mode.INLINE);
     }
 
     @Test
-    public void channelRead_OFFLOAD()
+    public void channelRead_OFFLOAD() throws EOFException
     {
         channelRead(MessageInHandler.Mode.OFFLOAD);
     }
 
-    private void channelRead(MessageInHandler.Mode m)
+    private void channelRead(MessageInHandler.Mode m) throws EOFException
     {
         final int threshold = 8;
         MessageInHandler handler = new MessageInHandler(addr.getAddress(), MSG_VERSION, null, threshold);
