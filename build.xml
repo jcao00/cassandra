@@ -421,6 +421,7 @@
           <dependency groupId="org.mindrot" artifactId="jbcrypt" version="0.3m" />
           <dependency groupId="io.airlift" artifactId="airline" version="0.7" />
           <dependency groupId="io.netty" artifactId="netty-all" version="4.1.13.Final" />
+          <dependency groupId="net.openhft" artifactId="affinity" version="3.1.0" />
           <dependency groupId="com.google.code.findbugs" artifactId="jsr305" version="2.0.2" />
           <dependency groupId="com.clearspring.analytics" artifactId="stream" version="2.5.2" />
           <dependency groupId="com.datastax.cassandra" artifactId="cassandra-driver-core" version="3.0.1" classifier="shaded">
@@ -879,7 +880,7 @@
     </target>
 
     <!-- creates release tarballs -->
-    <target name="artifacts" depends="jar,javadoc,gen-doc"
+    <target name="artifacts" depends="jar"
             description="Create Cassandra release artifacts">
       <mkdir dir="${dist.dir}"/>
       <!-- fix the control linefeed so that builds on windows works on linux -->

@@ -1,6 +1,7 @@
 package org.apache.cassandra.net.async;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.ThreadFactory;
 import java.util.zip.Checksum;
 
 import javax.net.ssl.SSLEngine;
@@ -43,6 +44,8 @@ import io.netty.util.internal.logging.Slf4JLoggerFactory;
 
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.xxhash.XXHashFactory;
+import net.openhft.affinity.AffinityStrategies;
+import net.openhft.affinity.AffinityThreadFactory;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
@@ -169,17 +172,18 @@ public final class NettyFactory
      */
     static EventLoopGroup getEventLoopGroup(boolean useEpoll, int threadCount, String threadNamePrefix, boolean boostIoRatio)
     {
+        ThreadFactory threadFactory = new AffinityThreadFactory(threadNamePrefix, AffinityStrategies.DIFFERENT_CORE);
         if (useEpoll)
         {
             logger.debug("using netty epoll event loop for pool prefix {}", threadNamePrefix);
-            EpollEventLoopGroup eventLoopGroup = new EpollEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
+            EpollEventLoopGroup eventLoopGroup = new EpollEventLoopGroup(threadCount, threadFactory);
             if (boostIoRatio)
                 eventLoopGroup.setIoRatio(100);
             return eventLoopGroup;
         }
 
         logger.debug("using netty nio event loop for pool prefix {}", threadNamePrefix);
-        NioEventLoopGroup eventLoopGroup = new NioEventLoopGroup(threadCount, new DefaultThreadFactory(threadNamePrefix));
+        NioEventLoopGroup eventLoopGroup = new NioEventLoopGroup(threadCount, threadFactory);
         if (boostIoRatio)
             eventLoopGroup.setIoRatio(100);
         return eventLoopGroup;
