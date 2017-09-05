@@ -20,6 +20,7 @@ package org.apache.cassandra.net;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Map;
 
@@ -29,6 +30,7 @@ import com.google.common.collect.ImmutableMap;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.IVersionedSerializer;
+import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.FBUtilities;
@@ -162,13 +164,33 @@ public class MessageOut<T>
         CompactEndpointSerializationHelper.serialize(from, out);
 
         out.writeInt(verb.getId());
-        out.writeInt(parameters.size());
-        for (Map.Entry<String, byte[]> entry : parameters.entrySet())
+
+        int paramCount = parameters.size();
+        if (paramCount == 0)
         {
-            out.writeUTF(entry.getKey());
-            out.writeInt(entry.getValue().length);
-            out.write(entry.getValue());
+            out.writeInt(0);
         }
+        else
+        {
+            if (version >= MessagingService.VERSION_40)
+            {
+                // write data into a temp buffer so we can get the size
+                try(DataOutputBuffer buf = new DataOutputBuffer())
+                {
+                    buf.writeInt(-1);
+                    serializeParams(buf);
+                    ByteBuffer outBuf = buf.buffer();
+                    outBuf.putInt(0, outBuf.limit() - 4);
+                    out.write(outBuf);
+                }
+            }
+            else
+            {
+                out.writeInt(paramCount);
+                serializeParams(out);
+            }
+        }
+
 
         if (payload != null)
         {
@@ -182,6 +204,16 @@ public class MessageOut<T>
         else
         {
             out.writeInt(0);
+        }
+    }
+
+    private final void serializeParams(DataOutputPlus out) throws IOException
+    {
+        for (Map.Entry<String, byte[]> entry : parameters.entrySet())
+        {
+            out.writeUTF(entry.getKey());
+            out.writeInt(entry.getValue().length);
+            out.write(entry.getValue());
         }
     }
 

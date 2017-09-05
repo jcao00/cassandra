@@ -35,20 +35,13 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufOutputStream;
-import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
 import io.netty.channel.embedded.EmbeddedChannel;
-import io.netty.channel.epoll.EpollEventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.util.concurrent.Future;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.MessageInHandler.MessageHeader;
-import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.NanoTimeToCurrentTimeMillis;
 
 public class MessageInHandlerTest
@@ -172,14 +165,14 @@ public class MessageInHandlerTest
     @Test
     public void canReadNextParam_HappyPath() throws IOException
     {
-        buildParamBuf(13);
+        buildParamBufPre4_0(13);
         Assert.assertTrue(MessageInHandler.canReadNextParam(buf));
     }
 
     @Test
     public void canReadNextParam_OnlyFirstByte() throws IOException
     {
-        buildParamBuf(13);
+        buildParamBufPre4_0(13);
         buf.writerIndex(1);
         Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
     }
@@ -187,7 +180,7 @@ public class MessageInHandlerTest
     @Test
     public void canReadNextParam_PartialUTF() throws IOException
     {
-        buildParamBuf(13);
+        buildParamBufPre4_0(13);
         buf.writerIndex(5);
         Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
     }
@@ -195,7 +188,7 @@ public class MessageInHandlerTest
     @Test
     public void canReadNextParam_TruncatedValueLength() throws IOException
     {
-        buildParamBuf(13);
+        buildParamBufPre4_0(13);
         buf.writerIndex(buf.writerIndex() - 13 - 2);
         Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
     }
@@ -203,12 +196,12 @@ public class MessageInHandlerTest
     @Test
     public void canReadNextParam_MissingLastBytes() throws IOException
     {
-        buildParamBuf(13);
+        buildParamBufPre4_0(13);
         buf.writerIndex(buf.writerIndex() - 2);
         Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
     }
 
-    private void buildParamBuf(int valueLength) throws IOException
+    private void buildParamBufPre4_0(int valueLength) throws IOException
     {
         buf = Unpooled.buffer(1024, 1024); // 1k should be enough for everybody!
         ByteBufDataOutputPlus output = new ByteBufDataOutputPlus(buf);

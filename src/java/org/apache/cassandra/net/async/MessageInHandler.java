@@ -148,17 +148,26 @@ class MessageInHandler extends ByteToMessageDecoder
                         if (readableBytes < SECOND_SECTION_BYTE_COUNT)
                             return;
                         messageHeader.verb = MessagingService.Verb.fromId(in.readInt());
-                        int paramCount = in.readInt();
-                        messageHeader.parameterCount = paramCount;
-                        messageHeader.parameters = paramCount == 0 ? Collections.emptyMap() : new HashMap<>();
+                        int parameterLength = in.readInt();
+                        messageHeader.parameterLength = parameterLength;
+                        messageHeader.parameters = parameterLength == 0 ? Collections.emptyMap() : new HashMap<>();
                         state = State.READ_PARAMETERS_DATA;
                         readableBytes -= SECOND_SECTION_BYTE_COUNT;
                         // fall-through
                     case READ_PARAMETERS_DATA:
-                        if (messageHeader.parameterCount > 0)
+                        if (messageHeader.parameterLength > 0)
                         {
-                            if (!readParameters(in, inputPlus, messageHeader.parameterCount, messageHeader.parameters))
-                                return;
+                            if (messagingVersion >= MessagingService.VERSION_40)
+                            {
+                                if (readableBytes < messageHeader.parameterLength)
+                                    return;
+                                readParameters(in, inputPlus, messageHeader.parameterLength, messageHeader.parameters);
+                            }
+                            else
+                            {
+                                if (!readParametersPre4_0(in, inputPlus, messageHeader.parameterLength, messageHeader.parameters))
+                                    return;
+                            }
                             readableBytes = in.readableBytes(); // we read an indeterminate number of bytes for the headers, so just ask the buffer again
                         }
                         state = State.READ_PAYLOAD_SIZE;
@@ -196,10 +205,24 @@ class MessageInHandler extends ByteToMessageDecoder
         }
     }
 
+    private void readParameters(ByteBuf in, ByteBufDataInputPlus inputPlus, int parameterLength, Map<String, byte[]> parameters) throws IOException
+    {
+        // makes the assumption we have all the bytes required to read the headers
+        final int endIndex = in.readerIndex() + parameterLength;
+        while (in.readerIndex() < endIndex)
+        {
+            String key = DataInputStream.readUTF(inputPlus);
+            byte[] value = new byte[in.readInt()];
+            in.readBytes(value);
+            parameters.put(key, value);
+        }
+    }
+
+
     /**
      * @return <code>true</code> if all the parameters have been read from the {@link ByteBuf}; else, <code>false</code>.
      */
-    private boolean readParameters(ByteBuf in, ByteBufDataInputPlus inputPlus, int parameterCount, Map<String, byte[]> parameters) throws IOException
+    private boolean readParametersPre4_0(ByteBuf in, ByteBufDataInputPlus inputPlus, int parameterCount, Map<String, byte[]> parameters) throws IOException
     {
         // makes the assumption that map.size() is a constant time function (HashMap.size() is)
         while (parameters.size() < parameterCount)
@@ -307,8 +330,10 @@ class MessageInHandler extends ByteToMessageDecoder
         Map<String, byte[]> parameters = Collections.emptyMap();
 
         /**
-         * Total number of incoming parameters.
+         * Length of the parameter data. If the message's version is {@link MessagingService#VERSION_40} or higher,
+         * this value is the total number of header bytes; else, for legacy messaging, this is the number of
+         * key/value entries in the header.
          */
-        int parameterCount;
+        int parameterLength;
     }
 }
