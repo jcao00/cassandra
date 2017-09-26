@@ -31,7 +31,7 @@ import org.apache.cassandra.io.util.RebufferingInputStream;
 import org.apache.cassandra.net.async.RebufferingByteBufDataInputPlus;
 import org.apache.cassandra.streaming.async.StreamCompressionSerializer;
 
-public class StreamCompressionInputStream extends RebufferingInputStream
+public class StreamCompressionInputStream extends RebufferingInputStream implements AutoCloseable
 {
     /**
      * The stream which contains buffers of compressed data that came from the peer.
@@ -70,9 +70,15 @@ public class StreamCompressionInputStream extends RebufferingInputStream
         buffer = currentBuf.nioBuffer(0, currentBuf.readableBytes());
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Close resources except {@link #dataInputPlus} as that needs to remain open for other streaming activity.
+     */
     @Override
     public void close()
     {
-        currentBuf.release();
+        if (currentBuf.refCnt() > 0)
+            currentBuf.release(currentBuf.refCnt());
     }
 }
