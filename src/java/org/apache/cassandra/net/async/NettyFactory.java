@@ -1,5 +1,6 @@
 package org.apache.cassandra.net.async;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.zip.Checksum;
 
@@ -313,6 +314,12 @@ public final class NettyFactory
             this.params = params;
         }
 
+        /**
+         * {@inheritDoc}
+         *
+         * To determine if we should enable TLS, we only need to check if {@link #params#encryptionOptions} is set.
+         * The logic for figuring that out is is located in {@link MessagingService#getMessagingConnection(InetAddress)};
+         */
         public void initChannel(SocketChannel channel) throws Exception
         {
             ChannelPipeline pipeline = channel.pipeline();
