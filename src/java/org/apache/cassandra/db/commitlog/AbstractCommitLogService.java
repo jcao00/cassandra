@@ -27,6 +27,8 @@ import org.slf4j.LoggerFactory;
 import com.codahale.metrics.Timer.Context;
 
 import org.apache.cassandra.concurrent.NamedThreadFactory;
+import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.commitlog.CommitLogSegment.Allocation;
 import org.apache.cassandra.utils.NoSpamLogger;
 import org.apache.cassandra.utils.concurrent.WaitQueue;
@@ -48,7 +50,23 @@ public abstract class AbstractCommitLogService
 
     final CommitLog commitLog;
     private final String name;
-    private final long pollIntervalNanos;
+
+    /**
+     * A flag that callers outside of the sync thread can use to signal they want the commitlog segments
+     * to be flushed to disk.
+     */
+    private volatile boolean requestSync;
+
+    /**
+     * The duration between syncs to disk
+     */
+    private final long syncIntervalNanos;
+
+    /**
+     * The duration between updating the chained markers in the the commit log file. This value should be
+     * 0 < {@link #markerIntervalNanos} <= {@link #syncIntervalNanos}.
+     */
+    private final long markerIntervalNanos;
 
     private static final Logger logger = LoggerFactory.getLogger(AbstractCommitLogService.class);
 
@@ -58,19 +76,37 @@ public abstract class AbstractCommitLogService
      *
      * Subclasses may be notified when a sync finishes by using the syncComplete WaitQueue.
      */
-    AbstractCommitLogService(final CommitLog commitLog, final String name, final long pollIntervalMillis)
+    AbstractCommitLogService(final CommitLog commitLog, final String name, final long syncIntervalMillis)
+    {
+        this(commitLog, name, syncIntervalMillis, syncIntervalMillis);
+    }
+
+    /**
+     * CommitLogService provides a fsync service for Allocations, fulfilling either the
+     * Batch or Periodic contract.
+     *
+     * Subclasses may be notified when a sync finishes by using the syncComplete WaitQueue.
+     */
+    AbstractCommitLogService(final CommitLog commitLog, final String name, final long syncIntervalMillis, long markerIntervalMillis)
     {
         this.commitLog = commitLog;
         this.name = name;
-        this.pollIntervalNanos = TimeUnit.NANOSECONDS.convert(pollIntervalMillis, TimeUnit.MILLISECONDS);
+        this.syncIntervalNanos = TimeUnit.NANOSECONDS.convert(syncIntervalMillis, TimeUnit.MILLISECONDS);
+
+        // if we are not using periodic mode, or we using compression/encryption, we shouldn't update the chained markers
+        // faster than the sync interval
+        if (DatabaseDescriptor.getCommitLogSync() != Config.CommitLogSync.periodic || commitLog.configuration.useCompression() || commitLog.configuration.useEncryption())
+            markerIntervalMillis = syncIntervalMillis;
+
+        this.markerIntervalNanos = TimeUnit.NANOSECONDS.convert(markerIntervalMillis, TimeUnit.MILLISECONDS);
     }
 
     // Separated into individual method to ensure relevant objects are constructed before this is started.
     void start()
     {
-        if (pollIntervalNanos < 1)
+        if (syncIntervalNanos < 1)
             throw new IllegalArgumentException(String.format("Commit log flush interval must be positive: %fms",
-                                                             pollIntervalNanos * 1e-6));
+                                                             syncIntervalNanos * 1e-6));
 
         Runnable runnable = new Runnable()
         {
@@ -90,16 +126,22 @@ public abstract class AbstractCommitLogService
                     try
                     {
                         // sync and signal
-                        long syncStarted = System.nanoTime();
-                        // This is a target for Byteman in CommitLogSegmentManagerTest
-                        commitLog.sync();
-                        lastSyncedAt = syncStarted;
-                        syncComplete.signalAll();
-
+                        long pollStarted = System.nanoTime();
+                        if (lastSyncedAt + syncIntervalNanos <= pollStarted || shutdownRequested || requestSync)
+                        {
+                            commitLog.sync(true);
+                            lastSyncedAt = pollStarted;
+                            requestSync = false;
+                            syncComplete.signalAll();
+                        }
+                        else
+                        {
+                            commitLog.sync(false);
+                        }
 
                         // sleep any time we have left before the next one is due
                         long now = System.nanoTime();
-                        long wakeUpAt = syncStarted + pollIntervalNanos;
+                        long wakeUpAt = pollStarted + markerIntervalNanos;
                         if (wakeUpAt < now)
                         {
                             // if we have lagged noticeably, update our lag counter
@@ -112,7 +154,7 @@ public abstract class AbstractCommitLogService
                             lagCount++;
                         }
                         syncCount++;
-                        totalSyncDuration += now - syncStarted;
+                        totalSyncDuration += now - pollStarted;
 
                         if (firstLagAt > 0)
                         {
@@ -143,7 +185,7 @@ public abstract class AbstractCommitLogService
                             break;
 
                         // sleep for full poll-interval after an error, so we don't spam the log file
-                        LockSupport.parkNanos(pollIntervalNanos);
+                        LockSupport.parkNanos(markerIntervalNanos);
                     }
                 }
             }
@@ -170,6 +212,7 @@ public abstract class AbstractCommitLogService
      */
     public void requestExtraSync()
     {
+        requestSync = true;
         LockSupport.unpark(thread);
     }
 
