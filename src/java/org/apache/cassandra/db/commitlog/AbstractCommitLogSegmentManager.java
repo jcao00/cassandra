@@ -514,7 +514,7 @@ public abstract class AbstractCommitLogSegmentManager
     /**
      * Forces a disk flush on the commit log files that need it.  Blocking.
      */
-    public void sync() throws IOException
+    public void sync(boolean flush) throws IOException
     {
         CommitLogSegment current = allocatingFrom;
         for (CommitLogSegment segment : getActiveSegments())
@@ -522,7 +522,7 @@ public abstract class AbstractCommitLogSegmentManager
             // Do not sync segments that became active after sync started.
             if (segment.id > current.id)
                 return;
-            segment.sync();
+            segment.sync(flush);
         }
     }
 

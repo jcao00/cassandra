@@ -30,7 +30,7 @@ import org.apache.cassandra.utils.SyncUtil;
  * The format of the compressed commit log is as follows:
  * - standard commit log header (as written by {@link CommitLogDescriptor#writeHeader(ByteBuffer, CommitLogDescriptor)})
  * - a series of 'sync segments' that are written every time the commit log is sync()'ed
- * -- a sync section header, see {@link CommitLogSegment#writeSyncMarker(ByteBuffer, int, int, int)}
+ * -- a sync section header, see {@link CommitLogSegment#writeSyncMarker(long, ByteBuffer, int, int, int)}
  * -- total plain text length for this section
  * -- a block of compressed data
  */
@@ -82,7 +82,6 @@ public class CompressedSegment extends FileDirectSegment
             channel.write(compressedBuffer);
             assert channel.position() - lastWrittenPos == compressedBuffer.limit();
             lastWrittenPos = channel.position();
-            SyncUtil.force(channel, true);
         }
         catch (Exception e)
         {

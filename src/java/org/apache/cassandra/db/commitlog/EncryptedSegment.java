@@ -143,8 +143,6 @@ public class EncryptedSegment extends FileDirectSegment
 
             channel.position(syncMarkerPosition);
             channel.write(buffer);
-
-            SyncUtil.force(channel, true);
         }
         catch (Exception e)
         {
