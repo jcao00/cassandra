@@ -108,6 +108,7 @@ import org.apache.cassandra.service.paxos.PrepareResponse;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.BooleanSerializer;
+import org.apache.cassandra.utils.CassandraVersion;
 import org.apache.cassandra.utils.ExpiringMap;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.NativeLibrary;
@@ -754,11 +755,16 @@ public final class MessagingService implements MessagingServiceMBean
 
         // this is the legacy socket, for letting peer nodes that haven't upgrade yet connect to this node.
         // should only occur during cluster upgrade. we can remove this block at 5.0!
-        if (serverEncryptionOptions.enabled)
+        if (serverEncryptionOptions.enabled && serverEncryptionOptions.enable_legacy_ssl_storage_port)
         {
+            // clone the encryption options, and explicitly set the optional field to false
+            // (do not allow non-TLS connections on the legacy ssl port)
+            ServerEncryptionOptions legacyEncOptions = new ServerEncryptionOptions(serverEncryptionOptions);
+            legacyEncOptions.optional = false;
+
             InetSocketAddress localAddr = new InetSocketAddress(localEp, DatabaseDescriptor.getSSLStoragePort());
             ChannelGroup channelGroup = new DefaultChannelGroup("LegacyEncryptedInternodeMessagingGroup", NettyFactory.executorForChannelGroups());
-            InboundInitializer initializer = new InboundInitializer(authenticator, serverEncryptionOptions, channelGroup);
+            InboundInitializer initializer = new InboundInitializer(authenticator, legacyEncOptions, channelGroup);
             Channel encryptedChannel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
             serverChannels.add(new ServerChannel(encryptedChannel, channelGroup));
         }

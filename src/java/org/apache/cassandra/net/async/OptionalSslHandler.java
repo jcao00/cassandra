@@ -18,9 +18,11 @@
 
 package org.apache.cassandra.net.async;
 
+import java.net.InetSocketAddress;
 import java.util.List;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.ssl.SslContext;
@@ -32,7 +34,7 @@ public class OptionalSslHandler extends ByteToMessageDecoder
 {
     private final ServerEncryptionOptions encryptionOptions;
 
-    public OptionalSslHandler(ServerEncryptionOptions encryptionOptions)
+    OptionalSslHandler(ServerEncryptionOptions encryptionOptions)
     {
         this.encryptionOptions = encryptionOptions;
     }
@@ -50,7 +52,9 @@ public class OptionalSslHandler extends ByteToMessageDecoder
         {
             // Connection uses SSL/TLS, replace the detection handler with a SslHandler and so use encryption.
             SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, true, true);
-            SslHandler sslHandler = sslContext.newHandler(ctx.channel().alloc());
+            Channel channel = ctx.channel();
+            InetSocketAddress peer = encryptionOptions.require_endpoint_verification ? (InetSocketAddress) channel.remoteAddress() : null;
+            SslHandler sslHandler = NettyFactory.newSslHandler(channel, sslContext, peer);
             ctx.pipeline().replace(this, NettyFactory.SSL_CHANNEL_HANDLER_NAME, sslHandler);
         }
         else

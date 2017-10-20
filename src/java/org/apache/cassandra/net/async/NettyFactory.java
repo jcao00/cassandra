@@ -4,6 +4,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.zip.Checksum;
 
+import javax.annotation.Nullable;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLParameters;
 
@@ -226,6 +227,28 @@ public final class NettyFactory
         return channelFuture.channel();
     }
 
+    /**
+     * Creates a new {@link SslHandler} from provided SslContext.
+     * @param peer enabled endpoint verification for remote address when provided
+     */
+    static SslHandler newSslHandler(Channel channel, SslContext sslContext, @Nullable InetSocketAddress peer)
+    {
+        if (peer == null)
+        {
+            return sslContext.newHandler(channel.alloc());
+        }
+        else
+        {
+            logger.debug("Creating SSL handler for %s:%d", peer.getHostString(), peer.getPort());
+            SslHandler sslHandler = sslContext.newHandler(channel.alloc(), peer.getHostString(), peer.getPort());
+            SSLEngine engine = sslHandler.engine();
+            SSLParameters sslParameters = engine.getSSLParameters();
+            sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+            engine.setSSLParameters(sslParameters);
+            return sslHandler;
+        }
+    }
+
     public static class InboundInitializer extends ChannelInitializer<SocketChannel>
     {
         private final IInternodeAuthenticator authenticator;
@@ -255,7 +278,8 @@ public final class NettyFactory
                 else
                 {
                     SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, true, true);
-                    SslHandler sslHandler = sslContext.newHandler(channel.alloc());
+                    InetSocketAddress peer = encryptionOptions.require_endpoint_verification ? channel.remoteAddress() : null;
+                    SslHandler sslHandler = newSslHandler(channel, sslContext, peer);
                     logger.trace("creating inbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
                     pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
                 }
@@ -328,22 +352,9 @@ public final class NettyFactory
             if (params.encryptionOptions != null)
             {
                 SslContext sslContext = SSLFactory.getSslContext(params.encryptionOptions, true, false);
-
-                final SslHandler sslHandler;
-                if (params.encryptionOptions.require_endpoint_verification)
-                {
-                    InetSocketAddress peer = params.connectionId.remoteAddress();
-                    sslHandler = sslContext.newHandler(channel.alloc(), peer.getHostString(), peer.getPort());
-                    SSLEngine engine = sslHandler.engine();
-                    SSLParameters sslParameters = engine.getSSLParameters();
-                    sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-                    engine.setSSLParameters(sslParameters);
-                }
-                else
-                {
-                    sslHandler = sslContext.newHandler(channel.alloc());
-                }
-
+                // for some reason channel.remoteAddress() will return null
+                InetSocketAddress peer = params.encryptionOptions.require_endpoint_verification ? params.connectionId.remoteAddress() : null;
+                SslHandler sslHandler = newSslHandler(channel, sslContext, peer);
                 logger.trace("creating outbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
                 pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
             }

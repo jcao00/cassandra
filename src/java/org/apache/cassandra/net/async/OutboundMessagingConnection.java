@@ -309,7 +309,7 @@ public class OutboundMessagingConnection
             {
                 targetVersion = version;
                 int port = MessagingService.instance().portFor(connectionId.remote());
-                connectionId = connectionId.withUpdatedRemotePort(port);
+                connectionId = connectionId.withNewConnectionPort(port);
                 logger.debug("changing connectionId to {}, with a different port for secure communication, because peer version is {}", connectionId, version);
             }
         }

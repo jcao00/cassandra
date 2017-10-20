@@ -32,12 +32,49 @@ public class EncryptionOptions
     public boolean enabled = false;
     public boolean optional = false;
 
+    public EncryptionOptions()
+    {   }
+
+    /**
+     * Copy constructor
+     */
+    public EncryptionOptions(EncryptionOptions options)
+    {
+        keystore = options.keystore;
+        keystore_password = options.keystore_password;
+        truststore = options.truststore;
+        truststore_password = options.truststore_password;
+        cipher_suites = options.cipher_suites;
+        protocol = options.protocol;
+        algorithm = options.algorithm;
+        store_type = options.store_type;
+        require_client_auth = options.require_client_auth;
+        require_endpoint_verification = options.require_endpoint_verification;
+        enabled = options.enabled;
+        optional = options.optional;
+    }
+
     public static class ServerEncryptionOptions extends EncryptionOptions
     {
         public enum InternodeEncryption
         {
             all, none, dc, rack
         }
+
         public InternodeEncryption internode_encryption = InternodeEncryption.none;
+        public boolean enable_legacy_ssl_storage_port = false;
+
+        public ServerEncryptionOptions()
+        {   }
+
+        /**
+         * Copy constructor
+         */
+        public ServerEncryptionOptions(ServerEncryptionOptions options)
+        {
+            super(options);
+            internode_encryption = options.internode_encryption;
+            enable_legacy_ssl_storage_port = options.enable_legacy_ssl_storage_port;
+        }
     }
 }
