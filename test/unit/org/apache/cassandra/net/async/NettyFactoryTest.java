@@ -156,7 +156,11 @@ public class NettyFactoryTest
         serverEncryptionOptions.enabled = false;
         Assert.assertEquals(1, NettyFactory.determineAcceptGroupSize(serverEncryptionOptions));
         serverEncryptionOptions.enabled = true;
+        Assert.assertEquals(1, NettyFactory.determineAcceptGroupSize(serverEncryptionOptions));
+
+        serverEncryptionOptions.enable_legacy_ssl_storage_port = true;
         Assert.assertEquals(2, NettyFactory.determineAcceptGroupSize(serverEncryptionOptions));
+        serverEncryptionOptions.enable_legacy_ssl_storage_port = false;
 
         InetAddress originalBroadcastAddr = FBUtilities.getBroadcastAddress();
         try
@@ -167,6 +171,9 @@ public class NettyFactoryTest
             serverEncryptionOptions.enabled = false;
             Assert.assertEquals(2, NettyFactory.determineAcceptGroupSize(serverEncryptionOptions));
             serverEncryptionOptions.enabled = true;
+            Assert.assertEquals(2, NettyFactory.determineAcceptGroupSize(serverEncryptionOptions));
+
+            serverEncryptionOptions.enable_legacy_ssl_storage_port = true;
             Assert.assertEquals(4, NettyFactory.determineAcceptGroupSize(serverEncryptionOptions));
         }
         finally
