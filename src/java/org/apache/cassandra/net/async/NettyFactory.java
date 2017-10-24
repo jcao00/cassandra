@@ -130,14 +130,23 @@ public final class NettyFactory
 
     /**
      * Determine the number of accept threads we need, which is based upon the number of listening sockets we will have.
-     * We'll have either 1 or 2 listen sockets, depending on if we use SSL or not.
+     * The idea is one accept thread per listening socket.
      */
-    static int determineAcceptGroupSize(ServerEncryptionOptions serverEncryptionOptions)
+    public static int determineAcceptGroupSize(ServerEncryptionOptions serverEncryptionOptions)
     {
-        int listenSocketCount = serverEncryptionOptions.enabled ? 2 : 1;
+        int listenSocketCount = 1;
 
-        if (MessagingService.shouldListenOnBroadcastAddress())
-            listenSocketCount *= 2;
+        boolean listenOnBroadcastAddr = MessagingService.shouldListenOnBroadcastAddress();
+        if (listenOnBroadcastAddr)
+            listenSocketCount++;
+
+        if (serverEncryptionOptions.enable_legacy_ssl_storage_port)
+        {
+            listenSocketCount++;
+
+            if (listenOnBroadcastAddr)
+                listenSocketCount++;
+        }
 
         return listenSocketCount;
     }
@@ -229,7 +238,7 @@ public final class NettyFactory
 
     /**
      * Creates a new {@link SslHandler} from provided SslContext.
-     * @param peer enabled endpoint verification for remote address when provided
+     * @param peer enables endpoint verification for remote address when not null
      */
     static SslHandler newSslHandler(Channel channel, SslContext sslContext, @Nullable InetSocketAddress peer)
     {

@@ -1634,6 +1634,11 @@ public class DatabaseDescriptor
         return listenAddress;
     }
 
+    public static void setListenAddress(InetAddress newlistenAddress)
+    {
+        listenAddress = newlistenAddress;
+    }
+
     public static InetAddress getBroadcastAddress()
     {
         return broadcastAddress;
@@ -1642,6 +1647,11 @@ public class DatabaseDescriptor
     public static boolean shouldListenOnBroadcastAddress()
     {
         return conf.listen_on_broadcast_address;
+    }
+
+    public static void setShouldListenOnBroadcastAddress(boolean shouldListenOnBroadcastAddress)
+    {
+        conf.listen_on_broadcast_address = shouldListenOnBroadcastAddress;
     }
 
     public static void setListenOnBroadcastAddress(boolean listen_on_broadcast_address)

@@ -921,7 +921,7 @@ public class FBUtilities
     }
 
     @VisibleForTesting
-    protected static void reset()
+    public static void reset()
     {
         localInetAddress = null;
         broadcastInetAddress = null;

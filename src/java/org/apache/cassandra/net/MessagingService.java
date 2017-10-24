@@ -1,4 +1,4 @@
-/*
+    /*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -108,7 +108,6 @@ import org.apache.cassandra.service.paxos.PrepareResponse;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.BooleanSerializer;
-import org.apache.cassandra.utils.CassandraVersion;
 import org.apache.cassandra.utils.ExpiringMap;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.NativeLibrary;
@@ -729,10 +728,15 @@ public final class MessagingService implements MessagingServiceMBean
 
     public void listen()
     {
+        listen(DatabaseDescriptor.getServerEncryptionOptions());
+    }
+
+    public void listen(ServerEncryptionOptions serverEncryptionOptions)
+    {
         callbacks.reset(); // hack to allow tests to stop/restart MS
-        listen(FBUtilities.getLocalAddress());
+        listen(FBUtilities.getLocalAddress(), serverEncryptionOptions);
         if (shouldListenOnBroadcastAddress())
-            listen(FBUtilities.getBroadcastAddress());
+            listen(FBUtilities.getBroadcastAddress(), serverEncryptionOptions);
         listenGate.signalAll();
     }
 
@@ -747,11 +751,10 @@ public final class MessagingService implements MessagingServiceMBean
      *
      * @param localEp InetAddress whose port to listen on.
      */
-    private void listen(InetAddress localEp) throws ConfigurationException
+    private void listen(InetAddress localEp, ServerEncryptionOptions serverEncryptionOptions) throws ConfigurationException
     {
         IInternodeAuthenticator authenticator = DatabaseDescriptor.getInternodeAuthenticator();
         int receiveBufferSize = DatabaseDescriptor.getInternodeRecvBufferSize();
-        ServerEncryptionOptions serverEncryptionOptions = DatabaseDescriptor.getServerEncryptionOptions();
 
         // this is the legacy socket, for letting peer nodes that haven't upgrade yet connect to this node.
         // should only occur during cluster upgrade. we can remove this block at 5.0!
@@ -766,7 +769,7 @@ public final class MessagingService implements MessagingServiceMBean
             ChannelGroup channelGroup = new DefaultChannelGroup("LegacyEncryptedInternodeMessagingGroup", NettyFactory.executorForChannelGroups());
             InboundInitializer initializer = new InboundInitializer(authenticator, legacyEncOptions, channelGroup);
             Channel encryptedChannel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
-            serverChannels.add(new ServerChannel(encryptedChannel, channelGroup));
+            serverChannels.add(new ServerChannel(encryptedChannel, channelGroup, localAddr, ServerChannel.SecurityLevel.REQUIRED));
         }
 
         // this is for the socket that can be plain, only ssl, or optional plain/ssl
@@ -774,15 +777,27 @@ public final class MessagingService implements MessagingServiceMBean
         ChannelGroup channelGroup = new DefaultChannelGroup("InternodeMessagingGroup", NettyFactory.executorForChannelGroups());
         InboundInitializer initializer = new InboundInitializer(authenticator, serverEncryptionOptions, channelGroup);
         Channel channel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
-        serverChannels.add(new ServerChannel(channel, channelGroup));
+        ServerChannel.SecurityLevel securityLevel = !serverEncryptionOptions.enabled ? ServerChannel.SecurityLevel.NONE :
+                                                    serverEncryptionOptions.optional ? ServerChannel.SecurityLevel.OPTIONAL :
+                                                    ServerChannel.SecurityLevel.REQUIRED;
+        serverChannels.add(new ServerChannel(channel, channelGroup, localAddr, securityLevel));
     }
 
     /**
      * A simple struct to wrap up the the components needed for each listening socket.
+     * <p>
+     * The {@link #securityLevel} is captured independently of the {@link #channel} as there's no real way to inspect a s
+     * erver-side 'channel' to check if it using TLS or not (the channel's configured pipeline will only apply to
+     * connections that get created, so it's not inspectible). {@link #securityLevel} is really only used for testing, anyway.
      */
     @VisibleForTesting
     static class ServerChannel
     {
+        /**
+         * Declares the type of TLS used with the channel.
+         */
+        enum SecurityLevel { NONE, OPTIONAL, REQUIRED }
+
         /**
          * The base {@link Channel} that is doing the spcket listen/accept.
          */
@@ -793,23 +808,45 @@ public final class MessagingService implements MessagingServiceMBean
          * the inbound connections/channels can be closed when the listening socket itself is being closed.
          */
         private final ChannelGroup connectedChannels;
+        private final InetSocketAddress address;
+        private final SecurityLevel securityLevel;
 
-        private ServerChannel(Channel channel, ChannelGroup channelGroup)
+        private ServerChannel(Channel channel, ChannelGroup channelGroup, InetSocketAddress address, SecurityLevel securityLevel)
         {
             this.channel = channel;
             this.connectedChannels = channelGroup;
+            this.address = address;
+            this.securityLevel = securityLevel;
         }
 
         void close()
         {
-            channel.close().syncUninterruptibly();
-            connectedChannels.close().syncUninterruptibly();
+            if (channel.isOpen())
+                channel.close().awaitUninterruptibly();
+            connectedChannels.close().awaitUninterruptibly();
         }
 
         int size()
-
         {
             return connectedChannels.size();
+        }
+
+        /**
+         * For testing only!
+         */
+        Channel getChannel()
+        {
+            return channel;
+        }
+
+        InetSocketAddress getAddress()
+        {
+            return address;
+        }
+
+        SecurityLevel getSecurityLevel()
+        {
+            return securityLevel;
         }
     }
 
@@ -1042,6 +1079,11 @@ public final class MessagingService implements MessagingServiceMBean
      */
     public void shutdown()
     {
+        shutdown(false);
+    }
+
+    public void shutdown(boolean isTest)
+    {
         logger.info("Waiting for messaging service to quiesce");
         // We may need to schedule hints on the mutation stage, so it's erroneous to shut down the mutation stage first
         assert !StageManager.getStage(Stage.MUTATION).isShutdown();
@@ -1061,12 +1103,21 @@ public final class MessagingService implements MessagingServiceMBean
             for (OutboundMessagingPool pool : channelManagers.values())
                 pool.close(false);
 
-            NettyFactory.instance.close();
+            if (!isTest)
+                NettyFactory.instance.close();
         }
         catch (Exception e)
         {
             throw new IOError(e);
         }
+    }
+
+    /**
+     * For testing only!
+     */
+    void clearServerChannels()
+    {
+        serverChannels.clear();
     }
 
     public void receive(MessageIn message, int id)
