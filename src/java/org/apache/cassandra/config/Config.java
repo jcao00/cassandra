@@ -210,8 +210,6 @@ public class Config
 
     public EncryptionOptions.ServerEncryptionOptions server_encryption_options = new EncryptionOptions.ServerEncryptionOptions();
     public EncryptionOptions client_encryption_options = new EncryptionOptions();
-    // this encOptions is for backward compatibility (a warning is logged by DatabaseDescriptor)
-    public EncryptionOptions.ServerEncryptionOptions encryption_options;
 
     public InternodeCompression internode_compression = InternodeCompression.none;
 
