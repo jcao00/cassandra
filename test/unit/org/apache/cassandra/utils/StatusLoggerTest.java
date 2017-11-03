@@ -31,6 +31,7 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.AppenderBase;
 import org.apache.cassandra.cql3.CQLTester;
@@ -50,6 +51,7 @@ public class StatusLoggerTest extends CQLTester
     {
         ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(StatusLogger.class);
         InMemoryAppender inMemoryAppender = new InMemoryAppender();
+        logger.setLevel(Level.TRACE);
         inMemoryAppender.start();
         logger.addAppender(inMemoryAppender);
         try
@@ -133,9 +135,9 @@ public class StatusLoggerTest extends CQLTester
         }
     }
 
-    private boolean isLoggerBusyTheOnlyEvent(List<ILoggingEvent> firstThreadEvents)
+    private boolean isLoggerBusyTheOnlyEvent(List<ILoggingEvent> events)
     {
-        return firstThreadEvents.size() == 1 && firstThreadEvents.get(0).getMessage().equals("StatusLogger is busy");
+        return events.size() == 1 && events.get(0).getMessage().equals("StatusLogger is busy");
     }
 
     private static class InMemoryAppender extends AppenderBase<ILoggingEvent>

@@ -56,7 +56,7 @@ public class StatusLogger
         }
         else
         {
-            logger.info("StatusLogger is busy");
+            logger.trace("StatusLogger is busy");
         }
     }
 
