@@ -342,6 +342,18 @@ public class DatabaseDescriptor
             }
             logger.debug("Syncing log with a batch window of {}", conf.commitlog_sync_batch_window_in_ms);
         }
+        else if (conf.commitlog_sync == CommitLogSync.group)
+        {
+            if (Double.isNaN(conf.commitlog_sync_group_window_in_ms) || conf.commitlog_sync_group_window_in_ms <= 0d)
+            {
+                throw new ConfigurationException("Missing value for commitlog_sync_group_window_in_ms: positive double value expected.", false);
+            }
+            else if (conf.commitlog_sync_period_in_ms != 0)
+            {
+                throw new ConfigurationException("Group sync specified, but commitlog_sync_period_in_ms found. Only specify commitlog_sync_group_window_in_ms when using group sync", false);
+            }
+            logger.debug("Syncing log with a group window of {}", conf.commitlog_sync_period_in_ms);
+        }
         else
         {
             if (conf.commitlog_sync_period_in_ms <= 0)
@@ -1779,6 +1791,16 @@ public class DatabaseDescriptor
     public static void setCommitLogSyncBatchWindow(double windowMillis)
     {
         conf.commitlog_sync_batch_window_in_ms = windowMillis;
+    }
+
+    public static double getCommitLogSyncGroupWindow()
+    {
+        return conf.commitlog_sync_group_window_in_ms;
+    }
+
+    public static void setCommitLogSyncGroupWindow(double windowMillis)
+    {
+        conf.commitlog_sync_group_window_in_ms = windowMillis;
     }
 
     public static int getCommitLogSyncPeriod()
