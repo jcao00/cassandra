@@ -19,12 +19,14 @@
 package org.apache.cassandra.db.commitlog;
 
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.ParameterizedClass;
 import org.apache.cassandra.security.EncryptionContext;
 
+@Ignore
 public class PeriodicCommitLogTest extends CommitLogTest
 {
     public PeriodicCommitLogTest(ParameterizedClass commitLogCompression, EncryptionContext encryptionContext)

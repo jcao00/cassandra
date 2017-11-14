@@ -71,6 +71,7 @@ import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+@Ignore
 @RunWith(Parameterized.class)
 public abstract class CommitLogTest
 {
@@ -86,7 +87,6 @@ public abstract class CommitLogTest
     {
         DatabaseDescriptor.setCommitLogCompression(commitLogCompression);
         DatabaseDescriptor.setEncryptionContext(encryptionContext);
-        System.out.println("JEB::" + DatabaseDescriptor.getCommitLogSync());
     }
 
     @Parameters()
