@@ -196,6 +196,7 @@ public class CommitLogStressTest
     {
         failed = false;
         DatabaseDescriptor.setCommitLogSyncBatchWindow(1);
+        DatabaseDescriptor.setCommitLogSyncGroupWindow(1);
         DatabaseDescriptor.setCommitLogSyncPeriod(30);
         DatabaseDescriptor.setCommitLogSegmentSize(32);
 
