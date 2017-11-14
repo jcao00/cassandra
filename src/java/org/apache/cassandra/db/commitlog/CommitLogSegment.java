@@ -328,7 +328,7 @@ public abstract class CommitLogSegment
 
         boolean close = false;
         int startMarker = lastSyncedOffset;
-        int nextMarker;
+        int nextMarker, sectionEnd;
         if (needToMarkData)
         {
             // Allocate a new sync marker; this is both necessary in itself, but also serves to demarcate
@@ -347,24 +347,23 @@ public abstract class CommitLogSegment
             }
             // Wait for mutations to complete as well as endOfBuffer to have been written.
             waitForModifications();
-            int sectionEnd = close ? endOfBuffer : nextMarker;
+            sectionEnd = close ? endOfBuffer : nextMarker;
 
             // Possibly perform compression or encryption, writing to file and flush.
             write(startMarker, sectionEnd);
-
-            if (cdcState == CDCState.CONTAINS)
-                writeCDCIndexFile(descriptor, sectionEnd, close);
-
             lastMarkerOffset = nextMarker;
         }
         else
         {
             nextMarker = lastMarkerOffset;
+            sectionEnd = close ? endOfBuffer : nextMarker - SYNC_MARKER_SIZE;
         }
 
         if (flush || close)
         {
             flush(startMarker, nextMarker);
+            if (cdcState == CDCState.CONTAINS)
+                writeCDCIndexFile(descriptor, sectionEnd, close);
             lastSyncedOffset = nextMarker;
         }
 

@@ -512,7 +512,9 @@ public abstract class AbstractCommitLogSegmentManager
     }
 
     /**
-     * Forces a disk flush on the commit log files that need it.  Blocking.
+     * Requests commit log files sync themselves, if needed. This may or may not involve flushing to disk.
+     *
+     * @param flush Request that the sync operation flush the file to disk.
      */
     public void sync(boolean flush) throws IOException
     {

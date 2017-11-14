@@ -377,7 +377,7 @@ commitlog_sync: periodic
 commitlog_sync_period_in_ms: 10000
 
 # Time interval in millis at which we should update the chained markers in the commitlog.
-# This allows more of the commitlog to be replayed from the mmaped file
+# This allows more of the commitlog to be replayed from the mmapped file
 # if the cassandra process crashes; this does not help in durability for surviving a host fail.
 # This value only makes sense if it is significantly less that commitlog_sync_period_in_ms,
 # and only applies to periodic mode when not using commitlog compression or encryption.

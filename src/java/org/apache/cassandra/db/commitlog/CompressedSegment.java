@@ -21,7 +21,6 @@ import java.nio.ByteBuffer;
 
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.compress.ICompressor;
-import org.apache.cassandra.utils.SyncUtil;
 
 /**
  * Compressed commit log segment. Provides an in-memory buffer for the mutation threads. On sync compresses the written
