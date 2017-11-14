@@ -18,26 +18,26 @@
 
 package org.apache.cassandra.db.commitlog;
 
-import org.apache.cassandra.config.DatabaseDescriptor;
+import org.junit.BeforeClass;
 
-/**
- * A commitlog service that will block returning an ACK back to the a coordinator/client
- * for a minimum amount of time as we wait until the the commit log segment is flushed.
- */
-public class GroupCommitLogService extends AbstractCommitLogService
+import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.ParameterizedClass;
+import org.apache.cassandra.security.EncryptionContext;
+
+public class PeriodicCommitLogTest extends CommitLogTest
 {
-    public GroupCommitLogService(CommitLog commitLog)
+    public PeriodicCommitLogTest(ParameterizedClass commitLogCompression, EncryptionContext encryptionContext)
     {
-        super(commitLog, "GROUP-COMMIT-LOG-WRITER", (int) DatabaseDescriptor.getCommitLogSyncGroupWindow());
+        super(commitLogCompression, encryptionContext);
     }
 
-    protected void maybeWaitForSync(CommitLogSegment.Allocation alloc)
+    @BeforeClass
+    public static void setCommitLogModeDetails()
     {
-        // wait until record has been safely persisted to disk
-        pending.incrementAndGet();
-        // wait for commitlog_sync_group_window_in_ms
-        alloc.awaitDiskSync(commitLog.metrics.waitingOnCommit);
-        pending.decrementAndGet();
+        DatabaseDescriptor.daemonInitialization();
+        DatabaseDescriptor.setCommitLogSync(Config.CommitLogSync.periodic);
+        DatabaseDescriptor.setCommitLogSyncPeriod(10 * 1000);
+        beforeClass();
     }
 }
-
