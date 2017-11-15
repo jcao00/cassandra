@@ -355,8 +355,10 @@ public abstract class CommitLogSegment
         }
         else
         {
+            // Wait for mutations to complete as well as endOfBuffer to have been written.
+            waitForModifications();
             nextMarker = lastMarkerOffset;
-            sectionEnd = close ? endOfBuffer : nextMarker - SYNC_MARKER_SIZE;
+            sectionEnd = nextMarker - SYNC_MARKER_SIZE;
         }
 
         if (flush || close)

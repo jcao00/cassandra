@@ -121,13 +121,13 @@ public abstract class AbstractCommitLogService
                     {
                         // sync and signal
                         long pollStarted = System.nanoTime();
-                        if (lastSyncedAt + syncIntervalNanos > pollStarted)
+                        if (lastSyncedAt + syncIntervalNanos <= pollStarted || shutdownRequested)
                         {
-                            commitLog.sync(false);
+                            commitLog.sync(true);
                         }
                         else
                         {
-                            commitLog.sync(true);
+                            commitLog.sync(false);
                             lastSyncedAt = pollStarted;
                         }
                         syncComplete.signalAll();
