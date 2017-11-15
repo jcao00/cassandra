@@ -355,8 +355,8 @@ public abstract class CommitLogSegment
         }
         else
         {
-            // Wait for mutations to complete as well as endOfBuffer to have been written.
-            waitForModifications();
+            // note: we don't need to waitForModifications() as, once we get to this block, we are only doing the flush
+            // and any mutations have already been fully written into the segment (as we wait for it in the previous block)
             nextMarker = lastMarkerOffset;
             sectionEnd = nextMarker - SYNC_MARKER_SIZE;
         }
