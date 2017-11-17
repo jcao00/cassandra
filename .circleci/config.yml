@@ -1,0 +1,218 @@
+version: 2
+jobs:
+  build:
+    resource_class: xlarge
+    working_directory: ~/
+    parallelism: 100
+    docker:
+      - image: kjellman/cassandra-test:0.1.1
+        environment:
+            JAVA_HOME: /usr/local/openjdk8u154-cassandra-b02
+            ANT_HOME: /usr/local/apache-ant-1.10.1
+            LANG: en_US.UTF-8           
+    steps:
+      - run:
+          name: Setup Enviornment
+          command: |
+            echo "export LANG=en_US.UTF-8" >> ~/env_dtest_common
+            echo "export JDK_HOME=/usr/local/openjdk8u154-cassandra-b02" >> ~/env_dtest_common
+            echo 'export JAVA8_HOME=$JDK_HOME' >> ~/env_dtest_common
+            echo "export JAVA7_HOME=/usr/local/openjdk7u82-cassandra-b02" >> ~/env_dtest_common
+            echo "export DEBUG=true" >> ~/env_dtest_common
+            echo "export PRINT_DEBUG=true" >> ~/env_dtest_common
+            echo 'export allow_root="yes"' >> ~/env_dtest_common
+            echo "export KEEP_TEST_DIR=true" >> ~/env_dtest_common
+            echo "export CASSANDRA_DIR=$HOME/cassandra" >> ~/env_dtest_common
+            echo "export PYTHONIOENCODING="utf-8"" >> ~/env_dtest_common
+            echo "export PYTHONUNBUFFERED=true" >> ~/env_dtest_common
+            echo "export CASS_DRIVER_NO_EXTENSIONS=true" >> ~/env_dtest_common
+            echo "export CASS_DRIVER_NO_CYTHON=true" >> ~/env_dtest_common
+            echo 'export CCM_MAX_HEAP_SIZE="3072M"' >> ~/env_dtest_common
+            echo 'export CCM_HEAP_NEWSIZE="256M"' >> ~/env_dtest_common
+            export LANG=en_US.UTF-8
+            mkdir ~/.ssh || true
+            echo $'Host *\n UserKnownHostsFile /dev/null\n StrictHostKeyChecking no' > ~/.ssh/config
+      - run:
+          name: Log Environment Information
+          command: |
+              echo '*** id ***'
+              id
+              echo '*** cat /proc/cpuinfo ***'
+              cat /proc/cpuinfo
+              echo '*** free -m ***'
+              free -m
+              echo '*** df -m ***'
+              df -m
+              echo '*** ifconfig -a ***'
+              ifconfig -a
+              echo '*** uname -a ***'
+              uname -a
+              echo '*** mount ***'
+              mount
+              echo '*** env ***'
+              env
+      - run:
+          name: Clone Cassandra Repository (via git)
+          command: |
+            export LANG=en_US.UTF-8
+            git clone --single-branch --depth 1 --branch $CIRCLE_BRANCH git://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME.git ~/cassandra
+      - run:
+          name: Clone Cassandra dtest Repository (via git)
+          command: |
+            export LANG=en_US.UTF-8
+            git clone --single-branch --depth 1 git://github.com/jasobrown/cassandra-dtest.git ~/cassandra-dtest
+      - run:
+          name: Configure virtualenv and python Dependencies
+          command: |
+            # note, this should be super quick as all dependencies should be pre-installed in the docker image
+            # if additional dependencies were added to requirmeents.txt and the docker image hasn't been updated
+            # we'd have to install it here at runtime -- which will make things slow, so do yourself a favor and
+            # rebuild the docker image! (it automatically pulls the latest requirements.txt on build)
+            export LANG=en_US.UTF-8
+            source ~/env/bin/activate
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+            export CASS_DRIVER_NO_EXTENSIONS=true
+            export CASS_DRIVER_NO_CYTHON=true
+            pip install -r ~/cassandra-dtest/requirements.txt
+            pip freeze
+      - run:
+          name: Build Cassandra
+          command: |
+            export LANG=en_US.UTF-8
+            export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+            cd ~/cassandra
+            # Loop to prevent failure due to maven-ant-tasks not downloading a jar..
+            for x in $(seq 1 3); do
+                ${ANT_HOME}/bin/ant clean jar
+                RETURN="$?"
+                if [ "${RETURN}" -eq "0" ]; then
+                    break
+                fi
+            done
+            # Exit, if we didn't build successfully
+            if [ "${RETURN}" -ne "0" ]; then
+                echo "Build failed with exit code: ${RETURN}"
+                exit ${RETURN}
+            fi
+          no_output_timeout: 20m
+      - run:
+          name: Determine Tests to Run
+          no_output_timeout: 10m
+          command: |
+            # reminder: this code (along with all the steps) is independently executed on every circle container
+            # so the goal here is to get the circleci script to return the tests *this* container will run
+            # which we do via the `circleci` cli tool
+ 
+            export LANG=en_US.UTF-8
+            rm -fr ~/cassandra-dtest/upgrade_tests
+            echo "***java tests***"
+
+            # get all of our unit test filenames
+            set -eo pipefail && circleci tests glob "$HOME/cassandra/test/unit/**/*.java" > /tmp/all_java_unit_tests.txt
+
+            # split up the unit tests into groups based on the number of containers we have
+            set -eo pipefail && circleci tests split --split-by=timings --timings-type=filename --index=${CIRCLE_NODE_INDEX} --total=${CIRCLE_NODE_TOTAL} /tmp/all_java_unit_tests.txt > /tmp/java_tests_${CIRCLE_NODE_INDEX}.txt
+            set -eo pipefail && cat /tmp/java_tests_${CIRCLE_NODE_INDEX}.txt | cut -c 37-1000000 | grep "Test\.java$" > /tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
+            echo "** /tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt"
+            cat /tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
+            
+            echo "***python tests***"
+            cd cassandra-dtest
+            export CASSANDRA_DIR=/home/cassandra/cassandra
+            source ~/env/bin/activate
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+
+            ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
+            TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
+            TEST_TAG=offheap ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
+            cat /tmp/pythontestlist | grep "... ok" | rev | cut -c 8- | rev > /tmp/testlist_trimmed
+            cat /tmp/testlist_trimmed | circleci tests split --split-by=timings --timings-type=classname > /tmp/python_tests.txt
+            cat /tmp/python_tests.txt
+            echo "***regular python tests***"
+            cat /tmp/python_tests.txt | grep -v "\-novnode" | grep -v "\-offheap" > /tmp/regular_python_tests.txt
+            cat /tmp/regular_python_tests.txt | tr '\n' ' ' > /tmp/regular_python_tests_final.txt
+            cat /tmp/regular_python_tests_final.txt
+            echo "***novnode python tests***"
+            cat /tmp/python_tests.txt | grep "\-novnode" | rev | cut -c 9- | rev > /tmp/novnode_python_tests.txt
+            cat /tmp/novnode_python_tests.txt | tr '\n' ' ' > /tmp/novnode_python_tests_final.txt
+            cat /tmp/novnode_python_tests_final.txt
+            echo "***offheap python tests***"
+            cat /tmp/python_tests.txt | grep "\-offheap" | rev | cut -c 9- | rev > /tmp/offheap_python_tests.txt
+            cat /tmp/offheap_python_tests.txt | tr '\n' ' ' > /tmp/offheap_python_tests_final.txt
+            cat /tmp/offheap_python_tests_final.txt
+      - run:
+         name: Run Unit Tests
+         command: |
+            export LANG=en_US.UTF-8
+            export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+
+            cd ~/cassandra
+            ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt || true
+         no_output_timeout: 15m
+      - run:
+          name: Run dtests
+          no_output_timeout: 30m
+          command: |
+            echo "cat /tmp/regular_python_tests_final.txt"
+            cat /tmp/regular_python_tests_final.txt
+            echo "*** kj ***"
+
+            source ~/env/bin/activate
+            source ~/env_dtest_common
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+
+            cd ~/cassandra-dtest
+            mkdir -p /tmp/dtest
+            export NUM_TOKENS="32"
+
+            echo "env: $(env)"
+            echo "** done env"
+            ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
+            cp nosetests.xml nosetests-regular.xml
+      - run:
+          name: Run dtests (without vnodes)
+          no_output_timeout: 30m
+          command: |
+            source ~/env/bin/activate
+            source ~/env_dtest_common
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+
+            cd ~/cassandra-dtest
+            export TEST_TAG="novnodes"
+            ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
+            cp nosetests.xml nosetests-novnode.xml
+      - run:
+          name: Run dtests (off-heap)
+          no_output_timeout: 30m
+          command: |
+            source ~/env/bin/activate
+            source ~/env_dtest_common
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+
+            cd ~/cassandra-dtest
+            export OFFHEAP_MEMTABLES="true"
+            ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/offheap_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-offheap.txt || true
+            cp nosetests.xml nosetests-offheap.xml
+      - run:
+          name: Collect and Merge Test Results
+          command: |
+            rm -f $HOME/cassandra-dtest/logs/last || true
+            mkdir -p /tmp/results/ || true
+            find ~/cassandra/build/test/output/ ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
+      - store_test_results:
+          path: /tmp/results
+      - store_artifacts:
+          path: ~/cassandra/build/test/output
+          destination: junitxml
+      - store_artifacts:
+          path: ~/cassandra/build/test/logs
+          destination: logs
+      - store_artifacts:
+          path: /tmp/dtest
+          destination: dtest
+      - store_artifacts:
+          path: ~/cassandra-dtest/logs
+          destination: dtest_logs
+
