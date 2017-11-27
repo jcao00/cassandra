@@ -515,7 +515,7 @@ public abstract class CommitLogSegment
     synchronized void close()
     {
         discardUnusedTail();
-        sync(true);
+        sync(false);
         assert buffer == null;
     }
 
