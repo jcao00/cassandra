@@ -52,12 +52,6 @@ public abstract class AbstractCommitLogService
     private final String name;
 
     /**
-     * A flag that callers outside of the sync thread can use to signal they want the commitlog segments
-     * to be flushed to disk.
-     */
-    private volatile boolean requestSync;
-
-    /**
      * The duration between syncs to disk
      */
     private final long syncIntervalNanos;
@@ -127,11 +121,10 @@ public abstract class AbstractCommitLogService
                     {
                         // sync and signal
                         long pollStarted = System.nanoTime();
-                        if (lastSyncedAt + syncIntervalNanos <= pollStarted || shutdownRequested || requestSync)
+                        if (lastSyncedAt + syncIntervalNanos > pollStarted || shutdownRequested)
                         {
                             commitLog.sync(true);
                             lastSyncedAt = pollStarted;
-                            requestSync = false;
                             syncComplete.signalAll();
                         }
                         else
@@ -212,7 +205,6 @@ public abstract class AbstractCommitLogService
      */
     public void requestExtraSync()
     {
-        requestSync = true;
         LockSupport.unpark(thread);
     }
 

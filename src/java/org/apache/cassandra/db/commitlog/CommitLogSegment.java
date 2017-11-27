@@ -309,7 +309,7 @@ public abstract class CommitLogSegment
     /**
      * Update the chained markers in the commit log buffer and possibly force a disk flush for this segment file.
      */
-    synchronized void sync(boolean flush)
+    synchronized void sync(boolean updateMarkersOnly)
     {
         if (!headerWritten)
             throw new IllegalStateException("commit log header has not been written");
@@ -361,7 +361,7 @@ public abstract class CommitLogSegment
             sectionEnd = nextMarker - SYNC_MARKER_SIZE;
         }
 
-        if (flush || close)
+        if (!updateMarkersOnly || close)
         {
             flush(startMarker, nextMarker);
             if (cdcState == CDCState.CONTAINS)
