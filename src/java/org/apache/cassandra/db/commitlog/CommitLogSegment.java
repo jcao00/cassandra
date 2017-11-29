@@ -32,6 +32,9 @@ import java.util.zip.CRC32;
 import com.google.common.annotations.VisibleForTesting;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.codahale.metrics.Timer;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.Mutation;
@@ -56,6 +59,7 @@ import static org.apache.cassandra.utils.FBUtilities.updateChecksumInt;
  */
 public abstract class CommitLogSegment
 {
+    private static final Logger logger = LoggerFactory.getLogger(CommitLogSegment.class);
     private final static long idBase;
 
     private CDCState cdcState = CDCState.PERMITTED;
@@ -268,7 +272,7 @@ public abstract class CommitLogSegment
     // ensures no more of this segment is writeable, by allocating any unused section at the end and marking it discarded
     void discardUnusedTail()
     {
-        // We guard this with the OpOrdering instead of synchronised due to potential dead-lock with CLSM.advanceAllocatingFrom()
+        // We guard this with the OpOrdering instead of synchronised due to potential dead-lock with ACLSM.advanceAllocatingFrom()
         // Ensures endOfBuffer update is reflected in the buffer end position picked up by sync().
         // This actually isn't strictly necessary, as currently all calls to discardUnusedTail are executed either by the thread
         // running sync or within a mutation already protected by this OpOrdering, but to prevent future potential mistakes,
@@ -308,17 +312,22 @@ public abstract class CommitLogSegment
 
     /**
      * Update the chained markers in the commit log buffer and possibly force a disk flush for this segment file.
+     *
+     * @param flush true if the segment should flush to disk; else, false for just updating the chained markers.
      */
-    synchronized void sync(boolean updateMarkersOnly)
+    synchronized void sync(boolean flush)
     {
         if (!headerWritten)
             throw new IllegalStateException("commit log header has not been written");
         assert lastMarkerOffset >= lastSyncedOffset : String.format("commit log segment positions are incorrect: last marked = %d, last synced = %d",
                                                                     lastMarkerOffset, lastSyncedOffset);
         // check we have more work to do
-        boolean needToMarkData = allocatePosition.get() > lastMarkerOffset + SYNC_MARKER_SIZE;
-        boolean needToFlushData = lastSyncedOffset != lastMarkerOffset;
-        if (!(needToMarkData || needToFlushData))
+
+        // we will want to mark data regardless of the value of flush (if there's any new data). NOTE: this will evaluate to true
+        // the allocatePosition is jacked down to the end (to close the file)
+        final boolean needToMarkData = allocatePosition.get() > lastMarkerOffset + SYNC_MARKER_SIZE;
+        final boolean hasDataToFlush = lastSyncedOffset != lastMarkerOffset;
+        if (!(needToMarkData || hasDataToFlush))
             return;
         // Note: Even if the very first allocation of this sync section failed, we still want to enter this
         // to ensure the segment is closed. As allocatePosition is set to 1 beyond the capacity of the buffer,
@@ -327,7 +336,7 @@ public abstract class CommitLogSegment
         assert buffer != null;  // Only close once.
 
         boolean close = false;
-        int startMarker = lastSyncedOffset;
+        int startMarker = lastMarkerOffset;
         int nextMarker, sectionEnd;
         if (needToMarkData)
         {
@@ -349,24 +358,29 @@ public abstract class CommitLogSegment
             waitForModifications();
             sectionEnd = close ? endOfBuffer : nextMarker;
 
-            // Possibly perform compression or encryption, writing to file and flush.
+            // Possibly perform compression or encryption and update the chained markers
             write(startMarker, sectionEnd);
-            lastMarkerOffset = nextMarker;
+            lastMarkerOffset = sectionEnd;
         }
         else
         {
-            // note: we don't need to waitForModifications() as, once we get to this block, we are only doing the flush
-            // and any mutations have already been fully written into the segment (as we wait for it in the previous block)
+            logger.info("JEB::CLS - !neetToMarkData");
+            // TODO:JEB fix these comments
+            // note 1: we don't need to waitForModifications() as, once we get to this block, we are only doing the flush
+            // and any mutations have already been fully written into the segment (as we wait for it in the previous block).
+            // --- ERRR, actually, I think i need to wait for any concurrent discardUnusedTail() executions to update endOfBuffer
+            // note 2: endOfBuffer could have been updated between executions of this method
             nextMarker = lastMarkerOffset;
-            sectionEnd = nextMarker - SYNC_MARKER_SIZE;
+            sectionEnd = nextMarker;
         }
 
-        if (!updateMarkersOnly || close)
+
+        if (flush || close)
         {
-            flush(startMarker, nextMarker);
+            flush(startMarker, sectionEnd);
             if (cdcState == CDCState.CONTAINS)
                 writeCDCIndexFile(descriptor, sectionEnd, close);
-            lastSyncedOffset = nextMarker;
+            lastSyncedOffset = lastMarkerOffset = nextMarker;
         }
 
         if (close)
@@ -515,7 +529,7 @@ public abstract class CommitLogSegment
     synchronized void close()
     {
         discardUnusedTail();
-        sync(false);
+        sync(true);
         assert buffer == null;
     }
 

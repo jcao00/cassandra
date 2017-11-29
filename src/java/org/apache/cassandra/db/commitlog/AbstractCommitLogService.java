@@ -52,7 +52,7 @@ public abstract class AbstractCommitLogService
     private final String name;
 
     /**
-     * The duration between syncs to disk
+     * The duration between syncs to disk.
      */
     private final long syncIntervalNanos;
 
@@ -61,6 +61,13 @@ public abstract class AbstractCommitLogService
      * 0 < {@link #markerIntervalNanos} <= {@link #syncIntervalNanos}.
      */
     private final long markerIntervalNanos;
+
+    /**
+     * A flag that callers outside of the sync thread can use to signal they want the commitlog segments
+     * to be flushed to disk. Note: this flag is primarily to support commit log's batch mode, which requires
+     * an immediate flush to disk on every mutation; see {@link BatchCommitLogService#maybeWaitForSync(Allocation)}.
+     */
+    private volatile boolean requestSync;
 
     private static final Logger logger = LoggerFactory.getLogger(AbstractCommitLogService.class);
 
@@ -121,14 +128,17 @@ public abstract class AbstractCommitLogService
                     {
                         // sync and signal
                         long pollStarted = System.nanoTime();
-                        if (lastSyncedAt + syncIntervalNanos > pollStarted || shutdownRequested)
+                        if (lastSyncedAt + syncIntervalNanos <= pollStarted || shutdownRequested || requestSync)
                         {
+                            // in this branch, we want to flush the commit log to disk
                             commitLog.sync(true);
+                            requestSync = false;
                             lastSyncedAt = pollStarted;
                             syncComplete.signalAll();
                         }
                         else
                         {
+                            // in this branch, just update the commit log sync headers
                             commitLog.sync(false);
                         }
 
@@ -203,8 +213,9 @@ public abstract class AbstractCommitLogService
     /**
      * Request an additional sync cycle without blocking.
      */
-    public void requestExtraSync()
+    void requestExtraSync()
     {
+        requestSync = true;
         LockSupport.unpark(thread);
     }
 
