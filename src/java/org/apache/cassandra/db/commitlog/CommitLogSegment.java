@@ -32,9 +32,6 @@ import java.util.zip.CRC32;
 import com.google.common.annotations.VisibleForTesting;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.codahale.metrics.Timer;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.Mutation;
@@ -59,7 +56,6 @@ import static org.apache.cassandra.utils.FBUtilities.updateChecksumInt;
  */
 public abstract class CommitLogSegment
 {
-    private static final Logger logger = LoggerFactory.getLogger(CommitLogSegment.class);
     private final static long idBase;
 
     private CDCState cdcState = CDCState.PERMITTED;
@@ -364,12 +360,8 @@ public abstract class CommitLogSegment
         }
         else
         {
-            logger.info("JEB::CLS - !neetToMarkData");
-            // TODO:JEB fix these comments
-            // note 1: we don't need to waitForModifications() as, once we get to this block, we are only doing the flush
+            // note: we don't need to waitForModifications() as, once we get to this block, we are only doing the flush
             // and any mutations have already been fully written into the segment (as we wait for it in the previous block).
-            // --- ERRR, actually, I think i need to wait for any concurrent discardUnusedTail() executions to update endOfBuffer
-            // note 2: endOfBuffer could have been updated between executions of this method
             nextMarker = lastMarkerOffset;
             sectionEnd = nextMarker;
         }
