@@ -94,7 +94,7 @@
     <property name="maven-repository-id" value="apache.snapshots.https"/>
 
     <property name="test.timeout" value="240000" />
-    <property name="test.long.timeout" value="900000" />
+    <property name="test.long.timeout" value="600000" />
     <property name="test.burn.timeout" value="600000" />
 
     <!-- default for cql tests. Can be override by -Dcassandra.test.use_prepared=false -->
