@@ -37,7 +37,6 @@ public class BatchCommitLogTest extends CommitLogTest
     {
         DatabaseDescriptor.daemonInitialization();
         DatabaseDescriptor.setCommitLogSync(Config.CommitLogSync.batch);
-        DatabaseDescriptor.setCommitLogSyncBatchWindow(10 * 1000);
         beforeClass();
     }
 }

@@ -33,7 +33,5 @@ public class BatchCommitLogStressTest extends CommitLogStressTest
     {
         super(commitLogCompression, encryptionContext);
         DatabaseDescriptor.setCommitLogSync(Config.CommitLogSync.batch);
-        DatabaseDescriptor.setCommitLogSyncBatchWindow(1);
     }
-
 }

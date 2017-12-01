@@ -74,6 +74,11 @@ Upgrading
 	- Cassandra 4.0 allows a single port to be used for both secure and insecure
 	  connections between cassandra nodes (CASSANDRA-10404). See the yaml for
 	  specific property changes, and see the security doc for full details.
+	- Config option commitlog_sync_batch_window_in_ms has been deprecated as it's
+	  documentation has been incorrect and the setting itself near useless.
+	  Batch mode remains a valid commit log mode, however.
+	- There is a new commit log mode, group, which is similar to batch mode
+	  but blocks for up to a configurable number of milliseconds between disk flushes.
 
 Materialized Views
 -------------------
