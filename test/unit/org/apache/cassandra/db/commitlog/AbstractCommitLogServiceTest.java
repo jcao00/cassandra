@@ -146,14 +146,15 @@ public class AbstractCommitLogServiceTest
 
     private static class FakeCommitLog extends CommitLog
     {
-        private AtomicInteger markCount = new AtomicInteger();
-        private AtomicInteger syncCount = new AtomicInteger();
+        private final AtomicInteger markCount = new AtomicInteger();
+        private final AtomicInteger syncCount = new AtomicInteger();
 
         FakeCommitLog()
         {
             super(null);
         }
 
+        @Override
         public void sync(boolean flush)
         {
             if (flush)
