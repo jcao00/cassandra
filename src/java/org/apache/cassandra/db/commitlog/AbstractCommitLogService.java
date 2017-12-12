@@ -103,8 +103,6 @@ public abstract class AbstractCommitLogService
         this.commitLog = commitLog;
         this.name = name;
 
-        // if we are using periodic mode, without compression or encryption, we should update the chained markers
-        // faster than the sync interval
         final long markerIntervalMillis;
         if (markHeadersFaster && syncIntervalMillis > DEFAULT_MARKER_INTERVAL_MILLIS)
         {
@@ -143,12 +141,12 @@ public abstract class AbstractCommitLogService
 
     class SyncRunnable implements Runnable
     {
-        final Clock clock;
-        long firstLagAt = 0;
-        long totalSyncDuration = 0; // total time spent syncing since firstLagAt
-        long syncExceededIntervalBy = 0; // time that syncs exceeded pollInterval since firstLagAt
-        int lagCount = 0;
-        int syncCount = 0;
+        private final Clock clock;
+        private long firstLagAt = 0;
+        private long totalSyncDuration = 0; // total time spent syncing since firstLagAt
+        private long syncExceededIntervalBy = 0; // time that syncs exceeded pollInterval since firstLagAt
+        private int lagCount = 0;
+        private int syncCount = 0;
 
         SyncRunnable(Clock clock)
         {
