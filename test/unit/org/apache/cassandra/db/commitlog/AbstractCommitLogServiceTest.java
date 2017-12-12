@@ -99,13 +99,18 @@ public class AbstractCommitLogServiceTest
             lastSyncedAt = 0;
         }
 
+        @Override
+        void start()
+        {
+            // nop
+        }
+
         protected void maybeWaitForSync(CommitLogSegment.Allocation alloc)
         {
             // nop
         }
     }
 
-    @Ignore
     @Test
     public void testSync()
     {
@@ -142,15 +147,25 @@ public class AbstractCommitLogServiceTest
 
     private static class FakeCommitLog extends CommitLog
     {
-        private AtomicInteger markCount = new AtomicInteger();
-        private AtomicInteger syncCount = new AtomicInteger();
+        private final AtomicInteger markCount = new AtomicInteger();
+        private final AtomicInteger syncCount = new AtomicInteger();
 
         FakeCommitLog()
         {
             super(DatabaseDescriptor.getCommitLogLocation(), null);
         }
 
-        public void sync(boolean flush)
+        @Override
+        CommitLog start()
+        {
+            // this is a bit dicey. we need to start the allocator, but starting the parent's executor will muck things
+            // up as it is pointing to a different executor service, not the fake one in this test class.
+            allocator.start();
+            return this;
+        }
+
+        @Override
+        public void sync(boolean syncAllSegments, boolean flush)
         {
             if (flush)
                 syncCount.incrementAndGet();

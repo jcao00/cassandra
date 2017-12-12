@@ -211,8 +211,11 @@ public abstract class AbstractCommitLogService
                         firstLagAt = 0;
                 }
 
+                if (!run)
+                    return false;
+
                 // if we have lagged this round, we probably have work to do already so we don't sleep
-                if (sleep < 0 || !run)
+                if (sleep < 0)
                     return true;
 
                 try
