@@ -28,7 +28,6 @@ import com.codahale.metrics.Timer.Context;
 
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.Config;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.commitlog.CommitLogSegment.Allocation;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.NoSpamLogger;
@@ -78,7 +77,6 @@ public abstract class AbstractCommitLogService
 
     private static final Logger logger = LoggerFactory.getLogger(AbstractCommitLogService.class);
 
-
     /**
      * CommitLogService provides a fsync service for Allocations, fulfilling either the
      * Batch or Periodic contract.
@@ -116,7 +114,7 @@ public abstract class AbstractCommitLogService
                 if (modulo >= markerIntervalMillis / 2)
                     syncIntervalMillis += markerIntervalMillis;
             }
-            logger.debug("Will update the commitlog markers every {}ms", markerIntervalMillis);
+            logger.debug("Will update the commitlog markers every {}ms and flush every {}ms", markerIntervalMillis, syncIntervalMillis);
         }
         else
         {
@@ -237,7 +235,6 @@ public abstract class AbstractCommitLogService
             return true;
         }
     }
-
 
     /**
      * Block for @param alloc to be sync'd as necessary, and handle bookkeeping
