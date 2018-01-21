@@ -23,6 +23,7 @@ import java.net.UnknownHostException;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 import javax.annotation.Nullable;
@@ -39,7 +40,6 @@ import org.apache.cassandra.utils.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.concurrent.DebuggableScheduledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
@@ -70,8 +70,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 {
     public static final String MBEAN_NAME = "org.apache.cassandra.net:type=Gossiper";
 
-    private static final DebuggableScheduledThreadPoolExecutor executor = new DebuggableScheduledThreadPoolExecutor("GossipTasks");
-
     static final ApplicationState[] STATES = ApplicationState.values();
     static final List<String> DEAD_STATES = Arrays.asList(VersionedValue.REMOVING_TOKEN, VersionedValue.REMOVED_TOKEN,
                                                           VersionedValue.STATUS_LEFT, VersionedValue.HIBERNATE);
@@ -84,6 +82,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     }
 
     private volatile ScheduledFuture<?> scheduledGossipTask;
+
+    // TODO:JEB can we shoot this fucking thing??
     private static final ReentrantLock taskLock = new ReentrantLock();
     public final static int intervalInMillis = 1000;
     public final static int QUARANTINE_DELAY = StorageService.RING_DELAY * 2;
@@ -121,20 +121,24 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     final Set<InetAddress> seeds = new ConcurrentSkipListSet<InetAddress>(inetcomparator);
 
     /* map where key is the endpoint and value is the state associated with the endpoint */
-    final ConcurrentMap<InetAddress, EndpointState> endpointStateMap = new ConcurrentHashMap<InetAddress, EndpointState>();
+//    final ConcurrentMap<InetAddress, EndpointState> endpointStateMap = new ConcurrentHashMap<InetAddress, EndpointState>();
+    private final AtomicReference<GossipBTree> nodes = new AtomicReference<>(new GossipBTree());
 
     /* map where key is endpoint and value is timestamp when this endpoint was removed from
      * gossip. We will ignore any gossip regarding these endpoints for QUARANTINE_DELAY time
      * after removal to prevent nodes from falsely reincarnating during the time when removal
      * gossip gets propagated to all nodes */
+    // TODO:JEB maybe switch to GossipBTree, as well
     private final Map<InetAddress, Long> justRemovedEndpoints = new ConcurrentHashMap<InetAddress, Long>();
 
+    // TODO:JEB maybe switch to GossipBTree, as well
     private final Map<InetAddress, Long> expireTimeEndpointMap = new ConcurrentHashMap<InetAddress, Long>();
 
     private volatile boolean inShadowRound = false;
     // seeds gathered during shadow round that indicated to be in the shadow round phase as well
     private final Set<InetAddress> seedsInShadowRound = new ConcurrentSkipListSet<>(inetcomparator);
     // endpoint states as gathered during shadow round
+    // TODO:JEB maybe switch to GossipBTree, as well
     private final Map<InetAddress, EndpointState> endpointShadowStateMap = new ConcurrentHashMap<>();
 
     private volatile long lastProcessedMessageAt = System.currentTimeMillis();
@@ -149,22 +153,24 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 MessagingService.instance().waitUntilListening();
 
                 taskLock.lock();
+                GossipBTree currentGossipBTree = nodes.get();
 
                 /* Update the local heartbeat counter. */
-                endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().updateHeartBeat();
-                if (logger.isTraceEnabled())
-                    logger.trace("My heartbeat is now {}", endpointStateMap.get(FBUtilities.getBroadcastAddress()).getHeartBeatState().getHeartBeatVersion());
-                final List<GossipDigest> gDigests = new ArrayList<GossipDigest>();
-                Gossiper.instance.makeRandomGossipDigest(gDigests);
+                Node n = currentGossipBTree.find(FBUtilities.getBroadcastAddress()).incrementHeartbeat();
+                currentGossipBTree = currentGossipBTree.insert(n);
 
-                if (gDigests.size() > 0)
+                if (logger.isTraceEnabled())
+                    logger.trace("My heartbeat is now {}", n.heartbeat);
+                Iterator<GossipDigest> digests = Gossiper.instance.makeRandomGossipDigest(currentGossipBTree);
+
+                if (digests.hasNext())
                 {
                     GossipDigestSyn digestSynMessage = new GossipDigestSyn(DatabaseDescriptor.getClusterName(),
                                                                            DatabaseDescriptor.getPartitionerName(),
-                                                                           gDigests);
-                    MessageOut<GossipDigestSyn> message = new MessageOut<GossipDigestSyn>(MessagingService.Verb.GOSSIP_DIGEST_SYN,
-                                                                                          digestSynMessage,
-                                                                                          GossipDigestSyn.serializer);
+                                                                           digests);
+                    MessageOut<GossipDigestSyn> message = new MessageOut<>(MessagingService.Verb.GOSSIP_DIGEST_SYN,
+                                                                           digestSynMessage,
+                                                                           GossipDigestSyn.serializer);
                     /* Gossip to some random live member */
                     boolean gossipedToSeed = doGossipToLiveMember(message);
 
@@ -190,7 +196,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                     if (!gossipedToSeed || liveEndpoints.size() < seeds.size())
                         maybeGossipToSeed(message);
 
-                    doStatusCheck();
+                    doStatusCheck(currentGossipBTree);
                 }
             }
             catch (Exception e)
@@ -399,6 +405,10 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     private void evictFromMembership(InetAddress endpoint)
     {
+        // TODO:JEB hmm, this is a race problem. I can remove from the GossipBTree, but it won't be published
+        // until sometime later; whereas the changes to the FD and other data structures will be immediate.
+        // tha's probably a problem in theory, but if in practice the GossipTask is on the gossip stage,
+        // we might get 97% lucky wth avoiding races (not sure about FD, though)
         unreachableEndpoints.remove(endpoint);
         endpointStateMap.remove(endpoint);
         expireTimeEndpointMap.remove(endpoint);
@@ -481,39 +491,23 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     /**
      * The gossip digest is built based on randomization
      * rather than just looping through the collection of live endpoints.
-     *
-     * @param gDigests list of Gossip Digests.
      */
-    private void makeRandomGossipDigest(List<GossipDigest> gDigests)
+    private Iterator<GossipDigest> makeRandomGossipDigest(GossipBTree btree)
     {
-        EndpointState epState;
-        int generation = 0;
-        int maxVersion = 0;
-
-        // local epstate will be part of endpointStateMap
-        List<InetAddress> endpoints = new ArrayList<InetAddress>(endpointStateMap.keySet());
-        Collections.shuffle(endpoints, random);
-        for (InetAddress endpoint : endpoints)
-        {
-            epState = endpointStateMap.get(endpoint);
-            if (epState != null)
-            {
-                generation = epState.getHeartBeatState().getGeneration();
-                maxVersion = getMaxEndpointStateVersion(epState);
-            }
-            gDigests.add(new GossipDigest(endpoint, generation, maxVersion));
-        }
+        Iterator<GossipDigest> digests = btree.iterator(Node::digest);
 
         if (logger.isTraceEnabled())
         {
             StringBuilder sb = new StringBuilder();
-            for (GossipDigest gDigest : gDigests)
+            for (Iterator<GossipDigest> iter = btree.iterator(Node::digest); iter.hasNext(); )
             {
-                sb.append(gDigest);
+                sb.append(iter.next());
                 sb.append(" ");
             }
             logger.trace("Gossip Digests are : {}", sb);
         }
+
+        return digests;
     }
 
     /**
@@ -770,7 +764,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
     }
 
-    private void doStatusCheck()
+    private GossipBTree doStatusCheck(GossipBTree bTree)
     {
         if (logger.isTraceEnabled())
             logger.trace("Performing status check ...");
@@ -788,42 +782,38 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             if (lastProcessedMessageAt < now - 1000)
             {
                 logger.warn("Gossip stage has {} pending tasks; skipping status check (no nodes will be marked down)", pending);
-                return;
+                return bTree;
             }
         }
 
-        Set<InetAddress> eps = endpointStateMap.keySet();
-        for (InetAddress endpoint : eps)
+        for (Iterator<Node> iter = bTree.iterator(n -> n); iter.hasNext(); )
         {
-            if (endpoint.equals(FBUtilities.getBroadcastAddress()))
+            Node n = iter.next();
+            if (n.address.equals(FBUtilities.getBroadcastAddress()))
                 continue;
 
-            FailureDetector.instance.interpret(endpoint);
-            EndpointState epState = endpointStateMap.get(endpoint);
-            if (epState != null)
+            FailureDetector.instance.interpret(n.address);
+            // check if this is a fat client. fat clients are removed automatically from
+            // gossip after FatClientTimeout.  Do not remove dead states here.
+            if (isGossipOnlyMember(n.address)
+                && !justRemovedEndpoints.containsKey(n.address)
+                && TimeUnit.NANOSECONDS.toMillis(nowNano - epState.getUpdateTimestamp()) > fatClientTimeout)
             {
-                // check if this is a fat client. fat clients are removed automatically from
-                // gossip after FatClientTimeout.  Do not remove dead states here.
-                if (isGossipOnlyMember(endpoint)
-                    && !justRemovedEndpoints.containsKey(endpoint)
-                    && TimeUnit.NANOSECONDS.toMillis(nowNano - epState.getUpdateTimestamp()) > fatClientTimeout)
-                {
-                    logger.info("FatClient {} has been silent for {}ms, removing from gossip", endpoint, fatClientTimeout);
-                    removeEndpoint(endpoint); // will put it in justRemovedEndpoints to respect quarantine delay
-                    evictFromMembership(endpoint); // can get rid of the state immediately
-                }
+                logger.info("FatClient {} has been silent for {}ms, removing from gossip", n.address, fatClientTimeout);
+                removeEndpoint(endpoint); // will put it in justRemovedEndpoints to respect quarantine delay
+                evictFromMembership(endpoint); // can get rid of the state immediately
+            }
 
-                // check for dead state removal
-                long expireTime = getExpireTimeForEndpoint(endpoint);
-                if (!epState.isAlive() && (now > expireTime)
-                    && (!StorageService.instance.getTokenMetadata().isMember(endpoint)))
+            // check for dead state removal
+            long expireTime = getExpireTimeForEndpoint(endpoint);
+            if (!epState.isAlive() && (now > expireTime)
+                && (!StorageService.instance.getTokenMetadata().isMember(endpoint)))
+            {
+                if (logger.isDebugEnabled())
                 {
-                    if (logger.isDebugEnabled())
-                    {
-                        logger.debug("time is expiring for endpoint : {} ({})", endpoint, expireTime);
-                    }
-                    evictFromMembership(endpoint);
+                    logger.debug("time is expiring for endpoint : {} ({})", endpoint, expireTime);
                 }
+                evictFromMembership(endpoint);
             }
         }
 
@@ -1669,5 +1659,4 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         else
             logger.info("No gossip backlog; proceeding");
     }
-
 }

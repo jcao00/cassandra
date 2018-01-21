@@ -19,6 +19,7 @@ package org.apache.cassandra.gms;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import org.apache.cassandra.db.TypeSizes;
@@ -36,16 +37,16 @@ public class GossipDigestSyn
 
     final String clusterId;
     final String partioner;
-    final List<GossipDigest> gDigests;
+    final Iterator<GossipDigest> gDigests;
 
-    public GossipDigestSyn(String clusterId, String partioner, List<GossipDigest> gDigests)
+    public GossipDigestSyn(String clusterId, String partioner, Iterator<GossipDigest> gDigests)
     {
         this.clusterId = clusterId;
         this.partioner = partioner;
         this.gDigests = gDigests;
     }
 
-    List<GossipDigest> getGossipDigests()
+    Iterator<GossipDigest> getGossipDigests()
     {
         return gDigests;
     }

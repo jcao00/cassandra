@@ -36,7 +36,7 @@ import org.apache.cassandra.utils.CassandraVersion;
  * instance. Any state for a given endpoint can be retrieved from this instance.
  */
 
-
+@Deprecated
 public class EndpointState
 {
     protected static final Logger logger = LoggerFactory.getLogger(EndpointState.class);

@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.gms;
 
+@Deprecated
 public enum ApplicationState
 {
     STATUS,

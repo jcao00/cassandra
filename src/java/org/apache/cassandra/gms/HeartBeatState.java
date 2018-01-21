@@ -27,6 +27,7 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 /**
  * HeartBeat State associated with any given endpoint.
  */
+@Deprecated
 class HeartBeatState
 {
     public static final IVersionedSerializer<HeartBeatState> serializer = new HeartBeatStateSerializer();
@@ -76,6 +77,7 @@ class HeartBeatState
     }
 }
 
+@Deprecated
 class HeartBeatStateSerializer implements IVersionedSerializer<HeartBeatState>
 {
     public void serialize(HeartBeatState hbState, DataOutputPlus out, int version) throws IOException
