@@ -237,14 +237,16 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     public boolean seenAnySeed()
     {
-        for (Map.Entry<InetAddress, EndpointState> entry : endpointStateMap.entrySet())
+        GossipBTree bTree = nodes.get();
+        for (Iterator<Node> iter = bTree.iterator(n -> n); iter.hasNext();)
         {
-            if (seeds.contains(entry.getKey()))
+            Node n = iter.next();
+            if (seeds.contains(n.address))
                 return true;
             try
             {
-                VersionedValue internalIp = entry.getValue().getApplicationState(ApplicationState.INTERNAL_IP);
-                if (internalIp != null && seeds.contains(InetAddress.getByName(internalIp.value)))
+                VersionedState state = n.internalIP;
+                if (state != VersionedState.EMPTY_STATE && seeds.contains(InetAddress.getByName(n.internalIP.value)))
                     return true;
             }
             catch (UnknownHostException e)
@@ -326,14 +328,15 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             return 0L;
     }
 
-    private boolean isShutdown(InetAddress endpoint)
+    private boolean isShutdown(GossipBTree bTree, InetAddress endpoint)
     {
-        EndpointState epState = endpointStateMap.get(endpoint);
-        if (epState == null)
+        Node node = bTree.find(endpoint);
+        if (node == null)
             return false;
-        if (epState.getApplicationState(ApplicationState.STATUS) == null)
+        VersionedState status = node.status;
+        if (status == VersionedState.EMPTY_STATE)
             return false;
-        String value = epState.getApplicationState(ApplicationState.STATUS).value;
+        String value = status.value;
         String[] pieces = value.split(VersionedValue.DELIMITER_STR, -1);
         assert (pieces.length > 0);
         String state = pieces[0];
@@ -348,6 +351,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     public void convict(InetAddress endpoint, double phi)
     {
+        GossipBTree bTree = nodes.get();
         EndpointState epState = endpointStateMap.get(endpoint);
         if (epState == null)
             return;

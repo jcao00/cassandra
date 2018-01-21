@@ -30,6 +30,9 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 public class VersionedState
 {
     public static final IVersionedSerializer serializer = new Serializer();
+
+    public static final VersionedState EMPTY_STATE = new VersionedState(null, Integer.MIN_VALUE);
+
     public final String value;
     public final int version;
 
