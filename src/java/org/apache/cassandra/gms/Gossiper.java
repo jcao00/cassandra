@@ -84,7 +84,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     private volatile ScheduledFuture<?> scheduledGossipTask;
 
     // TODO:JEB can we shoot this fucking thing??
-    private static final ReentrantLock taskLock = new ReentrantLock();
+//    private static final ReentrantLock taskLock = new ReentrantLock();
     public final static int intervalInMillis = 1000;
     public final static int QUARANTINE_DELAY = StorageService.RING_DELAY * 2;
     private static final Logger logger = LoggerFactory.getLogger(Gossiper.class);
@@ -152,7 +152,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 //wait on messaging service to start listening
                 MessagingService.instance().waitUntilListening();
 
-                taskLock.lock();
+//                taskLock.lock();
                 GossipBTree currentGossipBTree = nodes.get();
 
                 /* Update the local heartbeat counter. */
@@ -206,7 +206,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             }
             finally
             {
-                taskLock.unlock();
+//                taskLock.unlock();
             }
         }
     }
@@ -352,8 +352,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public void convict(InetAddress endpoint, double phi)
     {
         GossipBTree bTree = nodes.get();
-        EndpointState epState = endpointStateMap.get(endpoint);
-        if (epState == null)
+        Node node = bTree.find(endpoint);
+        if (node == null)
             return;
 
         if (!epState.isAlive())
@@ -362,7 +362,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         logger.debug("Convicting {} with status {} - alive {}", endpoint, getGossipStatus(epState), epState.isAlive());
 
 
-        if (isShutdown(endpoint))
+        if (isShutdown(bTree, endpoint))
         {
             markAsShutdown(endpoint);
         }
@@ -376,15 +376,21 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      * This method is used to mark a node as shutdown; that is it gracefully exited on its own and told us about it
      * @param endpoint endpoint that has shut itself down
      */
-    protected void markAsShutdown(InetAddress endpoint)
+    protected GossipBTree markAsShutdown(GossipBTree bTree, InetAddress endpoint)
     {
-        EndpointState epState = endpointStateMap.get(endpoint);
-        if (epState == null)
-            return;
-        epState.addApplicationState(ApplicationState.STATUS, StorageService.instance.valueFactory.shutdown(true));
-        epState.addApplicationState(ApplicationState.RPC_READY, StorageService.instance.valueFactory.rpcReady(false));
-        epState.getHeartBeatState().forceHighestPossibleVersionUnsafe();
-        markDead(endpoint, epState);
+        Node node = bTree.find(endpoint);
+        if (node == null)
+            return bTree;
+
+        // TODO:JEB yup, probably need a Node.Builder
+        Node.Builder builder = new Node.Builder(node);
+        builder.setStatus(StorageService.instance.valueFactory.shutdown(true));
+        builder.setStatus(StorageService.instance.valueFactory.rpcReady(false));
+        node.forceHighestPossibleVersionUnsafe();
+        node = builder.build();
+
+        markDead(endpoint, node);
+        // TODO:JEB FD calls back to Gossiper, indirectly - *facepalm*
         FailureDetector.instance.forceConviction(endpoint);
     }
 
@@ -394,20 +400,20 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      * @param epState
      * @return
      */
-    int getMaxEndpointStateVersion(EndpointState epState)
-    {
-        int maxVersion = epState.getHeartBeatState().getHeartBeatVersion();
-        for (Map.Entry<ApplicationState, VersionedValue> state : epState.states())
-            maxVersion = Math.max(maxVersion, state.getValue().version);
-        return maxVersion;
-    }
+//    int getMaxEndpointStateVersion(EndpointState epState)
+//    {
+//        int maxVersion = epState.getHeartBeatState().getHeartBeatVersion();
+//        for (Map.Entry<ApplicationState, VersionedValue> state : epState.states())
+//            maxVersion = Math.max(maxVersion, state.getValue().version);
+//        return maxVersion;
+//    }
 
     /**
      * Removes the endpoint from gossip completely
      *
      * @param endpoint endpoint to be removed from the current membership.
      */
-    private void evictFromMembership(InetAddress endpoint)
+    private GossipBTree evictFromMembership(GossipBTree bTree, InetAddress endpoint)
     {
         // TODO:JEB hmm, this is a race problem. I can remove from the GossipBTree, but it won't be published
         // until sometime later; whereas the changes to the FD and other data structures will be immediate.
@@ -524,7 +530,9 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     public void advertiseRemoving(InetAddress endpoint, UUID hostId, UUID localHostId)
     {
-        EndpointState epState = endpointStateMap.get(endpoint);
+        GossipBTree curBTree = nodes.get();
+//        EndpointState epState = endpointStateMap.get(endpoint);
+
         // remember this node's generation
         int generation = epState.getHeartBeatState().getGeneration();
         logger.info("Removing host: {}", hostId);
@@ -923,23 +931,24 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     void notifyFailureDetector(Map<InetAddress, EndpointState> remoteEpStateMap)
     {
+        GossipBTree bTree = nodes.get();
         for (Entry<InetAddress, EndpointState> entry : remoteEpStateMap.entrySet())
         {
-            notifyFailureDetector(entry.getKey(), entry.getValue());
+            notifyFailureDetector(bTree, entry.getKey(), entry.getValue());
         }
     }
 
-    void notifyFailureDetector(InetAddress endpoint, EndpointState remoteEndpointState)
+    private void notifyFailureDetector(GossipBTree bTree, InetAddress endpoint, EndpointState remoteEndpointState)
     {
-        EndpointState localEndpointState = endpointStateMap.get(endpoint);
+        Node node = bTree.find(endpoint);
         /*
          * If the local endpoint state exists then report to the FD only
          * if the versions workout.
         */
-        if (localEndpointState != null)
+        if (node != null)
         {
             IFailureDetector fd = FailureDetector.instance;
-            int localGeneration = localEndpointState.getHeartBeatState().getGeneration();
+            int localGeneration = node.generation;
             int remoteGeneration = remoteEndpointState.getHeartBeatState().getGeneration();
             if (remoteGeneration > localGeneration)
             {
