@@ -21,10 +21,13 @@ package org.apache.cassandra.gms;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.google.common.collect.ImmutableMap;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -89,5 +92,23 @@ public class GossiperTest
 
         //The generation should not have been updated because it is over Gossiper.MAX_GENERATION_DIFFERENCE in the future
         assertEquals(proposedRemoteHeartBeat.getGeneration(), actualRemoteHeartBeat.getGeneration());
+    }
+
+    @Test (expected = AssertionError.class)
+    public void testIisSafeForStartup_UnpopulatedLocalNodeData() throws UnknownHostException
+    {
+        InetAddress addr = InetAddress.getByName("127.0.0.1");
+        EndpointState state = new EndpointState(new HeartBeatState(42, 1234));
+        Gossiper.isSafeForStartup(addr, UUID.randomUUID(), false, Collections.singletonMap(addr, state));
+    }
+
+    @Test
+    public void testIisSafeForStartup_HappyPath() throws UnknownHostException
+    {
+        InetAddress addr = InetAddress.getByName("127.0.0.1");
+        EndpointState state = new EndpointState(new HeartBeatState(42, 1234));
+        UUID hostId = UUID.randomUUID();
+        state.addApplicationState(ApplicationState.HOST_ID, new VersionedValue.VersionedValueFactory(partitioner).hostId(hostId));
+        Assert.assertTrue(Gossiper.isSafeForStartup(addr, hostId, false, Collections.singletonMap(addr, state)));
     }
 }

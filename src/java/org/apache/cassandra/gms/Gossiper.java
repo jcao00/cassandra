@@ -740,7 +740,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      * @param epStates - endpoint states in the cluster
      * @return true if it is safe to start the node, false otherwise
      */
-    public boolean isSafeForStartup(InetAddress endpoint, UUID localHostUUID, boolean isBootstrapping,
+    public static boolean isSafeForStartup(InetAddress endpoint, UUID localHostUUID, boolean isBootstrapping,
                                     Map<InetAddress, EndpointState> epStates)
     {
         EndpointState epState = epStates.get(endpoint);
@@ -765,6 +765,10 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             // if the previous UUID matches what we currently have (i.e. what was read from
             // system.local at startup), then we're good to start up. Otherwise, something
             // is amiss and we need to replace the previous node
+
+            // NOTE: we should have checked for the presence of hostId before we got here
+            if (!containsHostId(endpoint, epStates))
+                throw new AssertionError("no HOST_ID found in shadow round gossip data. this should have been checked earlier");
             VersionedValue previous = epState.getApplicationState(ApplicationState.HOST_ID);
             return UUID.fromString(previous.value).equals(localHostUUID);
         }
@@ -868,7 +872,15 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return UUID.fromString(epStates.get(endpoint).getApplicationState(ApplicationState.HOST_ID).value);
     }
 
+    public static boolean containsHostId(InetAddress endpoint, Map<InetAddress, EndpointState> epStates)
+    {
+        EndpointState endpointState = epStates.get(endpoint);
+
+        return endpointState != null && endpointState.getApplicationState(ApplicationState.HOST_ID) != null;
+    }
+
     EndpointState getStateForVersionBiggerThan(InetAddress forEndpoint, int version)
+
     {
         EndpointState epState = endpointStateMap.get(forEndpoint);
         EndpointState reqdEndpointState = null;
@@ -1079,7 +1091,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return epState.isAlive() && !isDeadState(epState);
     }
 
-    public boolean isDeadState(EndpointState epState)
+    public static boolean isDeadState(EndpointState epState)
     {
         String status = getGossipStatus(epState);
         if (status.isEmpty())
@@ -1535,11 +1547,19 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         {
             if (!isInShadowRound)
             {
-                logger.debug("Received a regular ack from {}, can now exit shadow round", respondent);
-                // respondent sent back a full ack, so we can exit our shadow round
-                endpointShadowStateMap.putAll(epStateMap);
-                inShadowRound = false;
-                seedsInShadowRound.clear();
+                // NOTE: check for the same set of data that #isSafeForStartup() will check
+                if (containsHostId(FBUtilities.getBroadcastAddress(), epStateMap))
+                {
+                    logger.debug("Received a regular ack from {}, can now exit shadow round", respondent);
+                    // respondent sent back a full ack, so we can exit our shadow round
+                    endpointShadowStateMap.putAll(epStateMap);
+                    inShadowRound = false;
+                    seedsInShadowRound.clear();
+                }
+                else
+                {
+                    logger.debug("received incomplete gossip data from {}; continuing shadow round", respondent);
+                }
             }
             else
             {
