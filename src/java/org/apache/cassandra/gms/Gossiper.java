@@ -1548,7 +1548,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             if (!isInShadowRound)
             {
                 // NOTE: check for the same set of data that #isSafeForStartup() will check
-                if (containsHostId(FBUtilities.getBroadcastAddress(), epStateMap))
+                if (epStateMap.get(FBUtilities.getBroadcastAddress()) == null ||
+                    containsHostId(FBUtilities.getBroadcastAddress(), epStateMap))
                 {
                     logger.debug("Received a regular ack from {}, can now exit shadow round", respondent);
                     // respondent sent back a full ack, so we can exit our shadow round
