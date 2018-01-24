@@ -15,23 +15,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.gms;
+package org.apache.cassandra.tools.nodetool;
 
-import java.net.UnknownHostException;
-import java.util.List;
+import io.airlift.airline.Command;
 
-public interface GossiperMBean
+import org.apache.cassandra.tools.NodeProbe;
+import org.apache.cassandra.tools.NodeTool.NodeToolCmd;
+
+@Command(name = "getseeds", description = "Print the current list of seed node IPs")
+public class GetSeeds extends NodeToolCmd
 {
-    public long getEndpointDowntime(String address) throws UnknownHostException;
-
-    public int getCurrentGenerationNumber(String address) throws UnknownHostException;
-
-    public void unsafeAssassinateEndpoint(String address) throws UnknownHostException;
-
-    public void assassinateEndpoint(String address) throws UnknownHostException;
-
-    public void reloadSeeds();
-
-    public List<String> getSeeds();
-
+    @Override
+    public void execute(NodeProbe probe)
+    {
+        System.out.println("Current seed node IP list: " + String.join(" ", probe.getSeeds()));
+    }
 }

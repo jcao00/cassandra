@@ -1421,6 +1421,54 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
     }
 
+    /**
+     * JMX interface for triggering an update of the seed node list.
+     */
+    public void reloadSeeds()
+    {
+        logger.trace("Triggering reload of seed node list");
+
+        // Get the new set in the same that buildSeedsList does
+        Set<InetAddress> tmp = new HashSet<InetAddress>();
+        for (InetAddress seed : DatabaseDescriptor.getSeeds())
+        {
+            if (seed.equals(FBUtilities.getBroadcastAddress()))
+                continue;
+            tmp.add(seed);
+        }
+
+        if (tmp.size() == 0)
+        {
+            logger.trace("New seed node list is empty. Not updating seed list.");
+            return;
+        }
+
+        if (tmp.equals(seeds))
+        {
+            logger.trace("New seed node list matches the existing list.");
+            return;
+        }
+
+        // Add the new entries
+        seeds.addAll(tmp);
+        // Remove the old entries
+        seeds.retainAll(tmp);
+        logger.trace("New seed node list after reload {}", seeds);
+    }
+
+    /**
+     * JMX endpoint for getting the list of seeds from the node
+     */
+    public List<String> getSeeds()
+    {
+        List<String> seedList = new ArrayList<String>();
+        for (InetAddress seed : seeds)
+        {
+            seedList.add(seed.toString());
+        }
+        return seedList;
+    }
+
     // initialize local HB state if needed, i.e., if gossiper has never been started before.
     public void maybeInitializeLocalState(int generationNbr)
     {
