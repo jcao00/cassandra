@@ -25,6 +25,9 @@ import java.util.List;
 import java.util.UUID;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.net.InetAddresses;
+import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -33,6 +36,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.RandomPartitioner;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.locator.SeedProvider;
 import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.service.StorageService;
 
@@ -52,11 +56,20 @@ public class GossiperTest
     List<InetAddress> hosts = new ArrayList<>();
     List<UUID> hostIds = new ArrayList<>();
 
+    private SeedProvider originalSeedProvider;
+
     @Before
     public void setup()
     {
         tmd.clearUnsafe();
-    };
+        originalSeedProvider = DatabaseDescriptor.getSeedProvider();
+    }
+
+    @After
+    public void tearDown()
+    {
+        DatabaseDescriptor.setSeedProvider(originalSeedProvider);
+    }
 
     @Test
     public void testLargeGenerationJump() throws UnknownHostException, InterruptedException
@@ -89,5 +102,51 @@ public class GossiperTest
 
         //The generation should not have been updated because it is over Gossiper.MAX_GENERATION_DIFFERENCE in the future
         assertEquals(proposedRemoteHeartBeat.getGeneration(), actualRemoteHeartBeat.getGeneration());
+    }
+
+    @Test
+    public void testReloadSeeds() throws UnknownHostException
+    {
+        Gossiper gossiper = new Gossiper(false);
+
+        InetAddress addr = InetAddress.getByName("127.0.1.1");
+        for (int i = 0; i < 4; i++)
+        {
+            gossiper.seeds.add(addr);
+            addr = InetAddresses.increment(addr);
+        }
+        Assert.assertEquals(4, gossiper.seeds.size());
+
+        addr = InetAddress.getByName("127.0.1.1");
+        int nextSize = gossiper.seeds.size() + 1;
+        List<InetAddress> nextSeeds = new ArrayList<>(nextSize);
+        for (int i = 0; i < nextSize; i ++)
+        {
+            nextSeeds.add(addr);
+            addr = InetAddresses.increment(addr);
+        }
+
+        DatabaseDescriptor.setSeedProvider(new TestSeedProvider(nextSeeds));
+        gossiper.reloadSeeds();
+
+        Assert.assertEquals(nextSize, gossiper.seeds.size());
+        for (InetAddress a : nextSeeds)
+            Assert.assertTrue(gossiper.seeds.contains(a));
+    }
+
+    static class TestSeedProvider implements SeedProvider
+    {
+        private List<InetAddress> seeds;
+
+        TestSeedProvider(List<InetAddress> seeds)
+        {
+            this.seeds = seeds;
+        }
+
+        @Override
+        public List<InetAddress> getSeeds()
+        {
+            return seeds;
+        }
     }
 }
