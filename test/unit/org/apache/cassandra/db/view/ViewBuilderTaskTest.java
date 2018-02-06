@@ -24,9 +24,13 @@ import java.util.stream.IntStream;
 
 import org.junit.Test;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.db.commitlog.CommitLogSegment;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Range;
@@ -38,6 +42,7 @@ import static org.junit.Assert.assertEquals;
 
 public class ViewBuilderTaskTest extends CQLTester
 {
+    static final Logger logger = LoggerFactory.getLogger(ViewBuilderTaskTest.class);
     private static final ProtocolVersion protocolVersion = ProtocolVersion.CURRENT;
 
     @Test
@@ -64,7 +69,10 @@ public class ViewBuilderTaskTest extends CQLTester
         // Insert the dataset
         for (int k = 0; k < 100; k++)
             for (int c = 0; c < 10; c++)
+            {
+                logger.info("JEB:: ViewBuilderTaskTest - k = {}, c = {}", k, c);
                 execute("INSERT INTO %s (k, c, v) VALUES (?, ?, ?)", k, c, String.valueOf(k));
+            }
 
         // Retrieve the sorted tokens of the inserted rows
         IPartitioner partitioner = cfs.metadata().partitioner;

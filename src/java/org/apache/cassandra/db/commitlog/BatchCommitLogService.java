@@ -17,8 +17,13 @@
  */
 package org.apache.cassandra.db.commitlog;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 class BatchCommitLogService extends AbstractCommitLogService
 {
+    static final Logger logger = LoggerFactory.getLogger(BatchCommitLogService.class);
+
     /**
      * Batch mode does not rely on the sync thread in {@link AbstractCommitLogService} to wake up for triggering
      * the disk sync. Instead we trigger it explicitly in {@link #maybeWaitForSync(CommitLogSegment.Allocation)}.
@@ -35,8 +40,11 @@ class BatchCommitLogService extends AbstractCommitLogService
     {
         // wait until record has been safely persisted to disk
         pending.incrementAndGet();
+        logger.info("JEB::BatchCommitLogService - before requestSync()");
         requestExtraSync();
+        logger.info("JEB::BatchCommitLogService - before awaitDiskSync()");
         alloc.awaitDiskSync(commitLog.metrics.waitingOnCommit);
+        logger.info("JEB::BatchCommitLogService - after awaitDiskSync()");
         pending.decrementAndGet();
     }
 }

@@ -32,6 +32,9 @@ import java.util.zip.CRC32;
 import com.google.common.annotations.VisibleForTesting;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.codahale.metrics.Timer;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.Mutation;
@@ -56,6 +59,7 @@ import static org.apache.cassandra.utils.FBUtilities.updateChecksumInt;
  */
 public abstract class CommitLogSegment
 {
+    static final Logger logger = LoggerFactory.getLogger(CommitLogSegment.class);
     private final static long idBase;
 
     private CDCState cdcState = CDCState.PERMITTED;
@@ -320,8 +324,13 @@ public abstract class CommitLogSegment
         // check we have more work to do
         final boolean needToMarkData = allocatePosition.get() > lastMarkerOffset + SYNC_MARKER_SIZE;
         final boolean hasDataToFlush = lastSyncedOffset != lastMarkerOffset;
+
+        logger.info("JEB::CLS#sync() needToMarkData: {}, hasDataToFlush:{} ", needToMarkData, hasDataToFlush);
+
         if (!(needToMarkData || hasDataToFlush))
+        {
             return;
+        }
         // Note: Even if the very first allocation of this sync section failed, we still want to enter this
         // to ensure the segment is closed. As allocatePosition is set to 1 beyond the capacity of the buffer,
         // this will always be entered when a mutation allocation has been attempted after the marker allocation
