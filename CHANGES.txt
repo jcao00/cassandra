@@ -1,3 +1,4 @@
+
 3.0.16
  * Close socket on error during connect on OutboundTcpConnection (CASSANDRA-9630)
  * Set encoding for javadoc generation (CASSANDRA-14154)
