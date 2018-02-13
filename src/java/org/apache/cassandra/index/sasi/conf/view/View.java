@@ -19,6 +19,7 @@ package org.apache.cassandra.index.sasi.conf.view;
 
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import org.apache.cassandra.index.sasi.SSTableIndex;
 import org.apache.cassandra.index.sasi.conf.ColumnIndex;
@@ -59,6 +60,9 @@ public class View implements Iterable<SSTableIndex>
                                             : new RangeTermTree.Builder(index.getMode().mode, validator);
 
         List<Interval<Key, SSTableIndex>> keyIntervals = new ArrayList<>();
+        // Ensure oldSSTables and newIndexes are disjoint (in index redistribution case the intersection can be non-empty).
+        // See CASSANDRA-14055
+        oldSSTables.removeAll(newIndexes.stream().map(SSTableIndex::getSSTable).collect(Collectors.toSet()));
         for (SSTableIndex sstableIndex : Iterables.concat(currentView, newIndexes))
         {
             SSTableReader sstable = sstableIndex.getSSTable();
