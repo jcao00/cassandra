@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
 
 class BatchCommitLogService extends AbstractCommitLogService
 {
-    static final Logger logger = LoggerFactory.getLogger(BatchCommitLogService.class);
+    private static final Logger logger = LoggerFactory.getLogger(BatchCommitLogService.class);
 
     /**
      * Batch mode does not rely on the sync thread in {@link AbstractCommitLogService} to wake up for triggering
@@ -39,12 +39,10 @@ class BatchCommitLogService extends AbstractCommitLogService
     protected void maybeWaitForSync(CommitLogSegment.Allocation alloc)
     {
         // wait until record has been safely persisted to disk
+        logger.info("JEB::BCLS before requestExtraSync()");
         pending.incrementAndGet();
-        logger.info("JEB::BatchCommitLogService - before requestSync()");
         requestExtraSync();
-        logger.info("JEB::BatchCommitLogService - before awaitDiskSync()");
         alloc.awaitDiskSync(commitLog.metrics.waitingOnCommit);
-        logger.info("JEB::BatchCommitLogService - after awaitDiskSync()");
         pending.decrementAndGet();
     }
 }

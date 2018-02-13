@@ -41,7 +41,7 @@ public abstract class AbstractCommitLogService
      */
     static final long DEFAULT_MARKER_INTERVAL_MILLIS = 100;
 
-    private Thread thread;
+    private volatile Thread thread;
     private volatile boolean shutdown = false;
 
     // all Allocations written before this time will be synced
@@ -114,12 +114,13 @@ public abstract class AbstractCommitLogService
                 if (modulo >= markerIntervalMillis / 2)
                     syncIntervalMillis += markerIntervalMillis;
             }
-            logger.debug("Will update the commitlog markers every {}ms and flush every {}ms", markerIntervalMillis, syncIntervalMillis);
+//            logger.debug("Will update the commitlog markers every {}ms and flush every {}ms", markerIntervalMillis, syncIntervalMillis);
         }
         else
         {
             markerIntervalMillis = syncIntervalMillis;
         }
+        logger.info("JEB::ACLS - Will update the commitlog markers every {}ms and flush every {}ms", markerIntervalMillis, syncIntervalMillis);
         assert syncIntervalMillis % markerIntervalMillis == 0;
         this.markerIntervalNanos = TimeUnit.NANOSECONDS.convert(markerIntervalMillis, TimeUnit.MILLISECONDS);
         this.syncIntervalNanos = TimeUnit.NANOSECONDS.convert(syncIntervalMillis, TimeUnit.MILLISECONDS);
@@ -171,8 +172,10 @@ public abstract class AbstractCommitLogService
                 long pollStarted = clock.nanoTime();
                 if (lastSyncedAt + syncIntervalNanos <= pollStarted || shutdownRequested || syncRequested)
                 {
+                    logger.info("JEB::ACLS.sync() - WILL sync");
                     // in this branch, we want to flush the commit log to disk
                     commitLog.sync(true);
+                    logger.info("JEB::ACLS.sync() - DID sync, now swap syncRequested");
                     syncRequested = false;
                     lastSyncedAt = pollStarted;
                     syncComplete.signalAll();
@@ -181,6 +184,7 @@ public abstract class AbstractCommitLogService
                 else
                 {
                     // in this branch, just update the commit log sync headers
+                    logger.info("JEB::ACLS.sync() - will NOT sync");
                     commitLog.sync(false);
                 }
 
@@ -252,6 +256,7 @@ public abstract class AbstractCommitLogService
      */
     void requestExtraSync()
     {
+        logger.info();
         syncRequested = true;
         LockSupport.unpark(thread);
     }
