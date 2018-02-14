@@ -256,7 +256,7 @@ public abstract class AbstractCommitLogService
      */
     void requestExtraSync()
     {
-        logger.info();
+//        logger.info();
         syncRequested = true;
         LockSupport.unpark(thread);
     }
