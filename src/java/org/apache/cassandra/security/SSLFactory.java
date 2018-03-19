@@ -54,6 +54,7 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
 import io.netty.handler.ssl.SupportedCipherSuiteFilter;
+import io.netty.util.ReferenceCountUtil;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.EncryptionOptions;
 
@@ -70,13 +71,18 @@ public final class SSLFactory
     private static final Logger logger = LoggerFactory.getLogger(SSLFactory.class);
 
     /**
-     * Indicator if a connection is shared with a client application or another cassandra nodes (peer).
+     * Indicator if a connection is shared with a client application ({@link ConnectionType#NATIVE_TRANSPORT})
+     * or another cassandra node  ({@link ConnectionType#INTERNODE_MESSAGING}).
      */
     public enum ConnectionType
     {
-        CLIENT, PEER
+        NATIVE_TRANSPORT, INTERNODE_MESSAGING
     }
 
+    /**
+     * Indicates if the process holds the inbound/listening end of the socket ({@link SocketType#SERVER})), or the
+     * outbound side ({@link SocketType#CLIENT}).
+     */
     public enum SocketType
     {
         SERVER, CLIENT
@@ -115,17 +121,11 @@ public final class SSLFactory
      */
     private static class HotReloadableFile
     {
-        enum Type
-        {
-            SERVER,
-            CLIENT
-        }
-
         private final File file;
         private volatile long lastModTime;
-        private final Type certType;
+        private final ConnectionType certType;
 
-        HotReloadableFile(String path, Type type)
+        HotReloadableFile(String path, ConnectionType type)
         {
             file = new File(path);
             lastModTime = file.lastModified();
@@ -142,12 +142,12 @@ public final class SSLFactory
 
         public boolean isServer()
         {
-            return certType == Type.SERVER;
+            return certType == ConnectionType.INTERNODE_MESSAGING;
         }
 
         public boolean isClient()
         {
-            return certType == Type.CLIENT;
+            return certType == ConnectionType.NATIVE_TRANSPORT;
         }
     }
 
@@ -262,9 +262,12 @@ public final class SSLFactory
             return sslContext;
 
         sslContext = createNettySslContext(options, buildTruststore, connectionType, socketType, useOpenSsl);
-        cachedSslContexts.putIfAbsent(key, sslContext);
+        SslContext previous = cachedSslContexts.putIfAbsent(key, sslContext);
+        if (previous == null)
+            return sslContext;
 
-        return sslContext;
+        ReferenceCountUtil.release(sslContext);
+        return previous;
     }
 
     /**
@@ -281,10 +284,7 @@ public final class SSLFactory
             {@link SslContextBuilder#forServer(File, File, String)}). However, we are not supporting that now to keep
             the config/yaml API simple.
          */
-        KeyManagerFactory kmf = null;
-        if (connectionType == ConnectionType.PEER || options.enabled || options.require_client_auth)
-            kmf = buildKeyManagerFactory(options);
-
+        KeyManagerFactory kmf = buildKeyManagerFactory(options);
         SslContextBuilder builder;
         if (socketType == SocketType.SERVER)
         {
@@ -306,8 +306,7 @@ public final class SSLFactory
         if (buildTruststore)
             builder.trustManager(buildTrustManagerFactory(options));
 
-        SslContext ctx = builder.build();
-        return ctx;
+        return builder.build();
     }
 
     /**
@@ -325,7 +324,7 @@ public final class SSLFactory
 
         if (hotReloadableFiles.stream().anyMatch(f -> f.shouldReload()))
         {
-            logger.info("SSL certificates have been updated. Reseting the context for new peer connections.");
+            logger.info("SSL certificates have been updated. Reseting the ssl contexts for new peer connections.");
             cachedSslContexts.clear();
         }
     }
@@ -349,14 +348,14 @@ public final class SSLFactory
 
         if (serverEncryptionOptions.enabled)
         {
-            fileList.add(new HotReloadableFile(serverEncryptionOptions.keystore, HotReloadableFile.Type.SERVER));
-            fileList.add(new HotReloadableFile(serverEncryptionOptions.truststore, HotReloadableFile.Type.SERVER));
+            fileList.add(new HotReloadableFile(serverEncryptionOptions.keystore, ConnectionType.INTERNODE_MESSAGING));
+            fileList.add(new HotReloadableFile(serverEncryptionOptions.truststore, ConnectionType.INTERNODE_MESSAGING));
         }
 
         if (clientEncryptionOptions.enabled)
         {
-            fileList.add(new HotReloadableFile(clientEncryptionOptions.keystore, HotReloadableFile.Type.CLIENT));
-            fileList.add(new HotReloadableFile(clientEncryptionOptions.truststore, HotReloadableFile.Type.CLIENT));
+            fileList.add(new HotReloadableFile(clientEncryptionOptions.keystore, ConnectionType.NATIVE_TRANSPORT));
+            fileList.add(new HotReloadableFile(clientEncryptionOptions.truststore, ConnectionType.NATIVE_TRANSPORT));
         }
 
         hotReloadableFiles = ImmutableList.copyOf(fileList);
@@ -391,11 +390,7 @@ public final class SSLFactory
             CacheKey cacheKey = (CacheKey) o;
             return (connectionType == cacheKey.connectionType &&
                     socketType == cacheKey.socketType &&
-                    Objects.equals(encryptionOptions.keystore, cacheKey.encryptionOptions.keystore) &&
-                    Objects.equals(encryptionOptions.truststore, cacheKey.encryptionOptions.truststore) &&
-                    Objects.equals(encryptionOptions.algorithm, cacheKey.encryptionOptions.algorithm) &&
-                    Objects.equals(encryptionOptions.protocol, cacheKey.encryptionOptions.protocol) &&
-                    Arrays.equals(encryptionOptions.cipher_suites, cacheKey.encryptionOptions.cipher_suites));
+                    Objects.equals(encryptionOptions, cacheKey.encryptionOptions));
         }
 
         public int hashCode()
@@ -403,11 +398,7 @@ public final class SSLFactory
             int result = 0;
             result += 31 * connectionType.hashCode();
             result += 31 * socketType.hashCode();
-            result += 31 * (encryptionOptions.keystore == null ? 0 : encryptionOptions.keystore.hashCode());
-            result += 31 * (encryptionOptions.truststore == null ? 0 : encryptionOptions.truststore.hashCode());
-            result += 31 * (encryptionOptions.algorithm == null ? 0 : encryptionOptions.algorithm.hashCode());
-            result += 31 * (encryptionOptions.protocol == null ? 0 : encryptionOptions.protocol.hashCode());
-            result += 31 * Arrays.hashCode(encryptionOptions.cipher_suites);
+            result += 31 * encryptionOptions.hashCode();
             return result;
         }
     }

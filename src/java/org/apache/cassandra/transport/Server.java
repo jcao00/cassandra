@@ -24,8 +24,6 @@ import java.net.UnknownHostException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLEngine;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -402,7 +400,7 @@ public class Server implements CassandraDaemon.Server
         protected final SslHandler createSslHandler(ByteBufAllocator allocator) throws IOException
         {
             SslContext sslContext = SSLFactory.getSslContext(encryptionOptions, encryptionOptions.require_client_auth,
-                                                             SSLFactory.ConnectionType.PEER, SSLFactory.SocketType.SERVER);
+                                                             SSLFactory.ConnectionType.NATIVE_TRANSPORT, SSLFactory.SocketType.SERVER);
             return sslContext.newHandler(allocator);
         }
     }
