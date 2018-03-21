@@ -138,7 +138,7 @@ public class Server implements CassandraDaemon.Server
 
         if (this.useSSL)
         {
-            final EncryptionOptions clientEnc = DatabaseDescriptor.getClientEncryptionOptions();
+            final EncryptionOptions clientEnc = DatabaseDescriptor.getNativeProtocolEncryptionOptions();
 
             if (clientEnc.optional)
             {
