@@ -123,13 +123,11 @@ public final class SSLFactory
     {
         private final File file;
         private volatile long lastModTime;
-        private final ConnectionType certType;
 
-        HotReloadableFile(String path, ConnectionType type)
+        HotReloadableFile(String path)
         {
             file = new File(path);
             lastModTime = file.lastModified();
-            certType = type;
         }
 
         boolean shouldReload()
@@ -138,16 +136,6 @@ public final class SSLFactory
             boolean result = curModTime != lastModTime;
             lastModTime = curModTime;
             return result;
-        }
-
-        public boolean isServer()
-        {
-            return certType == ConnectionType.INTERNODE_MESSAGING;
-        }
-
-        public boolean isClient()
-        {
-            return certType == ConnectionType.NATIVE_TRANSPORT;
         }
     }
 
@@ -322,9 +310,9 @@ public final class SSLFactory
 
         logger.trace("Checking whether certificates have been updated");
 
-        if (hotReloadableFiles.stream().anyMatch(f -> f.shouldReload()))
+        if (hotReloadableFiles.stream().anyMatch(HotReloadableFile::shouldReload))
         {
-            logger.info("SSL certificates have been updated. Reseting the ssl contexts for new peer connections.");
+            logger.info("SSL certificates have been updated. Reseting the ssl contexts for new connections.");
             cachedSslContexts.clear();
         }
     }
@@ -348,14 +336,14 @@ public final class SSLFactory
 
         if (serverEncryptionOptions.enabled)
         {
-            fileList.add(new HotReloadableFile(serverEncryptionOptions.keystore, ConnectionType.INTERNODE_MESSAGING));
-            fileList.add(new HotReloadableFile(serverEncryptionOptions.truststore, ConnectionType.INTERNODE_MESSAGING));
+            fileList.add(new HotReloadableFile(serverEncryptionOptions.keystore));
+            fileList.add(new HotReloadableFile(serverEncryptionOptions.truststore));
         }
 
         if (clientEncryptionOptions.enabled)
         {
-            fileList.add(new HotReloadableFile(clientEncryptionOptions.keystore, ConnectionType.NATIVE_TRANSPORT));
-            fileList.add(new HotReloadableFile(clientEncryptionOptions.truststore, ConnectionType.NATIVE_TRANSPORT));
+            fileList.add(new HotReloadableFile(clientEncryptionOptions.keystore));
+            fileList.add(new HotReloadableFile(clientEncryptionOptions.truststore));
         }
 
         hotReloadableFiles = ImmutableList.copyOf(fileList);
