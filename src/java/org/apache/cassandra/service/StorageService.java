@@ -641,7 +641,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 if (FBUtilities.isWindows)
                     WindowsTimer.endTimerPeriod(DatabaseDescriptor.getWindowsTimerInterval());
 
-                // Cleanup logback
                 LoggingSupportFactory.getLoggingSupport().onShutdown();
             }
         }, "StorageServiceShutdownHook");
@@ -3812,7 +3811,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      * @return the runtime logging levels for all the configured loggers
      */
     @Override
-    public Map<String,String>getLoggingLevels()
+    public Map<String,String> getLoggingLevels()
     {
         return LoggingSupportFactory.getLoggingSupport().getLoggingLevels();
     }

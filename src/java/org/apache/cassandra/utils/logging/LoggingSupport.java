@@ -11,12 +11,12 @@ public interface LoggingSupport
     /**
      * Hook used to execute logging implementation specific customization at Cassandra startup time.
      */
-    default void onStartup() {};
+    default void onStartup() {}
 
     /**
      * Hook used to execute logging implementation specific customization at Cassandra shutdown time.
      */
-    default void onShutdown() {};
+    default void onShutdown() {}
 
     /**
      * Changes the given logger to the given log level.

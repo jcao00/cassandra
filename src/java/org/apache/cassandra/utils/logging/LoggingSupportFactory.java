@@ -14,7 +14,7 @@ public class LoggingSupportFactory
 {
     private static final Logger logger = LoggerFactory.getLogger(LoggingSupportFactory.class);
 
-    private static volatile LoggingSupport selectedLoggingSupportImplementation;
+    private static volatile LoggingSupport loggingSupport;
 
     private LoggingSupportFactory() {}
 
@@ -23,21 +23,20 @@ public class LoggingSupportFactory
      */
     public static LoggingSupport getLoggingSupport()
     {
-        if (selectedLoggingSupportImplementation == null)
+        if (loggingSupport == null)
         {
             String loggerFactoryClassString = StaticLoggerBinder.getSingleton().getLoggerFactoryClassStr();
             if (loggerFactoryClassString.contains("logback"))
             {
-                logger.warn("JEB::EAT me");
-                selectedLoggingSupportImplementation = FBUtilities.instanceOrConstruct("org.apache.cassandra.utils.logging.LogbackLoggingSupport", "LogbackLoggingSupport");
+                loggingSupport = FBUtilities.instanceOrConstruct("org.apache.cassandra.utils.logging.LogbackLoggingSupport", "LogbackLoggingSupport");
             }
             else
             {
-                selectedLoggingSupportImplementation = new NoOpFallbackLoggingSupport();
+                loggingSupport = new NoOpFallbackLoggingSupport();
                 logger.warn("You are using Cassandra with an unsupported deployment. The intended logging implementation library logback is not used by slf4j. Detected slf4j binding: {}. "
                         + "You will not be able to dynamically manage log levels via JMX and may have performance or other issues.", StaticLoggerBinder.getSingleton().getLoggerFactory().getClass().getName());
             }
         }
-        return selectedLoggingSupportImplementation;
+        return loggingSupport;
     }
 }

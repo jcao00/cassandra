@@ -26,7 +26,7 @@ import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.hook.DelayingShutdownHook;
 
 /**
- * Encapsulates all logback-specific implementations at a central place. T
+ * Encapsulates all logback-specific implementations in a central place.
  * Generally, the Cassandra code-base should be logging-backend agnostic and only use slf4j-api.
  * This class MUST NOT be used directly, but only via {@link LoggingSupportFactory} which dynamically loads and
  * instantiates an appropriate implementation according to the used slf4j binding.
@@ -39,13 +39,37 @@ public class LogbackLoggingSupport implements LoggingSupport
     @Override
     public void onStartup()
     {
-        disableReconfigureOnChangeFilterForSandboxedExecution();
+        // The default logback configuration in conf/logback.xml allows reloading the
+        // configuration when the configuration file has changed (every 60 seconds by default).
+        // This requires logback to use file I/O APIs. But file I/O is not allowed from UDFs.
+        // I.e. if logback decides to check for a modification of the config file while
+        // executing a sandbox thread, the UDF execution and therefore the whole request
+        // execution will fail with an AccessControlException.
+        // To work around this, a custom ReconfigureOnChangeFilter is installed, that simply
+        // prevents this configuration file check and possible reload of the configuration,
+        // while executing sandboxed UDF code.
+        Logger logbackLogger = (Logger) LoggerFactory.getLogger(ThreadAwareSecurityManager.class);
+        LoggerContext ctx = logbackLogger.getLoggerContext();
+
+        TurboFilterList turboFilterList = ctx.getTurboFilterList();
+        for (int i = 0; i < turboFilterList.size(); i++)
+        {
+            TurboFilter turboFilter = turboFilterList.get(i);
+            if (turboFilter instanceof ReconfigureOnChangeFilter)
+            {
+                ReconfigureOnChangeFilter reconfigureOnChangeFilter = (ReconfigureOnChangeFilter) turboFilter;
+                turboFilterList.set(i, new SMAwareReconfigureOnChangeFilter(reconfigureOnChangeFilter));
+                break;
+            }
+        }
     }
 
     @Override
     public void onShutdown()
     {
-        executeDelayingShutdownHook();
+        DelayingShutdownHook logbackHook = new DelayingShutdownHook();
+        logbackHook.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+        logbackHook.run();
     }
 
     @Override
@@ -54,15 +78,17 @@ public class LogbackLoggingSupport implements LoggingSupport
         Logger logBackLogger = (Logger) LoggerFactory.getLogger(classQualifier);
 
         // if both classQualifier and rawLevel are empty, reload from configuration
-        if (StringUtils.isBlank(classQualifier) && StringUtils.isBlank(rawLevel)) {
+        if (StringUtils.isBlank(classQualifier) && StringUtils.isBlank(rawLevel))
+        {
             JMXConfiguratorMBean jmxConfiguratorMBean = JMX.newMBeanProxy(ManagementFactory.getPlatformMBeanServer(),
-                    new ObjectName("ch.qos.logback.classic:Name=default,Type=ch.qos.logback.classic.jmx.JMXConfigurator"),
-                    JMXConfiguratorMBean.class);
+                                                                          new ObjectName("ch.qos.logback.classic:Name=default,Type=ch.qos.logback.classic.jmx.JMXConfigurator"),
+                                                                          JMXConfiguratorMBean.class);
             jmxConfiguratorMBean.reloadDefaultConfiguration();
             return;
         }
         // classQualifier is set, but blank level given
-        else if (StringUtils.isNotBlank(classQualifier) && StringUtils.isBlank(rawLevel)) {
+        else if (StringUtils.isNotBlank(classQualifier) && StringUtils.isBlank(rawLevel))
+        {
             if (logBackLogger.getLevel() != null || hasAppenders(logBackLogger))
                 logBackLogger.setLevel(null);
             return;
@@ -78,43 +104,18 @@ public class LogbackLoggingSupport implements LoggingSupport
     {
         Map<String, String> logLevelMaps = Maps.newLinkedHashMap();
         LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
-        for (Logger logBackLogger : lc.getLoggerList()) {
+        for (Logger logBackLogger : lc.getLoggerList())
+        {
             if (logBackLogger.getLevel() != null || hasAppenders(logBackLogger))
                 logLevelMaps.put(logBackLogger.getName(), logBackLogger.getLevel().toString());
         }
         return logLevelMaps;
     }
 
-    private void disableReconfigureOnChangeFilterForSandboxedExecution()
+    private boolean hasAppenders(Logger logBackLogger)
     {
-            // The default logback configuration in conf/logback.xml allows reloading the
-            // configuration when the configuration file has changed (every 60 seconds by default).
-            // This requires logback to use file I/O APIs. But file I/O is not allowed from UDFs.
-            // I.e. if logback decides to check for a modification of the config file while
-            // executing a sandbox thread, the UDF execution and therefore the whole request
-            // execution will fail with an AccessControlException.
-            // To work around this, a custom ReconfigureOnChangeFilter is installed, that simply
-            // prevents this configuration file check and possible reload of the configuration,
-            // while executing sandboxed UDF code.
-            Logger logbackLogger = (Logger) LoggerFactory.getLogger(ThreadAwareSecurityManager.class);
-            LoggerContext ctx = logbackLogger.getLoggerContext();
-
-            TurboFilterList turboFilterList = ctx.getTurboFilterList();
-            for (int i = 0; i < turboFilterList.size(); i++) {
-                TurboFilter turboFilter = turboFilterList.get(i);
-                if (turboFilter instanceof ReconfigureOnChangeFilter) {
-                    ReconfigureOnChangeFilter reconfigureOnChangeFilter = (ReconfigureOnChangeFilter) turboFilter;
-                    turboFilterList.set(i, new SMAwareReconfigureOnChangeFilter(reconfigureOnChangeFilter));
-                    break;
-                }
-            }
-    }
-
-    private void executeDelayingShutdownHook()
-    {
-        DelayingShutdownHook logbackHook = new DelayingShutdownHook();
-        logbackHook.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
-        logbackHook.run();
+        Iterator<Appender<ILoggingEvent>> it = logBackLogger.iteratorForAppenders();
+        return it.hasNext();
     }
 
     /**
@@ -141,11 +142,5 @@ public class LogbackLoggingSupport implements LoggingSupport
                 return false;
             return super.changeDetected(now);
         }
-    }
-
-    private boolean hasAppenders(Logger logBackLogger)
-    {
-        Iterator<Appender<ILoggingEvent>> it = logBackLogger.iteratorForAppenders();
-        return it.hasNext();
     }
 }
