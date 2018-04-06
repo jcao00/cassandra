@@ -178,7 +178,7 @@ public class MessageOutHandlerTest
                 return size;
             }
         };
-        MessageOut message = new MessageOut(MessagingService.Verb.UNUSED_5, "payload", serializer);
+        MessageOut message = new MessageOut(MessagingService.Verb.UNUSED_1, "payload", serializer);
         ChannelFuture future = channel.write(new QueuedMessage(message, 42));
         Throwable t = future.cause();
         Assert.assertNotNull(t);
@@ -207,7 +207,7 @@ public class MessageOutHandlerTest
                 return 42;
             }
         };
-        MessageOut message = new MessageOut(MessagingService.Verb.UNUSED_5, "payload", serializer);
+        MessageOut message = new MessageOut(MessagingService.Verb.UNUSED_1, "payload", serializer);
         ChannelFuture future = channel.write(new QueuedMessage(message, 42));
         Throwable t = future.cause();
         Assert.assertNotNull(t);

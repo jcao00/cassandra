@@ -108,7 +108,7 @@ public class OutboundMessagingPoolTest
                 return OutboundMessagingPool.LARGE_MESSAGE_THRESHOLD + 1;
             }
         };
-        MessageOut message = new MessageOut<>(MessagingService.Verb.UNUSED_5, "payload", serializer);
+        MessageOut message = new MessageOut<>(MessagingService.Verb.UNUSED_1, "payload", serializer);
         Assert.assertEquals(ConnectionType.LARGE_MESSAGE, pool.getConnection(message).getConnectionId().type());
     }
 
