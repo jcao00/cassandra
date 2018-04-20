@@ -230,6 +230,7 @@ public class StreamCoordinator
     private HostStreamingData getHostData(InetAddressAndPort peer)
     {
         HostStreamingData data = peerSessions.get(peer);
+
         if (data == null)
             throw new IllegalArgumentException("Unknown peer requested: " + peer);
         return data;
@@ -280,7 +281,7 @@ public class StreamCoordinator
             // create
             if (streamSessions.size() < connectionsPerHost)
             {
-                StreamSession session = new StreamSession(streamOperation, peer, connecting, factory, streamSessions.size(), pendingRepair, previewKind);
+                StreamSession session = new StreamSession(streamOperation, peer, factory, streamSessions.size(), pendingRepair, previewKind);
                 streamSessions.put(++lastReturned, session);
                 return session;
             }
@@ -312,7 +313,7 @@ public class StreamCoordinator
             StreamSession session = streamSessions.get(id);
             if (session == null)
             {
-                session = new StreamSession(streamOperation, peer, connecting, factory, id, pendingRepair, previewKind);
+                session = new StreamSession(streamOperation, peer, factory, id, pendingRepair, previewKind);
                 streamSessions.put(id, session);
             }
             return session;
