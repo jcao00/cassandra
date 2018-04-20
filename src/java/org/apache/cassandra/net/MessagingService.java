@@ -1597,14 +1597,11 @@ public final class MessagingService implements MessagingServiceMBean
     /**
      * This method is used to determine the preferred IP & Port of a peer using the
      * {@link OutboundMessagingPool}.
-     * @param to
-     * @return InetAddressAndPort
      */
     public InetAddressAndPort getPreferredRemoteAddr(InetAddressAndPort to)
     {
         OutboundMessagingPool pool = channelManagers.get(to);
-        if (pool == null) return null;
-        return pool.getPreferredRemoteAddr();
+        return pool != null ? pool.getPreferredRemoteAddr() : SystemKeyspace.getPreferredIP(to);
     }
 
     private OutboundMessagingPool getMessagingConnection(InetAddressAndPort to)

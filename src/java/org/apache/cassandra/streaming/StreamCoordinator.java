@@ -147,14 +147,14 @@ public class StreamCoordinator
         return new HashSet<>(peerSessions.keySet());
     }
 
-    public synchronized StreamSession getOrCreateNextSession(InetAddressAndPort peer, InetAddressAndPort connecting)
+    public synchronized StreamSession getOrCreateNextSession(InetAddressAndPort peer)
     {
-        return getOrCreateHostData(peer).getOrCreateNextSession(peer, connecting);
+        return getOrCreateHostData(peer).getOrCreateNextSession(peer);
     }
 
-    public synchronized StreamSession getOrCreateSessionById(InetAddressAndPort peer, int id, InetAddressAndPort connecting)
+    public synchronized StreamSession getOrCreateSessionById(InetAddressAndPort peer, int id)
     {
-        return getOrCreateHostData(peer).getOrCreateSessionById(peer, id, connecting);
+        return getOrCreateHostData(peer).getOrCreateSessionById(peer, id);
     }
 
     public StreamSession getSessionById(InetAddressAndPort peer, int id)
@@ -193,13 +193,13 @@ public class StreamCoordinator
 
             for (Collection<OutgoingStream> bucket : buckets)
             {
-                StreamSession session = sessionList.getOrCreateNextSession(to, to);
+                StreamSession session = sessionList.getOrCreateNextSession(to);
                 session.addTransferStreams(bucket);
             }
         }
         else
         {
-            StreamSession session = sessionList.getOrCreateNextSession(to, to);
+            StreamSession session = sessionList.getOrCreateNextSession(to);
             session.addTransferStreams(streams);
         }
     }
@@ -276,7 +276,7 @@ public class StreamCoordinator
             return false;
         }
 
-        public StreamSession getOrCreateNextSession(InetAddressAndPort peer, InetAddressAndPort connecting)
+        public StreamSession getOrCreateNextSession(InetAddressAndPort peer)
         {
             // create
             if (streamSessions.size() < connectionsPerHost)
@@ -308,7 +308,7 @@ public class StreamCoordinator
             return Collections.unmodifiableCollection(streamSessions.values());
         }
 
-        public StreamSession getOrCreateSessionById(InetAddressAndPort peer, int id, InetAddressAndPort connecting)
+        public StreamSession getOrCreateSessionById(InetAddressAndPort peer, int id)
         {
             StreamSession session = streamSessions.get(id);
             if (session == null)
