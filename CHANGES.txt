@@ -2,6 +2,7 @@
  * nodetool listsnapshots is missing local system keyspace snapshots (CASSANDRA-14381)
  * Remove StreamCoordinator.streamExecutor thread pool (CASSANDRA-14402)
  * Rename nodetool --with-port to --print-port to disambiguate from --port (CASSANDRA-14392)
+ * Remove forced local address binding and fix streaming failure during bootstrap (CASSANDRA-14389)
  * Client TOPOLOGY_CHANGE messages have wrong port. (CASSANDRA-14398)
  * Add ability to load new SSTables from a separate directory (CASSANDRA-6719)
  * Eliminate background repair and probablistic read_repair_chance table options

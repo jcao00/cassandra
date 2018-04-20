@@ -55,6 +55,8 @@ import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.streaming.StreamConnectionFactory;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingMessageSender;
+import org.apache.cassandra.streaming.async.NettyStreamingMessageSenderFactory;
+import org.apache.cassandra.streaming.async.StreamingInboundHandler;
 import org.apache.cassandra.streaming.messages.IncomingStreamMessage;
 import org.apache.cassandra.streaming.messages.KeepAliveMessage;
 import org.apache.cassandra.streaming.messages.OutgoingStreamMessage;
@@ -184,6 +186,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
         ChannelPipeline pipeline = channel.pipeline();
         pipeline.addLast(NettyFactory.instance.streamingGroup, NettyFactory.INBOUND_STREAM_HANDLER_NAME, new StreamingInboundHandler(connectionId.remote(), protocolVersion, session));
         channel.attr(TRANSFERRING_FILE_ATTR).set(Boolean.FALSE);
+        logger.debug("Creating channel id {} local {} remote {}", channel.id(), channel.localAddress(), channel.remoteAddress());
         return channel;
     }
 
@@ -507,5 +510,15 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
 
         if (controlMessageChannel != null)
             controlMessageChannel.close();
+    }
+
+    public static class DefaultNettyStreamingMessageSenderFactory implements NettyStreamingMessageSenderFactory
+    {
+
+        @Override
+        public NettyStreamingMessageSender createMessageSender(StreamSession session, OutboundConnectionIdentifier connectionId, StreamConnectionFactory factory, int protocolVersion, boolean isPreview)
+        {
+            return new NettyStreamingMessageSender(session, connectionId, factory, protocolVersion, isPreview);
+        }
     }
 }
