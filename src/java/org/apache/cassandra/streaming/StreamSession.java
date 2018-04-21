@@ -45,7 +45,6 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.streaming.async.NettyStreamingMessageSender;
-import org.apache.cassandra.streaming.async.NettyStreamingMessageSenderFactory;
 import org.apache.cassandra.streaming.messages.*;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
@@ -126,6 +125,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     private static final Logger logger = LoggerFactory.getLogger(StreamSession.class);
 
     private final StreamOperation streamOperation;
+
     /**
      * Streaming endpoint.
      *
@@ -133,10 +133,12 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      */
     public final InetAddressAndPort peer;
 
-    private final int index;
-
-    /** Preferred IP Address/Port of the peer. Can be the same as {@linkplain #peer}. */
+    /**
+     * Preferred IP Address/Port of the peer; this is the address that will be connect to. Can be the same as {@linkplain #peer}.
+     */
     private final InetAddressAndPort preferredPeerInetAddressAndPort;
+
+    private final int index;
 
     // should not be null when session is started
     private StreamResultFuture streamResult;
@@ -172,27 +174,18 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     private volatile State state = State.INITIALIZED;
     private volatile boolean completeSent = false;
 
-    private static final NettyStreamingMessageSenderFactory defaultNSMSFactory = new NettyStreamingMessageSender.DefaultNettyStreamingMessageSenderFactory();
-
     /**
      * Create new streaming session with the peer.
-     * @param streamOperation
-     * @param peer Address of streaming peer
      */
     public StreamSession(StreamOperation streamOperation, InetAddressAndPort peer, StreamConnectionFactory factory,
                          int index, UUID pendingRepair, PreviewKind previewKind)
     {
-        this(streamOperation, peer, factory, index, pendingRepair, previewKind, defaultNSMSFactory, StreamSession::getPreferredIp);
+        this(streamOperation, peer, factory, index, pendingRepair, previewKind, MessagingService.instance()::getPreferredRemoteAddr);
     }
 
-    /**
-     * Create new streaming session with the peer.
-     * @param streamOperation
-     * @param peer Address of streaming peer
-     */
     @VisibleForTesting
     public StreamSession(StreamOperation streamOperation, InetAddressAndPort peer, StreamConnectionFactory factory,
-                         int index, UUID pendingRepair, PreviewKind previewKind, NettyStreamingMessageSenderFactory nsmsFactory,
+                         int index, UUID pendingRepair, PreviewKind previewKind,
                          Function<InetAddressAndPort, InetAddressAndPort> preferredIpMapper)
     {
         this.streamOperation = streamOperation;
@@ -202,25 +195,15 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         this.preferredPeerInetAddressAndPort = (preferredPeerEndpoint == null) ? peer : preferredPeerEndpoint;
 
         OutboundConnectionIdentifier id = OutboundConnectionIdentifier.stream(InetAddressAndPort.getByAddressOverrideDefaults(FBUtilities.getJustLocalAddress(), 0),
-                                                                              InetAddressAndPort.getByAddressOverrideDefaults(preferredPeerInetAddressAndPort.address, MessagingService.instance().portFor(preferredPeerInetAddressAndPort)));
+                                                                              preferredPeerInetAddressAndPort);
 
-        this.messageSender = nsmsFactory.createMessageSender(this, id, factory, StreamMessage.CURRENT_VERSION, previewKind.isPreview());
+        this.messageSender = new NettyStreamingMessageSender(this, id, factory, StreamMessage.CURRENT_VERSION, previewKind.isPreview());
         this.metrics = StreamingMetrics.get(preferredPeerInetAddressAndPort);
         this.pendingRepair = pendingRepair;
         this.previewKind = previewKind;
 
         logger.debug("Creating stream session peer={} preferredPeerInetAddressAndPort={}", peer, preferredPeerInetAddressAndPort);
     }
-
-    /**
-     * Helper to get the preferred IP
-     * @param peer
-     * @return
-     */
-    private static InetAddressAndPort getPreferredIp(InetAddressAndPort peer) {
-        return MessagingService.instance().getPreferredRemoteAddr(peer);
-    }
-
 
     public UUID planId()
     {

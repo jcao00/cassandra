@@ -55,8 +55,6 @@ import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
 import org.apache.cassandra.streaming.StreamConnectionFactory;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamingMessageSender;
-import org.apache.cassandra.streaming.async.NettyStreamingMessageSenderFactory;
-import org.apache.cassandra.streaming.async.StreamingInboundHandler;
 import org.apache.cassandra.streaming.messages.IncomingStreamMessage;
 import org.apache.cassandra.streaming.messages.KeepAliveMessage;
 import org.apache.cassandra.streaming.messages.OutgoingStreamMessage;
@@ -137,7 +135,7 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     }
 
     @Override
-    public void initialize() throws IOException
+    public void initialize()
     {
         StreamInitMessage message = new StreamInitMessage(FBUtilities.getBroadcastAddressAndPort(),
                                                           session.sessionIndex(),
@@ -498,7 +496,8 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
     {
         closed = true;
         logger.debug("{} Closing stream connection channels on {}", createLogTag(session, null), connectionId);
-        channelKeepAlives.stream().map(scheduledFuture -> scheduledFuture.cancel(false));
+        for (ScheduledFuture<?> future : channelKeepAlives)
+            future.cancel(false);
         channelKeepAlives.clear();
 
         List<Future<Void>> futures = new ArrayList<>(threadToChannelMap.size());
@@ -512,13 +511,9 @@ public class NettyStreamingMessageSender implements StreamingMessageSender
             controlMessageChannel.close();
     }
 
-    public static class DefaultNettyStreamingMessageSenderFactory implements NettyStreamingMessageSenderFactory
+    @Override
+    public OutboundConnectionIdentifier getConnectionId()
     {
-
-        @Override
-        public NettyStreamingMessageSender createMessageSender(StreamSession session, OutboundConnectionIdentifier connectionId, StreamConnectionFactory factory, int protocolVersion, boolean isPreview)
-        {
-            return new NettyStreamingMessageSender(session, connectionId, factory, protocolVersion, isPreview);
-        }
+        return connectionId;
     }
 }

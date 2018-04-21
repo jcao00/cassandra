@@ -22,7 +22,6 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collections;
 import java.util.UUID;
-import java.util.function.Function;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -30,23 +29,11 @@ import org.junit.Test;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.MessagingServiceTest;
-import org.apache.cassandra.net.async.OutboundConnectionIdentifier;
-import org.apache.cassandra.streaming.async.NettyStreamingMessageSender;
-import org.apache.cassandra.streaming.async.NettyStreamingMessageSenderFactory;
 
 import static org.junit.Assert.assertEquals;
 
 public class StreamSessionTest
 {
-    private static class NSMSStub extends NettyStreamingMessageSender
-    {
-
-        public NSMSStub(StreamSession session, OutboundConnectionIdentifier connectionId, StreamConnectionFactory factory, int protocolVersion, boolean isPreview)
-        {
-            super(session, connectionId, factory, protocolVersion, isPreview);
-        }
-    }
-
     @BeforeClass
     public static void beforeClass() throws UnknownHostException
     {
@@ -58,46 +45,23 @@ public class StreamSessionTest
     @Test
     public void testStreamSessionUsesCorrectRemoteIp_Succeeds() throws UnknownHostException
     {
-        final OutboundConnectionIdentifier[] cid = new OutboundConnectionIdentifier[1];
+        InetAddressAndPort localAddr = InetAddressAndPort.getByName("127.0.0.1:7000");
+        InetAddressAndPort preferredAddr = InetAddressAndPort.getByName("127.0.0.2:7000");
+        StreamSession streamSession = new StreamSession(StreamOperation.BOOTSTRAP, localAddr,
+                          new DefaultConnectionFactory(), 0, UUID.randomUUID(), PreviewKind.ALL,
+                          inetAddressAndPort -> preferredAddr);
 
-        NettyStreamingMessageSenderFactory mockNSMSFactory = (session, connectionId, factory, protocolVersion, isPreview) -> {
-            cid[0] = connectionId;
-            return new NSMSStub(session, connectionId, factory, protocolVersion, isPreview);
-        };
-
-        Function<InetAddressAndPort, InetAddressAndPort> mockPeerIpMapper = (InetAddressAndPort peer) -> {
-            try
-            {
-                return InetAddressAndPort.getByName("127.0.0.2:7000");
-            }
-            catch (UnknownHostException e)
-            {
-            }
-            return null;
-        };
-
-
-        new StreamSession(StreamOperation.BOOTSTRAP, InetAddressAndPort.getByName("127.0.0.1:7000"),
-                          new DefaultConnectionFactory(), 0, UUID.randomUUID(), PreviewKind.ALL, mockNSMSFactory,
-                          mockPeerIpMapper);
-
-        assertEquals(InetAddressAndPort.getByName("127.0.0.2:7000"), cid[0].remote());
+        assertEquals(preferredAddr, streamSession.getMessageSender().getConnectionId().connectionAddress());
     }
 
     @Test
     public void testStreamSessionUsesCorrectRemoteIpNullMapper_Succeeds() throws UnknownHostException
     {
-        final OutboundConnectionIdentifier[] cid = new OutboundConnectionIdentifier[1];
+        InetAddressAndPort localAddr = InetAddressAndPort.getByName("127.0.0.1:7000");
 
-        NettyStreamingMessageSenderFactory mockNSMSFactory = (session, connectionId, factory, protocolVersion, isPreview) -> {
-            cid[0] = connectionId;
-            return new NSMSStub(session, connectionId, factory, protocolVersion, isPreview);
-        };
+        StreamSession streamSession = new StreamSession(StreamOperation.BOOTSTRAP, localAddr,
+                          new DefaultConnectionFactory(), 0, UUID.randomUUID(), PreviewKind.ALL, (peer) -> null);
 
-        new StreamSession(StreamOperation.BOOTSTRAP, InetAddressAndPort.getByName("127.0.0.1:7000"),
-                          new DefaultConnectionFactory(), 0, UUID.randomUUID(), PreviewKind.ALL, mockNSMSFactory,
-                          (peer) -> null);
-
-        assertEquals(InetAddressAndPort.getByName("127.0.0.1:7000"), cid[0].remote());
+        assertEquals(localAddr, streamSession.getMessageSender().getConnectionId().connectionAddress());
     }
 }
