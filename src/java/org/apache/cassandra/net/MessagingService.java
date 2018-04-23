@@ -234,17 +234,17 @@ public final class MessagingService implements MessagingServiceMBean
                 return DatabaseDescriptor.getRangeRpcTimeout();
             }
         },
+        PING,
         // UNUSED verbs were used as padding for backward/forward compatability before 4.0,
         // but it wasn't quite as bullet/future proof as needed. We still need to keep these entries
-        // around, at least for a major reve or two (post-4.0). see CASSANDRA-13993 for a discussion.
+        // around, at least for a major rev or two (post-4.0). see CASSANDRA-13993 for a discussion.
         // For now, though, the UNUSED are legacy values (placeholders, basically) that should only be used
         // for correctly adding VERBs that need to be emergency additions to 3.0/3.11.
         // We can reclaim them (their id's, to be correct) in future versions, if desired, though.
-        UNUSED_1,
         UNUSED_2,
         UNUSED_3,
         UNUSED_4,
-        PING,
+        UNUSED_5,
         ;
         // remember to add new verbs at the end, since we serialize by ordinal
 
