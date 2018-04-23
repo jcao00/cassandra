@@ -49,7 +49,7 @@ public class MessageInTest
     @Test
     public void read_NoSerializer() throws IOException
     {
-        read(MessagingService.Verb.UNUSED_1);
+        read(MessagingService.Verb.UNUSED_5);
     }
 
     private void read(MessagingService.Verb verb) throws IOException

@@ -28,8 +28,10 @@ import java.util.Set;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.gms.EndpointState;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gms.HeartBeatState;
@@ -41,6 +43,12 @@ public class StartupClusterConnectivityCheckerTest
 {
     private StartupClusterConnectivityChecker connectivityChecker;
     private Set<InetAddressAndPort> peers;
+
+    @BeforeClass
+    public static void before()
+    {
+        DatabaseDescriptor.daemonInitialization();
+    }
 
     @Before
     public void setUp() throws UnknownHostException

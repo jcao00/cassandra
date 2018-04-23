@@ -360,9 +360,10 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.SNAPSHOT, Stage.MISC);
         put(Verb.ECHO, Stage.GOSSIP);
 
-        put(Verb.UNUSED_1, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_2, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_3, Stage.INTERNAL_RESPONSE);
+        put(Verb.UNUSED_4, Stage.INTERNAL_RESPONSE);
+        put(Verb.UNUSED_5, Stage.INTERNAL_RESPONSE);
 
         put(Verb.PING, Stage.READ);
     }};
@@ -403,7 +404,6 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.HINT, HintMessage.serializer);
         put(Verb.BATCH_STORE, Batch.serializer);
         put(Verb.BATCH_REMOVE, UUIDSerializer.serializer);
-
         put(Verb.PING, PingMessage.serializer);
     }};
 
