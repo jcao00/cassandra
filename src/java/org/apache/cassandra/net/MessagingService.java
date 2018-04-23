@@ -254,8 +254,13 @@ public final class MessagingService implements MessagingServiceMBean
                 return DatabaseDescriptor.getRangeRpcTimeout();
             }
         },
-
-        PING,
+        PING
+        {
+            public long getTimeout()
+            {
+                return DatabaseDescriptor.getPingTimeout();
+            }
+        },
 
         // UNUSED verbs were used as padding for backward/forward compatability before 4.0,
         // but it wasn't quite as bullet/future proof as needed. We still need to keep these entries
@@ -263,10 +268,10 @@ public final class MessagingService implements MessagingServiceMBean
         // For now, though, the UNUSED are legacy values (placeholders, basically) that should only be used
         // for correctly adding VERBs that need to be emergency additions to 3.0/3.11.
         // We can reclaim them (their id's, to be correct) in future versions, if desireed, though.
-        UNUSED_1,
         UNUSED_2,
         UNUSED_3,
         UNUSED_4,
+        UNUSED_5,
         ;
         // add new verbs after the existing verbs, since we serialize by ordinal.
 
@@ -299,9 +304,9 @@ public final class MessagingService implements MessagingServiceMBean
         {
             for (Verb v : values())
             {
-                if (idToVerbMap.containsKey(v.getId()))
-                    throw new IllegalArgumentException("cannot have two verbs that map to the same id: " + v + " and " + v.getId());
-                idToVerbMap.put(v.getId(), v);
+                Verb existing = idToVerbMap.put(v.getId(), v);
+                if (existing != null)
+                    throw new IllegalArgumentException("cannot have two verbs that map to the same id: " + v + " and " + existing);
             }
         }
 
