@@ -63,6 +63,7 @@ import org.apache.cassandra.net.BackPressureStrategy;
 import org.apache.cassandra.net.RateBasedBackPressure;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.security.SSLFactory;
+import org.apache.cassandra.security.SSLSessionValidator;
 import org.apache.cassandra.service.CacheService.CacheType;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -130,6 +131,9 @@ public class DatabaseDescriptor
 
     private static final boolean disableSTCSInL0 = Boolean.getBoolean(Config.PROPERTY_PREFIX + "disable_stcs_in_l0");
     private static final boolean unsafeSystem = Boolean.getBoolean(Config.PROPERTY_PREFIX + "unsafesystem");
+
+    private static SSLSessionValidator nativeProtocolValidator;
+    private static SSLSessionValidator internodeMessagingValidator;
 
     public static void daemonInitialization() throws ConfigurationException
     {
@@ -698,6 +702,7 @@ public class DatabaseDescriptor
         {
             throw new ConfigurationException("Encryption must be enabled in client_encryption_options for native_transport_port_ssl", false);
         }
+        nativeProtocolValidator = deriveCertValidator(conf.client_encryption_options);
 
         // internode messaging encryption options
         if (conf.server_encryption_options.internode_encryption != InternodeEncryption.none
@@ -706,6 +711,7 @@ public class DatabaseDescriptor
             throw new ConfigurationException("Encryption must be enabled in server_encryption_options when using peer-to-peer security. " +
                                             "server_encryption_options.internode_encryption = " + conf.server_encryption_options.internode_encryption, false);
         }
+        internodeMessagingValidator = deriveCertValidator(conf.server_encryption_options);
 
         if (conf.max_value_size_in_mb <= 0)
             throw new ConfigurationException("max_value_size_in_mb must be positive", false);
@@ -751,6 +757,29 @@ public class DatabaseDescriptor
             throw new ConfigurationException("otc_coalescing_enough_coalesced_messages must be positive", false);
 
         validateMaxConcurrentAutoUpgradeTasksConf(conf.max_concurrent_automatic_sstable_upgrades);
+    }
+
+    private static SSLSessionValidator deriveCertValidator(EncryptionOptions encryption_options)
+    {
+        SSLSessionValidator validator = null;
+        if (encryption_options.enabled && encryption_options.custom_cert_validator != null)
+        {
+            try
+            {
+                Class<?> clazz = Class.forName(encryption_options.custom_cert_validator.class_name);
+                if (!SSLSessionValidator.class.isAssignableFrom(clazz))
+                    throw new ConfigurationException(encryption_options.custom_cert_validator.class_name +
+                                                     " is not an instance of " + SSLSessionValidator.class.getCanonicalName(), false);
+
+                Constructor<?> ctor = clazz.getConstructor(Map.class);
+                validator = (SSLSessionValidator) ctor.newInstance(encryption_options.custom_cert_validator.parameters);
+            }
+            catch (Exception e)
+            {
+                throw new ConfigurationException("failed to create custom cert validator", e);
+            }
+        }
+        return validator;
     }
 
     private static String storagedirFor(String type)
@@ -2589,5 +2618,15 @@ public class DatabaseDescriptor
     public static void setAuditLoggingOptions(AuditLogOptions auditLoggingOptions)
     {
         conf.audit_logging_options = auditLoggingOptions;
+    }
+
+    public static SSLSessionValidator getNativeProtocolValidator()
+    {
+        return nativeProtocolValidator;
+    }
+
+    public static SSLSessionValidator getInternodeMessagingValidator()
+    {
+        return internodeMessagingValidator;
     }
 }

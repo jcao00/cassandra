@@ -34,6 +34,7 @@ public class EncryptionOptions
     public boolean require_endpoint_verification = false;
     public boolean enabled = false;
     public boolean optional = false;
+    public ParameterizedClass custom_cert_validator;
 
     public EncryptionOptions()
     {   }
@@ -55,6 +56,7 @@ public class EncryptionOptions
         require_endpoint_verification = options.require_endpoint_verification;
         enabled = options.enabled;
         optional = options.optional;
+        custom_cert_validator = options.custom_cert_validator;
     }
 
     @Override

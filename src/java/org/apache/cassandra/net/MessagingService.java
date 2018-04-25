@@ -776,7 +776,7 @@ public final class MessagingService implements MessagingServiceMBean
 
             InetAddressAndPort localAddr = InetAddressAndPort.getByAddressOverrideDefaults(localEp.address, DatabaseDescriptor.getSSLStoragePort());
             ChannelGroup channelGroup = new DefaultChannelGroup("LegacyEncryptedInternodeMessagingGroup", NettyFactory.executorForChannelGroups());
-            InboundInitializer initializer = new InboundInitializer(authenticator, legacyEncOptions, channelGroup);
+            InboundInitializer initializer = NettyFactory.instance.new InboundInitializer(authenticator, legacyEncOptions, channelGroup);
             Channel encryptedChannel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
             serverChannels.add(new ServerChannel(encryptedChannel, channelGroup, localAddr, ServerChannel.SecurityLevel.REQUIRED));
         }
@@ -785,7 +785,7 @@ public final class MessagingService implements MessagingServiceMBean
         assert localEp.port == DatabaseDescriptor.getStoragePort() : String.format("Local endpoint port %d doesn't match YAML configured port %d%n", localEp.port, DatabaseDescriptor.getStoragePort());
         InetAddressAndPort localAddr = InetAddressAndPort.getByAddressOverrideDefaults(localEp.address, DatabaseDescriptor.getStoragePort());
         ChannelGroup channelGroup = new DefaultChannelGroup("InternodeMessagingGroup", NettyFactory.executorForChannelGroups());
-        InboundInitializer initializer = new InboundInitializer(authenticator, serverEncryptionOptions, channelGroup);
+        InboundInitializer initializer = NettyFactory.instance.new InboundInitializer(authenticator, serverEncryptionOptions, channelGroup);
         Channel channel = NettyFactory.instance.createInboundChannel(localAddr, initializer, receiveBufferSize);
         ServerChannel.SecurityLevel securityLevel = !serverEncryptionOptions.enabled ? ServerChannel.SecurityLevel.NONE :
                                                     serverEncryptionOptions.optional ? ServerChannel.SecurityLevel.OPTIONAL :

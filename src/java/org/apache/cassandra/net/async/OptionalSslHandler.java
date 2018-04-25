@@ -62,6 +62,11 @@ public class OptionalSslHandler extends ByteToMessageDecoder
             // Connection use no TLS/SSL encryption, just remove the detection handler and continue without
             // SslHandler in the pipeline.
             ctx.pipeline().remove(this);
+
+            // in case there is a custom cert handler, remove it as well since we'er not doing ssl on this channel
+            CustomSslValidationHandler customSslValidationHandler = ctx.pipeline().get(CustomSslValidationHandler.class);
+            if (customSslValidationHandler != null)
+                ctx.pipeline().remove(customSslValidationHandler);
         }
     }
 }

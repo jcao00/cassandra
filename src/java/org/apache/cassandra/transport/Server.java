@@ -53,12 +53,17 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.net.async.CustomSslValidationHandler;
+import org.apache.cassandra.net.async.NettyFactory;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaChangeListener;
 import org.apache.cassandra.security.SSLFactory;
+import org.apache.cassandra.security.SSLSessionValidator;
 import org.apache.cassandra.service.*;
 import org.apache.cassandra.transport.messages.EventMessage;
 import org.apache.cassandra.utils.FBUtilities;
+
+import static org.apache.cassandra.net.async.NettyFactory.CUSTOM_CERT_VALIDATOR_HANDLER_NAME;
 
 public class Server implements CassandraDaemon.Server
 {
@@ -428,7 +433,7 @@ public class Server implements CassandraDaemon.Server
 
     protected abstract static class AbstractSecureIntializer extends Initializer
     {
-        private final EncryptionOptions encryptionOptions;
+        final EncryptionOptions encryptionOptions;
 
         protected AbstractSecureIntializer(Server server, EncryptionOptions encryptionOptions)
         {
@@ -444,7 +449,7 @@ public class Server implements CassandraDaemon.Server
         }
     }
 
-    private static class OptionalSecureInitializer extends AbstractSecureIntializer
+    private class OptionalSecureInitializer extends AbstractSecureIntializer
     {
         public OptionalSecureInitializer(Server server, EncryptionOptions encryptionOptions)
         {
@@ -454,7 +459,14 @@ public class Server implements CassandraDaemon.Server
         protected void initChannel(final Channel channel) throws Exception
         {
             super.initChannel(channel);
-            channel.pipeline().addFirst("sslDetectionHandler", new ByteToMessageDecoder()
+
+            // put the custom validator first at the head of the pipeline, as we'll add the actual ssl handler next
+            // (which will be at the head of the pipeline)
+            SSLSessionValidator validator = DatabaseDescriptor.getNativeProtocolValidator();
+            if (validator != null)
+                channel.pipeline().addFirst(NettyFactory.instance.certValidationGroup, CUSTOM_CERT_VALIDATOR_HANDLER_NAME, new CustomSslValidationHandler(validator));
+
+            channel.pipeline().addFirst(workerGroup, "sslDetectionHandler", new ByteToMessageDecoder()
             {
                 @Override
                 protected void decode(ChannelHandlerContext channelHandlerContext, ByteBuf byteBuf, List<Object> list) throws Exception
@@ -477,13 +489,18 @@ public class Server implements CassandraDaemon.Server
                         // Connection use no TLS/SSL encryption, just remove the detection handler and continue without
                         // SslHandler in the pipeline.
                         channelHandlerContext.pipeline().remove(this);
+
+                        // in case there is a custom cert handler, remove it as well since we'er not doing ssl on this channel
+                        CustomSslValidationHandler customSslValidationHandler = channelHandlerContext.pipeline().get(CustomSslValidationHandler.class);
+                        if (customSslValidationHandler != null)
+                            channelHandlerContext.pipeline().remove(customSslValidationHandler);
                     }
                 }
             });
         }
     }
 
-    private static class SecureInitializer extends AbstractSecureIntializer
+    private class SecureInitializer extends AbstractSecureIntializer
     {
         public SecureInitializer(Server server, EncryptionOptions encryptionOptions)
         {
@@ -492,9 +509,16 @@ public class Server implements CassandraDaemon.Server
 
         protected void initChannel(Channel channel) throws Exception
         {
-            SslHandler sslHandler = createSslHandler(channel.alloc());
             super.initChannel(channel);
-            channel.pipeline().addFirst("ssl", sslHandler);
+
+            // put the custom validator first at the head of the pipeline, as we'll add the actual ssl handler next
+            // (which will be at the head of the pipeline)
+            SSLSessionValidator validator = DatabaseDescriptor.getNativeProtocolValidator();
+            if (validator != null)
+                channel.pipeline().addFirst(NettyFactory.instance.certValidationGroup, CUSTOM_CERT_VALIDATOR_HANDLER_NAME, new CustomSslValidationHandler(validator));
+
+            SslHandler sslHandler = createSslHandler(channel.alloc());
+            channel.pipeline().addFirst(workerGroup, "ssl", sslHandler);
         }
     }
 

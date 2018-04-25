@@ -18,7 +18,6 @@
 
 package org.apache.cassandra.net.async;
 
-import java.net.InetSocketAddress;
 import java.util.Optional;
 
 import com.google.common.net.InetAddresses;
@@ -43,7 +42,6 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 import org.apache.cassandra.auth.AllowAllInternodeAuthenticator;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.locator.InetAddressAndPort;
@@ -98,7 +96,7 @@ public class NettyFactoryTest
 
     private Channel createServerChannel(boolean useEpoll)
     {
-        InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null, channelGroup);
+        InboundInitializer inboundInitializer = factory.new InboundInitializer(AUTHENTICATOR, null, channelGroup);
         factory = new NettyFactory(useEpoll);
 
         try
@@ -129,7 +127,7 @@ public class NettyFactoryTest
         Channel inboundChannel = null;
         try
         {
-            InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null, channelGroup);
+            InboundInitializer inboundInitializer = factory.new InboundInitializer(AUTHENTICATOR, null, channelGroup);
             inboundChannel = NettyFactory.instance.createInboundChannel(LOCAL_ADDR, inboundInitializer, receiveBufferSize);
             NettyFactory.instance.createInboundChannel(LOCAL_ADDR, inboundInitializer, receiveBufferSize);
         }
@@ -144,7 +142,7 @@ public class NettyFactoryTest
     public void createServerChannel_UnbindableAddress()
     {
         InetAddressAndPort addr = InetAddressAndPort.getByAddressOverrideDefaults(InetAddresses.forString("1.1.1.1"), 9876);
-        InboundInitializer inboundInitializer = new InboundInitializer(AUTHENTICATOR, null, channelGroup);
+        InboundInitializer inboundInitializer = factory.new InboundInitializer(AUTHENTICATOR, null, channelGroup);
         NettyFactory.instance.createInboundChannel(addr, inboundInitializer, receiveBufferSize);
     }
 
@@ -270,7 +268,7 @@ public class NettyFactoryTest
     {
         ServerEncryptionOptions encryptionOptions = new ServerEncryptionOptions();
         encryptionOptions.enabled = false;
-        InboundInitializer initializer = new InboundInitializer(AUTHENTICATOR, encryptionOptions, channelGroup);
+        InboundInitializer initializer = factory.new InboundInitializer(AUTHENTICATOR, encryptionOptions, channelGroup);
         NioSocketChannel channel = new NioSocketChannel();
         initializer.initChannel(channel);
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
@@ -296,7 +294,7 @@ public class NettyFactoryTest
         ServerEncryptionOptions encryptionOptions = encOptions();
         encryptionOptions.enabled = true;
         encryptionOptions.optional = false;
-        InboundInitializer initializer = new InboundInitializer(AUTHENTICATOR, encryptionOptions, channelGroup);
+        InboundInitializer initializer = factory.new InboundInitializer(AUTHENTICATOR, encryptionOptions, channelGroup);
         NioSocketChannel channel = new NioSocketChannel();
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
         initializer.initChannel(channel);
@@ -310,7 +308,7 @@ public class NettyFactoryTest
         ServerEncryptionOptions encryptionOptions = encOptions();
         encryptionOptions.enabled = true;
         encryptionOptions.optional = true;
-        InboundInitializer initializer = new InboundInitializer(AUTHENTICATOR, encryptionOptions, channelGroup);
+        InboundInitializer initializer = factory.new InboundInitializer(AUTHENTICATOR, encryptionOptions, channelGroup);
         NioSocketChannel channel = new NioSocketChannel();
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
         initializer.initChannel(channel);
@@ -327,7 +325,7 @@ public class NettyFactoryTest
                                                                   .encryptionOptions(encOptions())
                                                                   .protocolVersion(MessagingService.current_version)
                                                                   .build();
-        OutboundInitializer outboundInitializer = new OutboundInitializer(params);
+        OutboundInitializer outboundInitializer = factory.new OutboundInitializer(params);
         NioSocketChannel channel = new NioSocketChannel();
         Assert.assertNull(channel.pipeline().get(SslHandler.class));
         outboundInitializer.initChannel(channel);

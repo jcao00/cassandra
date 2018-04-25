@@ -1,6 +1,5 @@
 package org.apache.cassandra.net.async;
 
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.zip.Checksum;
 
@@ -51,6 +50,7 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.security.SSLFactory;
+import org.apache.cassandra.security.SSLSessionValidator;
 import org.apache.cassandra.service.NativeTransportService;
 import org.apache.cassandra.utils.ChecksumType;
 import org.apache.cassandra.utils.CoalescingStrategies;
@@ -75,6 +75,7 @@ public final class NettyFactory
 
     static final String SSL_CHANNEL_HANDLER_NAME = "ssl";
     private static final String OPTIONAL_SSL_CHANNEL_HANDLER_NAME = "optionalSsl";
+    public static final String CUSTOM_CERT_VALIDATOR_HANDLER_NAME = "customCertValidator";
     static final String INBOUND_COMPRESSOR_HANDLER_NAME = "inboundCompressor";
     static final String OUTBOUND_COMPRESSOR_HANDLER_NAME = "outboundCompressor";
     private static final String HANDSHAKE_HANDLER_NAME = "handshakeHandler";
@@ -115,6 +116,13 @@ public final class NettyFactory
     public final EventLoopGroup streamingGroup;
 
     /**
+     * A distinct event loop group for handling the SSL certificate validation. As users/operators can have {@link SSLSessionValidator}
+     * instances do nearly anything, only execute those on this group to prevent backing up or blocking threads in
+     * other event loop groups.
+     */
+    public final EventLoopGroup certValidationGroup;
+
+    /**
      * Constructor that allows modifying the {@link NettyFactory#useEpoll} for testing purposes. Otherwise, use the
      * default {@link #instance}.
      */
@@ -127,6 +135,12 @@ public final class NettyFactory
         inboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyInbound-Thread", false);
         outboundGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "MessagingService-NettyOutbound-Thread", true);
         streamingGroup = getEventLoopGroup(useEpoll, FBUtilities.getAvailableProcessors(), "Streaming-Netty-Thread", false);
+
+        // only instantiate the event loop group for cert validation if the operator has configured it
+        if (DatabaseDescriptor.getInternodeAuthenticator() != null || DatabaseDescriptor.getNativeProtocolValidator() != null)
+            certValidationGroup = getEventLoopGroup(useEpoll, Math.max(FBUtilities.getAvailableProcessors(), 2), "Certificate-Validation-Netty-Thread", false);
+        else
+            certValidationGroup = null;
     }
 
     /**
@@ -259,7 +273,7 @@ public final class NettyFactory
         }
     }
 
-    public static class InboundInitializer extends ChannelInitializer<SocketChannel>
+    public class InboundInitializer extends ChannelInitializer<SocketChannel>
     {
         private final IInternodeAuthenticator authenticator;
         private final ServerEncryptionOptions encryptionOptions;
@@ -281,9 +295,15 @@ public final class NettyFactory
             // order of handlers: ssl -> logger -> handshakeHandler
             if (encryptionOptions.enabled)
             {
+                // put the custom validator first at the head of the pipeline, as we'll add the actual ssl handler next
+                // (which will be at the head of the pipeline)
+                SSLSessionValidator validator = DatabaseDescriptor.getInternodeMessagingValidator();
+                if (validator != null)
+                    pipeline.addFirst(certValidationGroup, CUSTOM_CERT_VALIDATOR_HANDLER_NAME, new CustomSslValidationHandler(validator));
+
                 if (encryptionOptions.optional)
                 {
-                    pipeline.addFirst(OPTIONAL_SSL_CHANNEL_HANDLER_NAME, new OptionalSslHandler(encryptionOptions));
+                    pipeline.addFirst(inboundGroup, OPTIONAL_SSL_CHANNEL_HANDLER_NAME, new OptionalSslHandler(encryptionOptions));
                 }
                 else
                 {
@@ -291,14 +311,14 @@ public final class NettyFactory
                     InetSocketAddress peer = encryptionOptions.require_endpoint_verification ? channel.remoteAddress() : null;
                     SslHandler sslHandler = newSslHandler(channel, sslContext, peer);
                     logger.trace("creating inbound netty SslContext: context={}, engine={}", sslContext.getClass().getName(), sslHandler.engine().getClass().getName());
-                    pipeline.addFirst(SSL_CHANNEL_HANDLER_NAME, sslHandler);
+                    pipeline.addFirst(inboundGroup, SSL_CHANNEL_HANDLER_NAME, sslHandler);
                 }
             }
 
             if (WIRETRACE)
                 pipeline.addLast("logger", new LoggingHandler(LogLevel.INFO));
 
-            channel.pipeline().addLast(HANDSHAKE_HANDLER_NAME, new InboundHandshakeHandler(authenticator));
+            channel.pipeline().addLast(inboundGroup, HANDSHAKE_HANDLER_NAME, new InboundHandshakeHandler(authenticator));
         }
     }
 
@@ -339,7 +359,7 @@ public final class NettyFactory
         return bootstrap;
     }
 
-    public static class OutboundInitializer extends ChannelInitializer<SocketChannel>
+    public class OutboundInitializer extends ChannelInitializer<SocketChannel>
     {
         private final OutboundConnectionParams params;
 
@@ -352,7 +372,7 @@ public final class NettyFactory
          * {@inheritDoc}
          *
          * To determine if we should enable TLS, we only need to check if {@link #params#encryptionOptions} is set.
-         * The logic for figuring that out is is located in {@link MessagingService#getMessagingConnection(InetAddress)};
+         * The logic for figuring that out is is located in {@link MessagingService#getMessagingConnection(InetAddressAndPort)};
          */
         public void initChannel(SocketChannel channel) throws Exception
         {

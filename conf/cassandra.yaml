@@ -969,6 +969,7 @@ server_encryption_options:
     keystore_password: cassandra
     truststore: conf/.truststore
     truststore_password: cassandra
+    # custom_cert_validator: 
     # More advanced defaults below:
     # protocol: TLS
     # store_type: JKS
@@ -984,6 +985,7 @@ client_encryption_options:
     keystore: conf/.keystore
     keystore_password: cassandra
     # require_client_auth: false
+    # custom_cert_validator:
     # Set trustore and truststore_password if require_client_auth is true
     # truststore: conf/.truststore
     # truststore_password: cassandra
