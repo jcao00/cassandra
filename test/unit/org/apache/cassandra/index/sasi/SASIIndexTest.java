@@ -75,7 +75,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.Uninterruptibles;
 
-import junit.framework.Assert;
+import org.junit.Assert;
 
 import org.junit.*;
 
