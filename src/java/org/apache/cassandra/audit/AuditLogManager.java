@@ -23,7 +23,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
@@ -187,19 +186,12 @@ public class AuditLogManager
 
     /**
      * Logs Batch queries to both FQL and standard audit logger.
-     * @param batchTypeName Type of the batch (Logged, Unlogged etc.,)
-     * @param queryOrIdList Query or PreparedStatementId list
-     * @param values Bind values of prepared statements
-     * @param prepared List of prepared statements
-     * @param options Query options
-     * @param state Query state
-     * @param queryStartNanoTime  Query start time in Nanoseconds
      */
-    public void logBatch(String batchTypeName, List<Object> queryOrIdList, List<List<ByteBuffer>> values, List<ParsedStatement.Prepared> prepared, QueryOptions options, QueryState state, long queryStartNanoTime)
+    public void logBatch(String batchTypeName, List<Object> queryOrIdList, List<List<ByteBuffer>> values, List<ParsedStatement.Prepared> prepared, QueryOptions options, QueryState state, long queryStartTimeMillis)
     {
         if (isAuditingEnabled())
         {
-            List<AuditLogEntry> entries = buildEntriesForBatch(queryOrIdList, prepared, state, options, queryStartNanoTime);
+            List<AuditLogEntry> entries = buildEntriesForBatch(queryOrIdList, prepared, state, options, queryStartTimeMillis);
             for (AuditLogEntry auditLogEntry : entries)
             {
                 logAuditLoggerEntry(auditLogEntry);
@@ -213,16 +205,15 @@ public class AuditLogManager
             {
                 queryStrings.add(prepStatment.rawCQLStatement);
             }
-            fullQueryLogger.logBatch(batchTypeName, queryStrings, values, options, queryStartNanoTime);
+            fullQueryLogger.logBatch(batchTypeName, queryStrings, values, options, queryStartTimeMillis);
         }
     }
 
-    private static List<AuditLogEntry> buildEntriesForBatch(List<Object> queryOrIdList, List<ParsedStatement.Prepared> prepared, QueryState state, QueryOptions options, long queryStartNanoTime)
+    private static List<AuditLogEntry> buildEntriesForBatch(List<Object> queryOrIdList, List<ParsedStatement.Prepared> prepared, QueryState state, QueryOptions options, long queryStartTimeMillis)
     {
         List<AuditLogEntry> auditLogEntries = new ArrayList<>(queryOrIdList.size() + 1);
         UUID batchId = UUID.randomUUID();
         String queryString = String.format("BatchId:[%s] - BATCH of [%d] statements", batchId, queryOrIdList.size());
-        long queryStartTimeMillis = TimeUnit.NANOSECONDS.toMillis(queryStartNanoTime);
         AuditLogEntry entry = new AuditLogEntry.Builder(state.getClientState())
                               .setOperation(queryString)
                               .setOptions(options)

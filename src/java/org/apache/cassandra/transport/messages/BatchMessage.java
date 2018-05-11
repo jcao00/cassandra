@@ -225,11 +225,12 @@ public class BatchMessage extends Message.Request
             // (and no value would be really correct, so we prefer passing a clearly wrong one).
             BatchStatement batch = new BatchStatement(-1, batchType, statements, Attributes.none());
 
+            long fqlTime = isLoggingEnabled ? System.currentTimeMillis() : 0;
             Message.Response response = handler.processBatch(batch, state, batchOptions, getCustomPayload(), queryStartNanoTime);
 
             if (isLoggingEnabled)
             {
-                auditLogManager.logBatch(batchType.name(), queryOrIdList, values, prepared, options, state, queryStartNanoTime);
+                auditLogManager.logBatch(batchType.name(), queryOrIdList, values, prepared, options, state, fqlTime);
             }
 
 
