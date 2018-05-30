@@ -214,12 +214,12 @@ public class MessageOut<T>
                               ? payloadSerializedSize
                               : (int) serializer.serializedSize(payload, version);
 
-            out.writeVInt(payloadSize);
+            out.writeUnsignedVInt(payloadSize);
             serializer.serialize(payload, out, version);
         }
         else
         {
-            out.writeVInt(0);
+            out.writeUnsignedVInt(0);
         }
     }
 
