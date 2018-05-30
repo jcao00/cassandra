@@ -22,12 +22,13 @@ import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.primitives.Ints;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,6 +43,7 @@ import org.apache.cassandra.net.CompactEndpointSerializationHelper;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.ParameterType;
+import org.apache.cassandra.utils.vint.VIntCoding;
 
 /**
  * Parses out individual messages from the incoming buffers. Each message, both header and payload, is incrementally built up
@@ -70,7 +72,8 @@ class MessageInHandler extends ByteToMessageDecoder
         @Deprecated
         READ_IP_ADDRESS,
 
-        READ_SECOND_CHUNK,
+        READ_VERB,
+        READ_PARAMETERS_SIZE,
         READ_PARAMETERS_DATA,
         READ_PAYLOAD_SIZE,
         READ_PAYLOAD
@@ -83,9 +86,14 @@ class MessageInHandler extends ByteToMessageDecoder
     static final int FIRST_SECTION_BYTE_COUNT = 12;
 
     /**
-     * The byte count for the verb id and the number of parameters.
-     */
-    private static final int SECOND_SECTION_BYTE_COUNT = 8;
+//     * The byte count for the verb id and the number of parameters.
+//     */
+//    private static final int SECOND_SECTION_BYTE_COUNT_PRE_40 = 8;
+//
+//    /**
+//     * The byte count for the verb id and the number of parameters.
+//     */
+//    private static final int SECOND_SECTION_BYTE_COUNT_40 = 5;
 
     private final InetAddressAndPort peer;
     private final int messagingVersion;
@@ -157,33 +165,70 @@ class MessageInHandler extends ByteToMessageDecoder
                             messageHeader.from = CompactEndpointSerializationHelper.instance.deserialize(inputPlus, messagingVersion);
                             readableBytes -= serializedAddrSize;
                         }
-                        state = State.READ_SECOND_CHUNK;
+                        state = State.READ_VERB;
                         // fall-through
-                    case READ_SECOND_CHUNK:
-                        if (readableBytes < SECOND_SECTION_BYTE_COUNT)
+                    case READ_VERB:
+                        if (readableBytes < 4)
                             return;
                         messageHeader.verb = MessagingService.Verb.fromId(in.readInt());
-                        int paramCount = in.readInt();
-                        messageHeader.parameterCount = paramCount;
-                        messageHeader.parameters = paramCount == 0 ? Collections.emptyMap() : new HashMap<>();
+                        state = State.READ_PARAMETERS_SIZE;
+                        readableBytes -= 4;
+                        // fall-through
+                    case READ_PARAMETERS_SIZE:
+                        if (messagingVersion >= MessagingService.VERSION_40)
+                        {
+                            long length = VIntCoding.readUnsignedVInt(in);
+                            if (length < 0)
+                                return;
+                            messageHeader.parameterLength = (int) length;
+                            readableBytes = in.readableBytes();
+                        }
+                        else
+                        {
+                            if (readableBytes < 4)
+                                return;
+                            messageHeader.parameterLength = in.readInt();
+                            readableBytes -= 4;
+                        }
+                        messageHeader.parameters = messageHeader.parameterLength == 0 ? Collections.emptyMap() : new EnumMap<>(ParameterType.class);
                         state = State.READ_PARAMETERS_DATA;
-                        readableBytes -= SECOND_SECTION_BYTE_COUNT;
                         // fall-through
                     case READ_PARAMETERS_DATA:
-                        if (messageHeader.parameterCount > 0)
+                        if (messageHeader.parameterLength > 0)
                         {
-                            if (!readParameters(in, inputPlus, messageHeader.parameterCount, messageHeader.parameters))
-                                return;
-                            readableBytes = in.readableBytes(); // we read an indeterminate number of bytes for the headers, so just ask the buffer again
+                            if (messagingVersion >= MessagingService.VERSION_40)
+                            {
+                                if (readableBytes < messageHeader.parameterLength)
+                                    return;
+                                readParameters(in, inputPlus, messageHeader.parameterLength, messageHeader.parameters);
+                                readableBytes -= messageHeader.parameterLength;
+                            }
+                            else
+                            {
+                                if (!readParametersPre40(in, inputPlus, messageHeader.parameterLength, messageHeader.parameters))
+                                    return;
+                                readableBytes = in.readableBytes(); // we read an indeterminate number of bytes for the headers, so just ask the buffer again
+                            }
                         }
                         state = State.READ_PAYLOAD_SIZE;
                         // fall-through
                     case READ_PAYLOAD_SIZE:
-                        if (readableBytes < 4)
-                            return;
-                        messageHeader.payloadSize = in.readInt();
+                        if (messagingVersion >= MessagingService.VERSION_40)
+                        {
+                            long length = VIntCoding.readUnsignedVInt(in);
+                            if (length < 0)
+                                return;
+                            messageHeader.payloadSize = (int) length;
+                            readableBytes = in.readableBytes();
+                        }
+                        else
+                        {
+                            if (readableBytes < 4)
+                                return;
+                            messageHeader.payloadSize = in.readInt();
+                            readableBytes -= 4;
+                        }
                         state = State.READ_PAYLOAD;
-                        readableBytes -= 4;
                         // fall-through
                     case READ_PAYLOAD:
                         if (readableBytes < messageHeader.payloadSize)
@@ -211,10 +256,28 @@ class MessageInHandler extends ByteToMessageDecoder
         }
     }
 
+    private void readParameters(ByteBuf in, ByteBufDataInputPlus inputPlus, int parameterLength, Map<ParameterType, Object> parameters) throws IOException
+    {
+        // makes the assumption we have all the bytes required to read the headers
+        final int endIndex = in.readerIndex() + parameterLength;
+        while (in.readerIndex() < endIndex)
+        {
+            String key = DataInputStream.readUTF(inputPlus);
+            ParameterType parameterType = ParameterType.byName.get(key);
+            long valueLength =  VIntCoding.readUnsignedVInt(in);
+            byte[] value = new byte[Ints.checkedCast(valueLength)];
+            in.readBytes(value);
+            try (DataInputBuffer buffer = new DataInputBuffer(value))
+            {
+                parameters.put(parameterType, parameterType.serializer.deserialize(buffer, messagingVersion));
+            }
+        }
+    }
+
     /**
      * @return <code>true</code> if all the parameters have been read from the {@link ByteBuf}; else, <code>false</code>.
      */
-    private boolean readParameters(ByteBuf in, ByteBufDataInputPlus inputPlus, int parameterCount, Map<ParameterType, Object> parameters) throws IOException
+    private boolean readParametersPre40(ByteBuf in, ByteBufDataInputPlus inputPlus, int parameterCount, Map<ParameterType, Object> parameters) throws IOException
     {
         // makes the assumption that map.size() is a constant time function (HashMap.size() is)
         while (parameters.size() < parameterCount)
@@ -299,7 +362,7 @@ class MessageInHandler extends ByteToMessageDecoder
     }
 
     @Override
-    public void channelInactive(ChannelHandlerContext ctx) throws Exception
+    public void channelInactive(ChannelHandlerContext ctx)
     {
         logger.debug("received channel closed message for peer {} on local addr {}", ctx.channel().remoteAddress(), ctx.channel().localAddress());
         ctx.fireChannelInactive();
@@ -326,8 +389,10 @@ class MessageInHandler extends ByteToMessageDecoder
         Map<ParameterType, Object> parameters = Collections.emptyMap();
 
         /**
-         * Total number of incoming parameters.
+         * Length of the parameter data. If the message's version is {@link MessagingService#VERSION_40} or higher,
+         * this value is the total number of header bytes; else, for legacy messaging, this is the number of
+         * key/value entries in the header.
          */
-        int parameterCount;
+        int parameterLength;
     }
 }
