@@ -40,8 +40,8 @@ import static org.apache.cassandra.tracing.Tracing.isTracing;
 
 /**
  * Each message contains a header with several fixed fields, an optional key-value parameters section, and then
- * the message payload itself. Note: the IP address in the header may be either IPv4 (4 bytes) or IPv6 (16 bytes).
- * The diagram below shows the IPv4 address for brevity.
+ * the message payload itself. Note: the legacy IP address (pre-4.0) in the header may be either IPv4 (4 bytes)
+ * or IPv6 (16 bytes). The diagram below shows the IPv4 address for brevity.
  *
  * <pre>
  * {@code
@@ -185,7 +185,8 @@ public class MessageOut<T>
 
     public void serialize(DataOutputPlus out, int version) throws IOException
     {
-        CompactEndpointSerializationHelper.instance.serialize(from, out, version);
+        if (version < MessagingService.VERSION_40)
+            CompactEndpointSerializationHelper.instance.serialize(from, out, version);
 
         out.writeInt(verb.getId());
         assert parameters.size() % PARAMETER_TUPLE_SIZE == 0;
@@ -218,7 +219,8 @@ public class MessageOut<T>
     private MessageOutSizes calculateSerializedSize(int version)
     {
         long size = 0;
-        size += CompactEndpointSerializationHelper.instance.serializedSize(from, version);
+        if (version < MessagingService.VERSION_40)
+            size += CompactEndpointSerializationHelper.instance.serializedSize(from, version);
 
         size += TypeSizes.sizeof(verb.getId());
         size += TypeSizes.sizeof(parameters.size());

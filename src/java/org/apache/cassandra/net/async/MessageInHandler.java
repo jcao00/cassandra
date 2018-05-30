@@ -63,7 +63,13 @@ class MessageInHandler extends ByteToMessageDecoder
     private enum State
     {
         READ_FIRST_CHUNK,
+
+        /**
+         * Required for versions less than {@link MessagingService#VERSION_40}.
+         */
+        @Deprecated
         READ_IP_ADDRESS,
+
         READ_SECOND_CHUNK,
         READ_PARAMETERS_DATA,
         READ_PAYLOAD_SIZE,
@@ -136,15 +142,22 @@ class MessageInHandler extends ByteToMessageDecoder
                         readableBytes -= FIRST_SECTION_BYTE_COUNT;
                         // fall-through
                     case READ_IP_ADDRESS:
-                        // unfortunately, this assumes knowledge of how CompactEndpointSerializationHelper serializes data (the first byte is the size).
-                        // first, check that we can actually read the size byte, then check if we can read that number of bytes.
-                        // the "+ 1" is to make sure we have the size byte in addition to the serialized IP addr count of bytes in the buffer.
-                        int serializedAddrSize;
-                        if (readableBytes < 1 || readableBytes < (serializedAddrSize = in.getByte(in.readerIndex()) + 1))
-                            return;
-                        messageHeader.from = CompactEndpointSerializationHelper.instance.deserialize(inputPlus, messagingVersion);
+                        if (messagingVersion >= MessagingService.VERSION_40)
+                        {
+                            messageHeader.from = peer;
+                        }
+                        else
+                        {
+                            // unfortunately, this assumes knowledge of how CompactEndpointSerializationHelper serializes data (the first byte is the size).
+                            // first, check that we can actually read the size byte, then check if we can read that number of bytes.
+                            // the "+ 1" is to make sure we have the size byte in addition to the serialized IP addr count of bytes in the buffer.
+                            int serializedAddrSize = 0;
+                            if (readableBytes < 1 || readableBytes < (serializedAddrSize = in.getByte(in.readerIndex()) + 1))
+                                return;
+                            messageHeader.from = CompactEndpointSerializationHelper.instance.deserialize(inputPlus, messagingVersion);
+                            readableBytes -= serializedAddrSize;
+                        }
                         state = State.READ_SECOND_CHUNK;
-                        readableBytes -= serializedAddrSize;
                         // fall-through
                     case READ_SECOND_CHUNK:
                         if (readableBytes < SECOND_SECTION_BYTE_COUNT)
