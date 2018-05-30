@@ -53,7 +53,7 @@ import org.apache.cassandra.utils.vint.VIntCoding;
  * behavior across {@link #decode(ChannelHandlerContext, ByteBuf, List)} invocations. That way we don't have to maintain
  * the not-fully consumed {@link ByteBuf}s.
  */
-class MessageInHandler extends ByteToMessageDecoder
+public class MessageInHandler extends ByteToMessageDecoder
 {
     public static final Logger logger = LoggerFactory.getLogger(MessageInHandler.class);
 
@@ -112,7 +112,7 @@ class MessageInHandler extends ByteToMessageDecoder
         this (peer, messagingVersion, MESSAGING_SERVICE_CONSUMER);
     }
 
-    MessageInHandler(InetAddressAndPort peer, int messagingVersion, BiConsumer<MessageIn, Integer> messageConsumer)
+    public MessageInHandler(InetAddressAndPort peer, int messagingVersion, BiConsumer<MessageIn, Integer> messageConsumer)
     {
         this.peer = peer;
         this.messagingVersion = messagingVersion;
