@@ -85,16 +85,6 @@ public class MessageInHandler extends ByteToMessageDecoder
     @VisibleForTesting
     static final int FIRST_SECTION_BYTE_COUNT = 12;
 
-    /**
-//     * The byte count for the verb id and the number of parameters.
-//     */
-//    private static final int SECOND_SECTION_BYTE_COUNT_PRE_40 = 8;
-//
-//    /**
-//     * The byte count for the verb id and the number of parameters.
-//     */
-//    private static final int SECOND_SECTION_BYTE_COUNT_40 = 5;
-
     private final InetAddressAndPort peer;
     private final int messagingVersion;
 

@@ -284,15 +284,20 @@ public class MessageOut<T>
         }
         else
         {
-            try (DataOutputBuffer buf = new DataOutputBuffer())
+            // calculate the params size independently, as we write that before the actual params block
+            int paramsSize = 0;
+            for (int ii = 0; ii < parameters.size(); ii += PARAMETER_TUPLE_SIZE)
             {
-                serializeParams(buf, version);
-                size += VIntCoding.computeUnsignedVIntSize(buf.getLength());
+                ParameterType type = (ParameterType)parameters.get(ii + PARAMETER_TUPLE_TYPE_OFFSET);
+                paramsSize += TypeSizes.sizeof(type.key());
+                IVersionedSerializer serializer = type.serializer;
+                Object parameter = parameters.get(ii + PARAMETER_TUPLE_PARAMETER_OFFSET);
+                int valueLength = Ints.checkedCast(serializer.serializedSize(parameter, version));
+                paramsSize += VIntCoding.computeUnsignedVIntSize(valueLength);//length prefix
+                paramsSize += valueLength;
             }
-            catch (IOException e)
-            {
-                throw new IOError(e);
-            }
+            size += VIntCoding.computeUnsignedVIntSize(paramsSize);
+            size += paramsSize;
         }
 
         long payloadSize = payload == null ? 0 : serializer.serializedSize(payload, version);
