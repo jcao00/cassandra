@@ -187,7 +187,6 @@ public abstract class AbstractCommitLogService
 
                 // sleep any time we have left before the next one is due
                 long now = clock.nanoTime();
-                totalSyncDuration += now - pollStarted;
                 if (flushToDisk)
                     maybeLogFlushLag(pollStarted, now);
 
@@ -215,6 +214,9 @@ public abstract class AbstractCommitLogService
          */
         private void maybeLogFlushLag(long pollStarted, long now)
         {
+            long flushDuration = now - pollStarted;
+            totalSyncDuration += flushDuration;
+
             // this is the timestamp by which we should have completed the flush
             long maxFlushTimestamp = pollStarted + syncIntervalNanos;
             if (maxFlushTimestamp > now)
@@ -224,8 +226,9 @@ public abstract class AbstractCommitLogService
             if (firstLagAt == 0)
             {
                 firstLagAt = now;
-                totalSyncDuration = syncExceededIntervalBy = lagCount = 0;
+                syncExceededIntervalBy = lagCount = 0;
                 syncCount = 1;
+                totalSyncDuration = flushDuration;
             }
             syncExceededIntervalBy += now - maxFlushTimestamp;
             lagCount++;
