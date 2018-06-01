@@ -165,13 +165,15 @@ public abstract class AbstractCommitLogService
 
                 // sync and signal
                 long pollStarted = clock.currentTimeMillis();
-                if (lastSyncedAt + syncIntervalMillis <= pollStarted || shutdown || syncRequested)
+                boolean flushToDisk = lastSyncedAt + syncIntervalMillis <= pollStarted || shutdown || syncRequested;
+                if (flushToDisk)
                 {
                     // in this branch, we want to flush the commit log to disk
                     syncRequested = false;
                     commitLog.sync(shutdown, true);
                     lastSyncedAt = pollStarted;
                     syncComplete.signalAll();
+                    syncCount++;
                 }
                 else
                 {
@@ -181,39 +183,15 @@ public abstract class AbstractCommitLogService
 
                 // sleep any time we have left before the next one is due
                 long now = clock.currentTimeMillis();
-                long sleep = pollStarted + markerIntervalMillis - now;
-                if (sleep < 0)
-                {
-                    // if we have lagged noticeably, update our lag counter
-                    if (firstLagAt == 0)
-                    {
-                        firstLagAt = now;
-                        totalSyncDuration = syncExceededIntervalBy = syncCount = lagCount = 0;
-                    }
-                    syncExceededIntervalBy -= sleep;
-                    lagCount++;
-                }
-                syncCount++;
+                if (flushToDisk)
+                    maybeLogFlushLag(pollStarted, now);
                 totalSyncDuration += now - pollStarted;
-
-                if (firstLagAt > 0)
-                {
-                    //Only reset the lag tracking if it actually logged this time
-                    boolean logged = NoSpamLogger.log(
-                    logger,
-                    NoSpamLogger.Level.WARN,
-                    5,
-                    TimeUnit.MINUTES,
-                    "Out of {} commit log syncs over the past {}s with average duration of {}ms, {} have exceeded the configured commit interval by an average of {}ms",
-                    syncCount, (now - firstLagAt) / 1000, String.format("%.2f", (double) totalSyncDuration / syncCount), lagCount, String.format("%.2f", (double) syncExceededIntervalBy / lagCount));
-                    if (logged)
-                        firstLagAt = 0;
-                }
 
                 if (!run)
                     return false;
 
                 // if we have lagged this round, we probably have work to do already so we don't sleep
+                long sleep = pollStarted + markerIntervalMillis - now;
                 if (sleep < 0)
                     return true;
 
@@ -243,6 +221,40 @@ public abstract class AbstractCommitLogService
                 }
             }
             return true;
+        }
+
+        /**
+         * Add a log entry whenever the time to flush the commit log to disk exceeds {@link #syncIntervalMillis}.
+         */
+        private void maybeLogFlushLag(long pollStarted, long now)
+        {
+            long excessTimeToFlush = pollStarted + syncIntervalMillis - now;
+            if (excessTimeToFlush >= 0)
+                return;
+
+            // if we have lagged noticeably, update our lag counter
+            if (firstLagAt == 0)
+            {
+                firstLagAt = now;
+                totalSyncDuration = syncExceededIntervalBy = lagCount = 0;
+                syncCount = 1;
+            }
+            syncExceededIntervalBy -= excessTimeToFlush;
+            lagCount++;
+
+            if (firstLagAt > 0)
+            {
+                //Only reset the lag tracking if it actually logged this time
+                boolean logged = NoSpamLogger.log(
+                logger,
+                NoSpamLogger.Level.WARN,
+                5,
+                TimeUnit.MINUTES,
+                "Out of {} commit log syncs over the past {}s with average duration of {}ms, {} have exceeded the configured commit interval by an average of {}ms",
+                syncCount, (now - firstLagAt) / 1000, String.format("%.2f", (double) totalSyncDuration / syncCount), lagCount, String.format("%.2f", (double) syncExceededIntervalBy / lagCount));
+                if (logged)
+                    firstLagAt = 0;
+            }
         }
     }
 
