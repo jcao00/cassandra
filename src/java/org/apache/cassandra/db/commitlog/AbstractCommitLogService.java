@@ -229,7 +229,6 @@ public abstract class AbstractCommitLogService
             }
             syncExceededIntervalBy += now - maxFlushTimestamp;
             lagCount++;
-            totalSyncDuration += now - pollStarted;
 
             if (firstLagAt > 0)
             {
