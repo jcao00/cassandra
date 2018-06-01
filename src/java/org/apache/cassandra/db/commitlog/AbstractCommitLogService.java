@@ -225,13 +225,13 @@ public abstract class AbstractCommitLogService
         /**
          * Add a log entry whenever the time to flush the commit log to disk exceeds {@link #syncIntervalMillis}.
          */
-        private void maybeLogFlushLag(long pollStarted, long now)
+        boolean maybeLogFlushLag(long pollStarted, long now)
         {
             long flushDuration = now - pollStarted;
             totalSyncDuration += flushDuration;
             long excessTimeToFlush = syncIntervalMillis - flushDuration;
             if (excessTimeToFlush >= 0)
-                return;
+                return false;
 
             // if we have lagged noticeably, update our lag counter
             if (firstLagAt == 0)
@@ -257,6 +257,12 @@ public abstract class AbstractCommitLogService
                 if (logged)
                     firstLagAt = 0;
             }
+            return true;
+        }
+
+        long getTotalSyncDuration()
+        {
+            return totalSyncDuration;
         }
     }
 
