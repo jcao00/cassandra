@@ -185,7 +185,6 @@ public abstract class AbstractCommitLogService
                 long now = clock.currentTimeMillis();
                 if (flushToDisk)
                     maybeLogFlushLag(pollStarted, now);
-                totalSyncDuration += now - pollStarted;
 
                 if (!run)
                     return false;
@@ -228,7 +227,9 @@ public abstract class AbstractCommitLogService
          */
         private void maybeLogFlushLag(long pollStarted, long now)
         {
-            long excessTimeToFlush = pollStarted + syncIntervalMillis - now;
+            long flushDuration = now - pollStarted;
+            totalSyncDuration += flushDuration;
+            long excessTimeToFlush = syncIntervalMillis - flushDuration;
             if (excessTimeToFlush >= 0)
                 return;
 
@@ -236,8 +237,9 @@ public abstract class AbstractCommitLogService
             if (firstLagAt == 0)
             {
                 firstLagAt = now;
-                totalSyncDuration = syncExceededIntervalBy = lagCount = 0;
+                syncExceededIntervalBy = lagCount = 0;
                 syncCount = 1;
+                totalSyncDuration = flushDuration;
             }
             syncExceededIntervalBy -= excessTimeToFlush;
             lagCount++;
