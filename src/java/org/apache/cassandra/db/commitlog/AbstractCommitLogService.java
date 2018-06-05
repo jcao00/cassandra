@@ -29,6 +29,8 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.google.common.annotations.VisibleForTesting;
+
 public abstract class AbstractCommitLogService
 {
     /**
@@ -181,7 +183,6 @@ public abstract class AbstractCommitLogService
                     commitLog.sync(false, false);
                 }
 
-                // sleep any time we have left before the next one is due
                 long now = clock.currentTimeMillis();
                 if (flushToDisk)
                     maybeLogFlushLag(pollStarted, now);
@@ -225,6 +226,7 @@ public abstract class AbstractCommitLogService
         /**
          * Add a log entry whenever the time to flush the commit log to disk exceeds {@link #syncIntervalMillis}.
          */
+        @VisibleForTesting
         boolean maybeLogFlushLag(long pollStarted, long now)
         {
             long flushDuration = now - pollStarted;
@@ -260,6 +262,7 @@ public abstract class AbstractCommitLogService
             return true;
         }
 
+        @VisibleForTesting
         long getTotalSyncDuration()
         {
             return totalSyncDuration;
