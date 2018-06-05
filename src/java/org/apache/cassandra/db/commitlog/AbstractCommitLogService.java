@@ -231,8 +231,10 @@ public abstract class AbstractCommitLogService
         {
             long flushDuration = now - pollStarted;
             totalSyncDuration += flushDuration;
-            long excessTimeToFlush = syncIntervalMillis - flushDuration;
-            if (excessTimeToFlush >= 0)
+
+            // this is the timestamp by which we should have completed the flush
+            long maxFlushTimestamp = pollStarted + syncIntervalMillis;
+            if (maxFlushTimestamp > now)
                 return false;
 
             // if we have lagged noticeably, update our lag counter
@@ -243,7 +245,7 @@ public abstract class AbstractCommitLogService
                 syncCount = 1;
                 totalSyncDuration = flushDuration;
             }
-            syncExceededIntervalBy -= excessTimeToFlush;
+            syncExceededIntervalBy += now - maxFlushTimestamp;
             lagCount++;
 
             if (firstLagAt > 0)
