@@ -82,6 +82,11 @@ public class VIntCoding
         return retval;
     }
 
+    /**
+     * Note this method is the same as {@link #readUnsignedVInt(DataInput)},
+     * except that we do *not* block if there are not enough bytes in the buffer
+     * to reconstruct the value.
+     */
     public static long readUnsignedVInt(ByteBuf input)
     {
         if (!input.isReadable())

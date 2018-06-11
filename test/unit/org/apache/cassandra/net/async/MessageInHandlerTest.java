@@ -22,7 +22,6 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
@@ -51,7 +50,6 @@ import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.ParameterType;
-import org.apache.cassandra.net.async.MessageInHandler.MessageHeader;
 import org.apache.cassandra.utils.NanoTimeToCurrentTimeMillis;
 import org.apache.cassandra.utils.UUIDGen;
 
@@ -80,9 +78,9 @@ public class MessageInHandlerTest
     }
 
     @Parameters()
-    public static Collection<Object[]> generateData()
+    public static Iterable<?> generateData()
     {
-        return Arrays.asList(new Integer[][]{ {MessagingService.VERSION_30} , {MessagingService.VERSION_40} });
+        return Arrays.asList(MessagingService.VERSION_30, MessagingService.VERSION_40);
     }
 
     @After
@@ -92,6 +90,14 @@ public class MessageInHandlerTest
             buf.release();
     }
 
+    private BaseMessageInHandler getHandler(InetAddressAndPort addr, int messagingVersion, BiConsumer<MessageIn, Integer> messageConsumer)
+    {
+        if (messagingVersion >= MessagingService.VERSION_40)
+            return new MessageInHandler(addr, messagingVersion, messageConsumer);
+        return new MessageInHandlerPre40(addr, messagingVersion, messageConsumer);
+    }
+
+
     @Test
     public void decode_BadMagic()
     {
@@ -100,7 +106,7 @@ public class MessageInHandlerTest
         buf.writeInt(-1);
         buf.writerIndex(len);
 
-        MessageInHandler handler = new MessageInHandler(addr, messagingVersion, null);
+        BaseMessageInHandler handler = getHandler(addr, messagingVersion, null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
         Assert.assertTrue(channel.isOpen());
         channel.writeInbound(buf);
@@ -137,7 +143,7 @@ public class MessageInHandlerTest
         serialize(msgOut);
 
         MessageInWrapper wrapper = new MessageInWrapper();
-        MessageInHandler handler = new MessageInHandler(addr, messagingVersion, wrapper.messageConsumer);
+        BaseMessageInHandler handler = getHandler(addr, messagingVersion, wrapper.messageConsumer);
         List<Object> out = new ArrayList<>();
         handler.decode(null, buf, out);
 
@@ -175,13 +181,13 @@ public class MessageInHandlerTest
         buf.writerIndex(originalWriterIndex - 6);
 
         MessageInWrapper wrapper = new MessageInWrapper();
-        MessageInHandler handler = new MessageInHandler(addr, messagingVersion, wrapper.messageConsumer);
+        BaseMessageInHandler handler = getHandler(addr, messagingVersion, wrapper.messageConsumer);
         List<Object> out = new ArrayList<>();
         handler.decode(null, buf, out);
 
         Assert.assertNull(wrapper.messageIn);
 
-        MessageHeader header = handler.getMessageHeader();
+        BaseMessageInHandler.MessageHeader header = handler.getMessageHeader();
         Assert.assertEquals(MSG_ID, header.messageId);
         Assert.assertEquals(msgOut.verb, header.verb);
         Assert.assertEquals(msgOut.from, header.from);
@@ -198,7 +204,7 @@ public class MessageInHandlerTest
     public void canReadNextParam_HappyPath() throws IOException
     {
         buildParamBufPre40(13);
-        Assert.assertTrue(MessageInHandler.canReadNextParam(buf));
+        Assert.assertTrue(MessageInHandlerPre40.canReadNextParam(buf));
     }
 
     @Test
@@ -206,7 +212,7 @@ public class MessageInHandlerTest
     {
         buildParamBufPre40(13);
         buf.writerIndex(1);
-        Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
+        Assert.assertFalse(MessageInHandlerPre40.canReadNextParam(buf));
     }
 
     @Test
@@ -214,7 +220,7 @@ public class MessageInHandlerTest
     {
         buildParamBufPre40(13);
         buf.writerIndex(5);
-        Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
+        Assert.assertFalse(MessageInHandlerPre40.canReadNextParam(buf));
     }
 
     @Test
@@ -222,7 +228,7 @@ public class MessageInHandlerTest
     {
         buildParamBufPre40(13);
         buf.writerIndex(buf.writerIndex() - 13 - 2);
-        Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
+        Assert.assertFalse(MessageInHandlerPre40.canReadNextParam(buf));
     }
 
     @Test
@@ -230,7 +236,7 @@ public class MessageInHandlerTest
     {
         buildParamBufPre40(13);
         buf.writerIndex(buf.writerIndex() - 2);
-        Assert.assertFalse(MessageInHandler.canReadNextParam(buf));
+        Assert.assertFalse(MessageInHandlerPre40.canReadNextParam(buf));
     }
 
     private void buildParamBufPre40(int valueLength) throws IOException
@@ -249,7 +255,7 @@ public class MessageInHandlerTest
     @Test
     public void exceptionHandled()
     {
-        MessageInHandler handler = new MessageInHandler(addr, messagingVersion, null);
+        BaseMessageInHandler handler = getHandler(addr, messagingVersion, null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
         Assert.assertTrue(channel.isOpen());
         handler.exceptionCaught(channel.pipeline().firstContext(), new EOFException());

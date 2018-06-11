@@ -21,7 +21,6 @@ package org.apache.cassandra.net.async;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Optional;
 
 import com.google.common.net.InetAddresses;
@@ -78,11 +77,10 @@ public class HandshakeHandlersTest
     }
 
     @Parameters()
-    public static Collection<Object[]> generateData()
+    public static Iterable<?> generateData()
     {
-        return Arrays.asList(new Integer[][]{ { MessagingService.VERSION_30} , { MessagingService.VERSION_40} });
+        return Arrays.asList(MessagingService.VERSION_30, MessagingService.VERSION_40);
     }
-
 
     @Test
     public void handshake_HappyPath()

@@ -19,7 +19,6 @@
 package org.apache.cassandra.test.microbench;
 
 import java.io.IOException;
-import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
@@ -40,8 +39,10 @@ import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.ParameterType;
+import org.apache.cassandra.net.async.BaseMessageInHandler;
 import org.apache.cassandra.net.async.ByteBufDataOutputPlus;
 import org.apache.cassandra.net.async.MessageInHandler;
+import org.apache.cassandra.net.async.MessageInHandlerPre40;
 import org.apache.cassandra.utils.NanoTimeToCurrentTimeMillis;
 import org.apache.cassandra.utils.UUIDGen;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -55,7 +56,6 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
-import org.openjdk.jmh.infra.Blackhole;
 
 import static org.apache.cassandra.net.async.OutboundConnectionIdentifier.ConnectionType.SMALL_MESSAGE;
 
@@ -72,8 +72,8 @@ public class MessageOutBench
 
     private MessageOut msgOut;
     private ByteBuf buf;
-    MessageInHandler handler40;
-    MessageInHandler handlerPre40;
+    BaseMessageInHandler handler40;
+    BaseMessageInHandler handlerPre40;
 
     @Setup
     public void setup()
@@ -95,7 +95,7 @@ public class MessageOutBench
         buf = Unpooled.buffer(1024, 1024); // 1k should be enough for everybody!
 
         handler40 = new MessageInHandler(addr, MessagingService.VERSION_40, messageConsumer);
-        handlerPre40 = new MessageInHandler(addr, MessagingService.VERSION_30, messageConsumer);
+        handlerPre40 = new MessageInHandlerPre40(addr, MessagingService.VERSION_30, messageConsumer);
     }
 
     @Benchmark
@@ -104,7 +104,7 @@ public class MessageOutBench
         return serialize(MessagingService.VERSION_40, handler40);
     }
 
-    private int serialize(int messagingVersion, MessageInHandler handler) throws IOException
+    private int serialize(int messagingVersion, BaseMessageInHandler handler) throws IOException
     {
         buf.resetReaderIndex();
         buf.resetWriterIndex();
