@@ -52,17 +52,18 @@ import java.util.stream.Collectors;
 
 public class CASQuery extends SchemaStatement
 {
-    final QueryUtil.ArgSelect argSelect;
     private List<Integer> keysIndex;
     private Map<Integer, Integer> casConditionArgFreqMap;
     private PreparedStatement casReadConditionStatement;
     private StringBuilder casReadConditionQuery;
 
-    public CASQuery(Timer timer, StressSettings settings, PartitionGenerator generator, SeedManager seedManager, PreparedStatement statement, ConsistencyLevel cl, QueryUtil.ArgSelect argSelect, final String tableName)
+    public CASQuery(Timer timer, StressSettings settings, PartitionGenerator generator, SeedManager seedManager, PreparedStatement statement, ConsistencyLevel cl, ArgSelect argSelect, final String tableName)
     {
-        super(timer, settings, new DataSpec(generator, seedManager, new DistributionFixed(1), settings.insert.rowPopulationRatio.get(), argSelect == QueryUtil.ArgSelect.MULTIROW ? statement.getVariables().size() : 1), statement,
-                statement.getVariables().asList().stream().map(d -> d.getName()).collect(Collectors.toList()), cl);
-        this.argSelect = argSelect;
+        super(timer, settings, new DataSpec(generator, seedManager, new DistributionFixed(1), settings.insert.rowPopulationRatio.get(), argSelect == SchemaStatement.ArgSelect.MULTIROW ? statement.getVariables().size() : 1), statement,
+              statement.getVariables().asList().stream().map(d -> d.getName()).collect(Collectors.toList()), cl);
+
+        if (argSelect != SchemaStatement.ArgSelect.SAMEROW)
+            throw new IllegalArgumentException("CAS is supported only for type 'samerow'");
 
         prepareCASDynamicConditionsReadStatement(tableName);
     }
@@ -77,11 +78,10 @@ public class CASQuery extends SchemaStatement
         }
         catch (RecognitionException e)
         {
-            e.printStackTrace();
-            throw new IllegalArgumentException("could not parse update query:" + statement.getQueryString());
+            throw new IllegalArgumentException("could not parse update query:" + statement.getQueryString(), e);
         }
-        final List<Pair<ColumnMetadata.Raw, ColumnCondition.Raw>> casConditionList = modificationStatement.getConditions();
 
+        final List<Pair<ColumnMetadata.Raw, ColumnCondition.Raw>> casConditionList = modificationStatement.getConditions();
         List<Integer> casConditionIndex = new ArrayList<>();
 
         boolean first = true;
@@ -134,6 +134,57 @@ public class CASQuery extends SchemaStatement
         }
     }
 
+    private class JavaDriverRun extends Runner
+    {
+        final JavaDriverClient client;
+
+        private JavaDriverRun(JavaDriverClient client)
+        {
+            this.client = client;
+            casReadConditionStatement = client.prepare(casReadConditionQuery.toString());
+        }
+
+        public boolean run()
+        {
+            ResultSet rs = client.getSession().execute(bind(client));
+            rowCount = rs.all().size();
+            partitionCount = Math.min(1, rowCount);
+            return true;
+        }
+    }
+
+    @Override
+    public void run(JavaDriverClient client) throws IOException
+    {
+        timeWithRetry(new JavaDriverRun(client));
+    }
+
+    private BoundStatement bind(JavaDriverClient client)
+    {
+        final Object keys[] = new Object[keysIndex.size()];
+        final Row row = getPartitions().get(0).next();
+
+        for (int i = 0; i < keysIndex.size(); i++)
+        {
+            keys[i] = row.get(keysIndex.get(i));
+        }
+
+        //get current db values for all the coluns which are part of dynamic conditions
+        ResultSet rs = client.getSession().execute(casReadConditionStatement.bind(keys));
+        final Object casDbValues[] = new Object[casConditionArgFreqMap.size()];
+
+        final com.datastax.driver.core.Row casDbValue = rs.one();
+        if (casDbValue != null)
+        {
+            for (int i = 0; i < casConditionArgFreqMap.size(); i++)
+            {
+                casDbValues[i] = casDbValue.getObject(i);
+            }
+        }
+        //now bind db values for dynamic conditions in actual CAS update operation
+        return prepare(row, casDbValues, casConditionArgFreqMap);
+    }
+
     private BoundStatement prepare(final Row row, final Object[] casDbValues, final Map<Integer, Integer> casConditionIndexOccurences)
     {
         final Map<Integer, Integer> localMapping = new HashMap<>(casConditionIndexOccurences);
@@ -174,73 +225,5 @@ public class CASQuery extends SchemaStatement
             }
         }
         return statement.bind(bindBuffer);
-    }
-
-    private class JavaDriverRun extends Runner
-    {
-        final JavaDriverClient client;
-
-        private JavaDriverRun(JavaDriverClient client)
-        {
-            this.client = client;
-        }
-
-        public boolean run() throws Exception
-        {
-            ResultSet rs = client.getSession().execute(bind(client));
-            rowCount = rs.all().size();
-            partitionCount = Math.min(1, rowCount);
-            return true;
-        }
-    }
-
-    @Override
-    public void run(JavaDriverClient client) throws IOException
-    {
-        timeWithRetry(new JavaDriverRun(client));
-    }
-
-    BoundStatement bind(JavaDriverClient client)
-    {
-        //get current db values for all the coluns which are part of dynamic conditions
-        ResultSet rs;
-        if (argSelect != QueryUtil.ArgSelect.SAMEROW)
-        {
-            throw new IllegalArgumentException("CAS is supported only for type 'samerow'");
-        }
-        if (casReadConditionStatement == null)
-        {
-            synchronized (org.apache.cassandra.stress.operations.userdefined.CASQuery.this)
-            {
-                if (casReadConditionStatement == null)
-                {
-                    casReadConditionStatement = client.prepare(casReadConditionQuery.toString());
-                }
-            }
-        }
-        final Object keys[] = new Object[keysIndex.size()];
-        final Row row = getPartitions().get(0).next();
-
-        for (int i = 0; i < keysIndex.size(); i++)
-        {
-            keys[i] = row.get(keysIndex.get(i));
-        }
-
-        //get cas columns' current value from db
-        rs = client.getSession().execute(casReadConditionStatement.bind(keys));
-        final Object casDbValues[] = new Object[casConditionArgFreqMap.size()];
-
-        final com.datastax.driver.core.Row casDbValue = rs.one();
-        if (casDbValue != null)
-        {
-            for (int i = 0; i < casConditionArgFreqMap.size(); i++)
-            {
-                casDbValues[i] = casDbValue.getObject(i);
-            }
-        }
-        //now bind db values for dynamic conditions in actual CAS update operation
-        return prepare(row,
-                casDbValues,
-                casConditionArgFreqMap);
     }
 }

@@ -705,11 +705,6 @@ public abstract class ColumnCondition
 
         private final Operator operator;
 
-        public Term.Raw getValue()
-        {
-            return value;
-        }
-
         private Raw(Term.Raw value, List<Term.Raw> inValues, AbstractMarker.INRaw inMarker, Term.Raw collectionElement,
                     FieldIdentifier udtField, Operator op)
         {
@@ -854,7 +849,12 @@ public abstract class ColumnCondition
                 throw invalidRequest("Slice conditions ( %s ) are not supported on durations", operator);
             }
         }
-        
+
+        public Term.Raw getValue()
+        {
+            return value;
+        }
+
         @Override
         public String toString()
         {

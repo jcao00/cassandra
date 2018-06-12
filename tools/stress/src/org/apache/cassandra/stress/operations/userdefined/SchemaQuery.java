@@ -36,13 +36,13 @@ import org.apache.cassandra.stress.util.JavaDriverClient;
 
 public class SchemaQuery extends SchemaStatement
 {
-    final QueryUtil.ArgSelect argSelect;
+    final ArgSelect argSelect;
     final Object[][] randomBuffer;
     final Random random = new Random();
 
-    public SchemaQuery(Timer timer, StressSettings settings, PartitionGenerator generator, SeedManager seedManager, PreparedStatement statement, ConsistencyLevel cl, QueryUtil.ArgSelect argSelect)
+    public SchemaQuery(Timer timer, StressSettings settings, PartitionGenerator generator, SeedManager seedManager, PreparedStatement statement, ConsistencyLevel cl, ArgSelect argSelect)
     {
-        super(timer, settings, new DataSpec(generator, seedManager, new DistributionFixed(1), settings.insert.rowPopulationRatio.get(), argSelect == QueryUtil.ArgSelect.MULTIROW ? statement.getVariables().size() : 1), statement,
+        super(timer, settings, new DataSpec(generator, seedManager, new DistributionFixed(1), settings.insert.rowPopulationRatio.get(), argSelect == SchemaStatement.ArgSelect.MULTIROW ? statement.getVariables().size() : 1), statement,
               statement.getVariables().asList().stream().map(d -> d.getName()).collect(Collectors.toList()), cl);
         this.argSelect = argSelect;
         randomBuffer = new Object[argumentIndex.length][argumentIndex.length];
