@@ -41,7 +41,6 @@ import org.antlr.runtime.RecognitionException;
 import org.apache.cassandra.cql3.CQLFragmentParser;
 import org.apache.cassandra.cql3.CqlParser;
 import org.apache.cassandra.cql3.QueryProcessor;
-import org.apache.cassandra.cql3.conditions.ColumnCondition;
 import org.apache.cassandra.cql3.statements.CreateTableStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.exceptions.RequestValidationException;
@@ -59,7 +58,6 @@ import org.apache.cassandra.stress.report.Timer;
 import org.apache.cassandra.stress.settings.*;
 import org.apache.cassandra.stress.util.JavaDriverClient;
 import org.apache.cassandra.stress.util.ResultLogger;
-import org.apache.cassandra.utils.Pair;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.Constructor;
 import org.yaml.snakeyaml.error.YAMLException;
@@ -397,40 +395,29 @@ public class StressProfile implements Serializable
         if (statement == null)
             return false;
 
-        if (statement.getQueryString().toUpperCase().startsWith("UPDATE"))
-        {
-            ModificationStatement.Parsed modificationStatement;
-            try
-            {
-                modificationStatement = CQLFragmentParser.parseAnyUnhandled(CqlParser::updateStatement,
-                                                                            statement.getQueryString());
-            }
-            catch (RecognitionException e)
-            {
-                throw new IllegalArgumentException("could not parse update query:" + statement.getQueryString(), e);
-            }
+        if (!statement.getQueryString().toUpperCase().startsWith("UPDATE"))
+            return false;
 
-            List<Pair<ColumnMetadata.Raw, ColumnCondition.Raw>> casConditionList = modificationStatement.getConditions();
-            /*
-             * here we differentiate between static vs dynamic conditions:
-             *  - static condition example: if col1 = NULL
-             *  - dynamic condition example: if col1 = ?
-             *  for static condition we don't have to replace value, no extra work involved.
-             *  for dynamic condition we have to read existing db value and then
-             *  use current db values during the update
-             */
-            for (Pair<ColumnMetadata.Raw, ColumnCondition.Raw> condition : casConditionList)
-            {
-                /*
-                 * if condition is like a = 10 then condition.right has string value "NULL"
-                 * if condition is like a = ? then condition.right has string value "?"
-                 * so compare value "NULL" and see if this is a static condition or dynamic
-                 */
-                if (condition.right.getValue().getText().equals("?"))
-                    return true;
-            }
+        ModificationStatement.Parsed modificationStatement;
+        try
+        {
+            modificationStatement = CQLFragmentParser.parseAnyUnhandled(CqlParser::updateStatement,
+                                                                        statement.getQueryString());
         }
-        return false;
+        catch (RecognitionException e)
+        {
+            throw new IllegalArgumentException("could not parse update query:" + statement.getQueryString(), e);
+        }
+
+        /*
+         * here we differentiate between static vs dynamic conditions:
+         *  - static condition example: if col1 = NULL
+         *  - dynamic condition example: if col1 = ?
+         *  for static condition we don't have to replace value, no extra work involved.
+         *  for dynamic condition we have to read existing db value and then
+         *  use current db values during the update.
+         */
+        return modificationStatement.getConditions().stream().anyMatch(condition -> condition.right.getValue().getText().equals("?"));
     }
 
     public Operation getBulkReadQueries(String name, Timer timer, StressSettings settings, TokenRangeIterator tokenRangeIterator, boolean isWarmup)

@@ -21,6 +21,7 @@ package org.apache.cassandra.stress.operations.userdefined;
  */
 
 import com.datastax.driver.core.BoundStatement;
+import com.datastax.driver.core.ColumnDefinitions;
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.LocalDate;
 import com.datastax.driver.core.PreparedStatement;
@@ -50,26 +51,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
 public class CASQuery extends SchemaStatement
 {
-    private List<Integer> keysIndex;
-    private Map<Integer, Integer> casConditionArgFreqMap;
+    private final ImmutableList<Integer> keysIndex;
+    private final ImmutableMap<Integer, Integer> casConditionArgFreqMap;
+    private final String readQuery;
+
     private PreparedStatement casReadConditionStatement;
-    private StringBuilder casReadConditionQuery;
 
     public CASQuery(Timer timer, StressSettings settings, PartitionGenerator generator, SeedManager seedManager, PreparedStatement statement, ConsistencyLevel cl, ArgSelect argSelect, final String tableName)
     {
         super(timer, settings, new DataSpec(generator, seedManager, new DistributionFixed(1), settings.insert.rowPopulationRatio.get(), argSelect == SchemaStatement.ArgSelect.MULTIROW ? statement.getVariables().size() : 1), statement,
-              statement.getVariables().asList().stream().map(d -> d.getName()).collect(Collectors.toList()), cl);
+              statement.getVariables().asList().stream().map(ColumnDefinitions.Definition::getName).collect(Collectors.toList()), cl);
 
         if (argSelect != SchemaStatement.ArgSelect.SAMEROW)
             throw new IllegalArgumentException("CAS is supported only for type 'samerow'");
 
-        prepareCASDynamicConditionsReadStatement(tableName);
-    }
-
-    private void prepareCASDynamicConditionsReadStatement(String tableName)
-    {
         ModificationStatement.Parsed modificationStatement;
         try
         {
@@ -85,7 +85,7 @@ public class CASQuery extends SchemaStatement
         List<Integer> casConditionIndex = new ArrayList<>();
 
         boolean first = true;
-        casReadConditionQuery = new StringBuilder();
+        StringBuilder casReadConditionQuery = new StringBuilder();
         casReadConditionQuery.append("SELECT ");
         for (final Pair<ColumnMetadata.Raw, ColumnCondition.Raw> condition : casConditionList)
         {
@@ -102,36 +102,34 @@ public class CASQuery extends SchemaStatement
             casConditionIndex.add(getDataSpecification().partitionGenerator.indexOf(condition.left.rawText()));
             first = false;
         }
-        casReadConditionQuery.append(" FROM ");
-        casReadConditionQuery.append(tableName);
-        casReadConditionQuery.append(" WHERE ");
+        casReadConditionQuery.append(" FROM ").append(tableName).append(" WHERE ");
 
         first = true;
-        keysIndex = new ArrayList<>();
+        ImmutableList.Builder<Integer> keysBuilder = ImmutableList.builder();
         for (final Generator key : getDataSpecification().partitionGenerator.getPartitionKey())
         {
             if (!first)
             {
                 casReadConditionQuery.append(" AND ");
             }
-            casReadConditionQuery.append(key.name);
-            casReadConditionQuery.append(" = ? ");
-            keysIndex.add(getDataSpecification().partitionGenerator.indexOf(key.name));
+            casReadConditionQuery.append(key.name).append(" = ? ");
+            keysBuilder.add(getDataSpecification().partitionGenerator.indexOf(key.name));
             first = false;
         }
         for (final Generator clusteringKey : getDataSpecification().partitionGenerator.getClusteringComponents())
         {
-            casReadConditionQuery.append(" AND ");
-            casReadConditionQuery.append(clusteringKey.name);
-            casReadConditionQuery.append(" = ? ");
-            keysIndex.add(getDataSpecification().partitionGenerator.indexOf(clusteringKey.name));
+            casReadConditionQuery.append(" AND ").append(clusteringKey.name).append(" = ? ");
+            keysBuilder.add(getDataSpecification().partitionGenerator.indexOf(clusteringKey.name));
         }
+        keysIndex = keysBuilder.build();
+        readQuery = casReadConditionQuery.toString();
 
-        casConditionArgFreqMap = new HashMap<>();
+        ImmutableMap.Builder<Integer, Integer> builder = ImmutableMap.builderWithExpectedSize(casConditionIndex.size());
         for (final Integer oneConditionIndex : casConditionIndex)
         {
-            casConditionArgFreqMap.put(oneConditionIndex, Math.toIntExact(Arrays.stream(argumentIndex).filter((x) -> x == oneConditionIndex).count()));
+            builder.put(oneConditionIndex, Math.toIntExact(Arrays.stream(argumentIndex).filter((x) -> x == oneConditionIndex).count()));
         }
+        casConditionArgFreqMap = builder.build();
     }
 
     private class JavaDriverRun extends Runner
@@ -141,7 +139,7 @@ public class CASQuery extends SchemaStatement
         private JavaDriverRun(JavaDriverClient client)
         {
             this.client = client;
-            casReadConditionStatement = client.prepare(casReadConditionQuery.toString());
+            casReadConditionStatement = client.prepare(readQuery);
         }
 
         public boolean run()
@@ -182,12 +180,12 @@ public class CASQuery extends SchemaStatement
             }
         }
         //now bind db values for dynamic conditions in actual CAS update operation
-        return prepare(row, casDbValues, casConditionArgFreqMap);
+        return prepare(row, casDbValues);
     }
 
-    private BoundStatement prepare(final Row row, final Object[] casDbValues, final Map<Integer, Integer> casConditionIndexOccurences)
+    private BoundStatement prepare(final Row row, final Object[] casDbValues)
     {
-        final Map<Integer, Integer> localMapping = new HashMap<>(casConditionIndexOccurences);
+        final Map<Integer, Integer> localMapping = new HashMap<>(casConditionArgFreqMap);
         int conditionIndexTracker = 0;
         for (int i = 0; i < argumentIndex.length; i++)
         {
@@ -210,7 +208,7 @@ public class CASQuery extends SchemaStatement
             else
             {
                 Object value = row.get(argumentIndex[i]);
-                if (definitions.getType(i).getName().equals(DataType.date().getName()))
+                if (definitions.getType(i).getName() == DataType.date().getName())
                 {
                     // the java driver only accepts com.datastax.driver.core.LocalDate for CQL type "DATE"
                     value = LocalDate.fromDaysSinceEpoch((Integer) value);
