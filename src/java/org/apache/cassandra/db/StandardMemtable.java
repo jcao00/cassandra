@@ -20,16 +20,13 @@ package org.apache.cassandra.db;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -42,10 +39,8 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.commitlog.CommitLogPosition;
 import org.apache.cassandra.db.commitlog.IntervalSet;
-import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
-import org.apache.cassandra.db.partitions.AbstractUnfilteredPartitionIterator;
 import org.apache.cassandra.db.partitions.AtomicBTreePartition;
 import org.apache.cassandra.db.partitions.Partition;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
@@ -61,9 +56,7 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.SchemaConstants;
-import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -75,11 +68,11 @@ import org.apache.cassandra.utils.memory.MemtablePool;
 import org.apache.cassandra.utils.memory.NativePool;
 import org.apache.cassandra.utils.memory.SlabPool;
 
-public class StandardMemtable extends Memtable
+public class StandardMemtable implements Memtable
 {
     private static final Logger logger = LoggerFactory.getLogger(StandardMemtable.class);
 
-    public static final MemtablePool MEMORY_POOL = createMemtableAllocatorPool();
+    private static final MemtablePool MEMORY_POOL = createMemtableAllocatorPool();
 
     private static MemtablePool createMemtableAllocatorPool()
     {
@@ -106,6 +99,7 @@ public class StandardMemtable extends Memtable
 
     private static final int ROW_OVERHEAD_HEAP_SIZE = estimateRowOverhead(Integer.parseInt(System.getProperty("cassandra.memtable_row_overhead_computation_step", "100000")));
 
+    private final ColumnFamilyStore cfs;
     private final MemtableAllocator allocator;
     private final AtomicLong liveDataSize = new AtomicLong(0);
     private final AtomicLong currentOperations = new AtomicLong(0);
@@ -121,9 +115,9 @@ public class StandardMemtable extends Memtable
     // has been finalised, and this is enforced in the ColumnFamilyStore.setCommitLogUpperBound
     private final CommitLogPosition approximateCommitLogLowerBound = CommitLog.instance.getCurrentPosition();
 
-    public int compareTo(StandardMemtable that)
+    public int compareTo(Memtable that)
     {
-        return this.approximateCommitLogLowerBound.compareTo(that.approximateCommitLogLowerBound);
+        return this.approximateCommitLogLowerBound.compareTo(((StandardMemtable)that).approximateCommitLogLowerBound);
     }
 
     // We index the memtable by PartitionPosition only for the purpose of being able
@@ -135,15 +129,23 @@ public class StandardMemtable extends Memtable
     // The smallest timestamp for all partitions stored in this memtable
     private long minTimestamp = Long.MAX_VALUE;
 
+    // Record the comparator of the CFS at the creation of the memtable. This
+    // is only used when a user update the CF comparator, to know if the
+    // memtable was created with the new or old comparator.
+    private final ClusteringComparator initialComparator;
+
+    final ColumnsCollector columnsCollector;
     private final StatsCollector statsCollector = new StatsCollector();
 
     // only to be used by init(), to setup the very first memtable for the cfs
-    StandardMemtable(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs)
+    public StandardMemtable(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs)
     {
-        super(cfs);
+        this.cfs = cfs;
         this.commitLogLowerBound = commitLogLowerBound;
         allocator = MEMORY_POOL.newAllocator();
         cfs.scheduleFlush();
+        this.initialComparator = cfs.metadata().comparator;
+        this.columnsCollector = new ColumnsCollector(cfs.metadata().regularAndStaticColumns());
     }
 
     public MemtableAllocator getAllocator()
@@ -170,7 +172,7 @@ public class StandardMemtable extends Memtable
         allocator.setDiscarding();
     }
 
-    void setDiscarded()
+    public void setDiscarded()
     {
         allocator.setDiscarded();
     }
@@ -245,7 +247,7 @@ public class StandardMemtable extends Memtable
      *
      * commitLogSegmentPosition should only be null if this is a secondary index, in which case it is *expected* to be null
      */
-    long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup)
+    public long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup)
     {
         AtomicBTreePartition previous = partitions.get(update.partitionKey());
 
@@ -353,7 +355,7 @@ public class StandardMemtable extends Memtable
 
         final Iterator<Map.Entry<PartitionPosition, AtomicBTreePartition>> iter = subMap.entrySet().iterator();
 
-        return new MemtableUnfilteredPartitionIterator(cfs, iter, minLocalDeletionTime, columnFilter, dataRange);
+        return new MemtableUnfilteredPartitionIterator<>(cfs, iter, minLocalDeletionTime, columnFilter, dataRange);
     }
 
     private int findMinLocalDeletionTime(Iterator<Map.Entry<PartitionPosition, AtomicBTreePartition>> iterator)
@@ -375,6 +377,16 @@ public class StandardMemtable extends Memtable
     public long getMinTimestamp()
     {
         return minTimestamp;
+    }
+
+    public ClusteringComparator getInitialComparator()
+    {
+        return initialComparator;
+    }
+
+    public ColumnFamilyStore cfs()
+    {
+        return cfs;
     }
 
     /**

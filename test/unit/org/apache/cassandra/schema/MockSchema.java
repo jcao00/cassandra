@@ -41,11 +41,6 @@ import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.util.FileHandle;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.Memory;
-import org.apache.cassandra.schema.CachingParams;
-import org.apache.cassandra.schema.KeyspaceMetadata;
-import org.apache.cassandra.schema.KeyspaceParams;
-import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.utils.AlwaysPresentFilter;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -65,7 +60,7 @@ public class MockSchema
 
     public static Memtable memtable(ColumnFamilyStore cfs)
     {
-        return new Memtable(cfs.metadata());
+        return new MockMemtable(cfs.metadata());
     }
 
     public static SSTableReader sstable(int generation, ColumnFamilyStore cfs)

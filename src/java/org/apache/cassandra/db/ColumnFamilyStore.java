@@ -266,7 +266,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
         // If the CF comparator has changed, we need to change the memtable,
         // because the old one still aliases the previous comparator.
-        if (data.getView().getCurrentMemtable().initialComparator != metadata().comparator)
+        if (data.getView().getCurrentMemtable().getInitialComparator() != metadata().comparator)
             switchMemtable();
     }
 
@@ -1040,7 +1040,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
             // mark all memtables as flushing, removing them from the live memtable list
             for (Memtable memtable : memtables)
-                memtable.cfs.data.markFlushing(memtable);
+                memtable.cfs().data.markFlushing(memtable);
 
             metric.memtableSwitchCount.inc();
 
@@ -1064,7 +1064,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         {
             if (memtable.isClean() || truncate)
             {
-                memtable.cfs.replaceFlushed(memtable, Collections.emptyList());
+                memtable.cfs().replaceFlushed(memtable, Collections.emptyList());
                 reclaim(memtable);
                 return Collections.emptyList();
             }
@@ -1155,9 +1155,9 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                     }
                 }
             }
-            memtable.cfs.replaceFlushed(memtable, sstables);
+            memtable.cfs().replaceFlushed(memtable, sstables);
             reclaim(memtable);
-            memtable.cfs.compactionStrategyManager.compactionLogger.flush(sstables);
+            memtable.cfs().compactionStrategyManager.compactionLogger.flush(sstables);
             logger.debug("Flushed to {} ({} sstables, {}), biggest {}, smallest {}",
                          sstables,
                          sstables.size(),
@@ -1252,9 +1252,9 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 float thisOnHeap = largest.getAllocator().onHeap().ownershipRatio();
                 float thisOffHeap = largest.getAllocator().offHeap().ownershipRatio();
                 logger.debug("Flushing largest {} to free up room. Used total: {}, live: {}, flushing: {}, this: {}",
-                            largest.cfs, ratio(usedOnHeap, usedOffHeap), ratio(liveOnHeap, liveOffHeap),
+                            largest.cfs(), ratio(usedOnHeap, usedOffHeap), ratio(liveOnHeap, liveOffHeap),
                             ratio(flushingOnHeap, flushingOffHeap), ratio(thisOnHeap, thisOffHeap));
-                largest.cfs.switchMemtableIfCurrent(largest);
+                largest.cfs().switchMemtableIfCurrent(largest);
             }
         }
     }

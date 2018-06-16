@@ -78,7 +78,7 @@ public class Tracker
      */
     public Tracker(Memtable memtable, boolean loadsstables)
     {
-        this.cfstore = memtable != null ? memtable.cfs : null;
+        this.cfstore = memtable != null ? memtable.cfs() : null;
         this.view = new AtomicReference<>();
         this.loadsstables = loadsstables;
         this.reset(memtable);

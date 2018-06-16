@@ -43,7 +43,7 @@ import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 import org.apache.cassandra.utils.memory.MemtableAllocator;
 
-public abstract class Memtable implements Comparable<Memtable>
+public interface Memtable extends Comparable<Memtable>
 {
 //    private static final Logger logger = LoggerFactory.getLogger(Memtable.class);
 //
@@ -82,29 +82,29 @@ public abstract class Memtable implements Comparable<Memtable>
 //    // to select key range using Token.KeyBound. However put() ensures that we
 //    // actually only store DecoratedKey.
 //    private final ConcurrentNavigableMap<PartitionPosition, AtomicBTreePartition> partitions = new ConcurrentSkipListMap<>();
-    public final ColumnFamilyStore cfs;
-    private final long creationNano = System.nanoTime();
-//
-//    // The smallest timestamp for all partitions stored in this memtable
-//    private long minTimestamp = Long.MAX_VALUE;
-//
-    // Record the comparator of the CFS at the creation of the memtable. This
-    // is only used when a user update the CF comparator, to know if the
-    // memtable was created with the new or old comparator.
-    public final ClusteringComparator initialComparator;
-//
-    final ColumnsCollector columnsCollector;
+//    public final ColumnFamilyStore cfs;
+//    private final long creationNano = System.nanoTime();
+////
+////    // The smallest timestamp for all partitions stored in this memtable
+////    private long minTimestamp = Long.MAX_VALUE;
+////
+//    // Record the comparator of the CFS at the creation of the memtable. This
+//    // is only used when a user update the CF comparator, to know if the
+//    // memtable was created with the new or old comparator.
+//    public final ClusteringComparator initialComparator;
+////
+//    final ColumnsCollector columnsCollector;
 //    private final StatsCollector statsCollector = new StatsCollector();
 //
     // only to be used by init(), to setup the very first memtable for the cfs
-    Memtable(ColumnFamilyStore cfs)
-    {
-        this.cfs = cfs;
-//        this.commitLogLowerBound = commitLogLowerBound;
-        this.initialComparator = cfs.metadata().comparator;
-        this.cfs.scheduleFlush();
-        this.columnsCollector = new ColumnsCollector(cfs.metadata().regularAndStaticColumns());
-    }
+//    Memtable(ColumnFamilyStore cfs)
+//    {
+//        this.cfs = cfs;
+////        this.commitLogLowerBound = commitLogLowerBound;
+//        this.initialComparator = cfs.metadata().comparator;
+//        this.cfs.scheduleFlush();
+//        this.columnsCollector = new ColumnsCollector(cfs.metadata().regularAndStaticColumns());
+//    }
 //
 //    // ONLY to be used for testing, to create a mock Memtable
 //    @VisibleForTesting
@@ -116,47 +116,37 @@ public abstract class Memtable implements Comparable<Memtable>
 //        this.columnsCollector = new ColumnsCollector(metadata.regularAndStaticColumns());
 //    }
 //
-    public abstract MemtableAllocator getAllocator();
-//
-    public abstract long getLiveDataSize();
 
-    public abstract long getOperations();
-//
+    ColumnFamilyStore cfs();
+
+    MemtableAllocator getAllocator();
+
+    long getLiveDataSize();
+
+    long getOperations();
+
     @VisibleForTesting
-    public abstract void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound);
+    void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound);
 
-    abstract void  setDiscarded();
+    void  setDiscarded();
 
-    public abstract CommitLogPosition getCommitLogLowerBound();
-    public abstract CommitLogPosition getCommitLogUpperBound();
-
+    CommitLogPosition getCommitLogLowerBound();
+    CommitLogPosition getCommitLogUpperBound();
+    ClusteringComparator getInitialComparator();
 //
 //    // decide if this memtable should take the write, or if it should go to the next memtable
-    public abstract  boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition);
+    boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition);
 
-    //    public CommitLogPosition getCommitLogLowerBound()
-//    {
-//        return commitLogLowerBound.get();
-//    }
-//
-//    public CommitLogPosition getCommitLogUpperBound()
-//    {
-//        return commitLogUpperBound.get();
-//    }
-//
-    public abstract boolean isLive();
+    boolean isLive();
 
-    public abstract boolean isClean();
+    boolean isClean();
 //
-    public abstract boolean mayContainDataBefore(CommitLogPosition position);
-//    {
-//        return approximateCommitLogLowerBound.compareTo(position) < 0;
-//    }
-//
-//    /**
+    boolean mayContainDataBefore(CommitLogPosition position);
+
+    //    /**
 //     * @return true if this memtable is expired. Expiration time is determined by CF's memtable_flush_period_in_ms.
 //     */
-    public abstract boolean isExpired();
+    boolean isExpired();
 //
 //    /**
 //     * Should only be called by ColumnFamilyStore.apply via Keyspace.apply, which supplies the appropriate
@@ -164,64 +154,38 @@ public abstract class Memtable implements Comparable<Memtable>
 //     *
 //     * commitLogSegmentPosition should only be null if this is a secondary index, in which case it is *expected* to be null
 //     */
-    abstract long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup);
+    long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup);
 //
-    public abstract int partitionCount();
+    int partitionCount();
 
-    public abstract List<? extends Callable<SSTableMultiWriter>> flushRunnables(LifecycleTransaction txn);
+    List<? extends Callable<SSTableMultiWriter>> flushRunnables(LifecycleTransaction txn);
 
 
-    public abstract Throwable abortRunnables(List<? extends Callable<SSTableMultiWriter>> runnables, Throwable t);
+    Throwable abortRunnables(List<? extends Callable<SSTableMultiWriter>> runnables, Throwable t);
 
-    public abstract MemtableUnfilteredPartitionIterator makePartitionIterator(final ColumnFilter columnFilter, final DataRange dataRange);
+    MemtableUnfilteredPartitionIterator makePartitionIterator(final ColumnFilter columnFilter, final DataRange dataRange);
 
-    public abstract Partition getPartition(DecoratedKey key);
+    Partition getPartition(DecoratedKey key);
 
-    public abstract long getMinTimestamp();
+    long getMinTimestamp();
 
-    public abstract AllocationStats getCurrentAllocationStats();
+    AllocationStats getCurrentAllocationStats();
 
-    //    /**
-//     * For testing only. Give this memtable too big a size to make it always fail flushing.
-//     */
-//    @VisibleForTesting
-//    public void makeUnflushable()
-//    {
-//        liveDataSize.addAndGet(1L * 1024 * 1024 * 1024 * 1024 * 1024);
-//    }
-//
+    /**
+     * For testing only. Give this memtable too big a size to make it always fail flushing.
+     */
+    @VisibleForTesting
+    void makeUnflushable();
 
-//    private static int estimateRowOverhead(final int count)
-//    {
-//        // calculate row overhead
-//        try (final OpOrder.Group group = new OpOrder().start())
-//        {
-//            int rowOverhead;
-//            MemtableAllocator allocator = MEMORY_POOL.newAllocator();
-//            ConcurrentNavigableMap<PartitionPosition, Object> partitions = new ConcurrentSkipListMap<>();
-//            final Object val = new Object();
-//            for (int i = 0 ; i < count ; i++)
-//                partitions.put(allocator.clone(new BufferDecoratedKey(new LongToken(i), ByteBufferUtil.EMPTY_BYTE_BUFFER), group), val);
-//            double avgSize = ObjectSizes.measureDeep(partitions) / (double) count;
-//            rowOverhead = (int) ((avgSize - Math.floor(avgSize)) < 0.05 ? Math.floor(avgSize) : Math.ceil(avgSize));
-//            rowOverhead -= ObjectSizes.measureDeep(new LongToken(0));
-//            rowOverhead += AtomicBTreePartition.EMPTY_SIZE;
-//            allocator.setDiscarding();
-//            allocator.setDiscarded();
-//            return rowOverhead;
-//        }
-//    }
-//
-
-    public static class MemtableUnfilteredPartitionIterator extends AbstractUnfilteredPartitionIterator
+    public static class MemtableUnfilteredPartitionIterator<T extends Partition> extends AbstractUnfilteredPartitionIterator
     {
         private final ColumnFamilyStore cfs;
-        private final Iterator<Map.Entry<PartitionPosition, Partition>> iter;
+        private final Iterator<Map.Entry<PartitionPosition, T>> iter;
         private final int minLocalDeletionTime;
         private final ColumnFilter columnFilter;
         private final DataRange dataRange;
 
-        public MemtableUnfilteredPartitionIterator(ColumnFamilyStore cfs, Iterator<Map.Entry<PartitionPosition, Partition>> iter, int minLocalDeletionTime, ColumnFilter columnFilter, DataRange dataRange)
+        MemtableUnfilteredPartitionIterator(ColumnFamilyStore cfs, Iterator<Map.Entry<PartitionPosition, T>> iter, int minLocalDeletionTime, ColumnFilter columnFilter, DataRange dataRange)
         {
             this.cfs = cfs;
             this.iter = iter;
@@ -247,7 +211,7 @@ public abstract class Memtable implements Comparable<Memtable>
 
         public UnfilteredRowIterator next()
         {
-            Map.Entry<PartitionPosition, ? extends Partition> entry = iter.next();
+            Map.Entry<PartitionPosition, T> entry = iter.next();
             // Actual stored key should be true DecoratedKey
             assert entry.getKey() instanceof DecoratedKey;
             DecoratedKey key = (DecoratedKey)entry.getKey();
@@ -261,7 +225,7 @@ public abstract class Memtable implements Comparable<Memtable>
     {
         private final HashMap<ColumnMetadata, AtomicBoolean> predefined = new HashMap<>();
         private final ConcurrentSkipListSet<ColumnMetadata> extra = new ConcurrentSkipListSet<>();
-        ColumnsCollector(RegularAndStaticColumns columns)
+        public ColumnsCollector(RegularAndStaticColumns columns)
         {
             for (ColumnMetadata def : columns.statics)
                 predefined.put(def, new AtomicBoolean());
