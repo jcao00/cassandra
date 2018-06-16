@@ -45,28 +45,6 @@ import org.apache.cassandra.utils.memory.MemtableAllocator;
 
 public interface Memtable extends Comparable<Memtable>
 {
-//    private static final Logger logger = LoggerFactory.getLogger(Memtable.class);
-//
-//    private final AtomicLong liveDataSize = new AtomicLong(0);
-//    private final AtomicLong currentOperations = new AtomicLong(0);
-//
-//    // the write barrier for directing writes to this memtable during a switch
-//    private volatile OpOrder.Barrier writeBarrier;
-//    // the precise upper bound of CommitLogPosition owned by this memtable
-//    private volatile AtomicReference<CommitLogPosition> commitLogUpperBound;
-//    // the precise lower bound of CommitLogPosition owned by this memtable; equal to its predecessor's commitLogUpperBound
-//    private AtomicReference<CommitLogPosition> commitLogLowerBound;
-//
-//    // The approximate lower bound by this memtable; must be <= commitLogLowerBound once our predecessor
-//    // has been finalised, and this is enforced in the ColumnFamilyStore.setCommitLogUpperBound
-//    private final CommitLogPosition approximateCommitLogLowerBound = CommitLog.instance.getCurrentPosition();
-//
-//    public int compareTo(Memtable that)
-//    {
-//        return this.approximateCommitLogLowerBound.compareTo(that.approximateCommitLogLowerBound);
-//    }
-//
-
     // TODO:JEB this is really not related to memtable ... should be moved elsewhere.
     // we only care about the type in StdMemtable#accepts()
     // ata a minimum, the name is non-descriptive
@@ -77,105 +55,63 @@ public interface Memtable extends Comparable<Memtable>
             super(copy.segmentId, copy.position);
         }
     }
-//
-//    // We index the memtable by PartitionPosition only for the purpose of being able
-//    // to select key range using Token.KeyBound. However put() ensures that we
-//    // actually only store DecoratedKey.
-//    private final ConcurrentNavigableMap<PartitionPosition, AtomicBTreePartition> partitions = new ConcurrentSkipListMap<>();
-//    public final ColumnFamilyStore cfs;
-//    private final long creationNano = System.nanoTime();
-////
-////    // The smallest timestamp for all partitions stored in this memtable
-////    private long minTimestamp = Long.MAX_VALUE;
-////
-//    // Record the comparator of the CFS at the creation of the memtable. This
-//    // is only used when a user update the CF comparator, to know if the
-//    // memtable was created with the new or old comparator.
-//    public final ClusteringComparator initialComparator;
-////
-//    final ColumnsCollector columnsCollector;
-//    private final StatsCollector statsCollector = new StatsCollector();
-//
-    // only to be used by init(), to setup the very first memtable for the cfs
-//    Memtable(ColumnFamilyStore cfs)
-//    {
-//        this.cfs = cfs;
-////        this.commitLogLowerBound = commitLogLowerBound;
-//        this.initialComparator = cfs.metadata().comparator;
-//        this.cfs.scheduleFlush();
-//        this.columnsCollector = new ColumnsCollector(cfs.metadata().regularAndStaticColumns());
-//    }
-//
-//    // ONLY to be used for testing, to create a mock Memtable
-//    @VisibleForTesting
-//    public Memtable(TableMetadata metadata)
-//    {
-//        this.initialComparator = metadata.comparator;
-//        this.cfs = null;
-//        this.allocator = null;
-//        this.columnsCollector = new ColumnsCollector(metadata.regularAndStaticColumns());
-//    }
-//
 
     ColumnFamilyStore cfs();
-
-    MemtableAllocator getAllocator();
-
-    long getLiveDataSize();
-
-    long getOperations();
-
-    @VisibleForTesting
-    void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound);
-
-    void  setDiscarded();
+    ClusteringComparator getInitialComparator();
 
     CommitLogPosition getCommitLogLowerBound();
     CommitLogPosition getCommitLogUpperBound();
-    ClusteringComparator getInitialComparator();
-//
-//    // decide if this memtable should take the write, or if it should go to the next memtable
-    boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition);
-
-    boolean isLive();
-
-    boolean isClean();
-//
     boolean mayContainDataBefore(CommitLogPosition position);
 
-    //    /**
-//     * @return true if this memtable is expired. Expiration time is determined by CF's memtable_flush_period_in_ms.
-//     */
-    boolean isExpired();
-//
-//    /**
-//     * Should only be called by ColumnFamilyStore.apply via Keyspace.apply, which supplies the appropriate
-//     * OpOrdering.
-//     *
-//     * commitLogSegmentPosition should only be null if this is a secondary index, in which case it is *expected* to be null
-//     */
+    @VisibleForTesting
+    void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound);
+    void  setDiscarded();
+
+    // only called by SASI
+    void adjustMemtableSize(MemtableAllocator.Region region, long additionalSpace, OpOrder.Group opGroup);
+
+    //    // decide if this memtable should take the write, or if it should go to the next memtable
+    boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition);
+
+    /**
+     * Should only be called by ColumnFamilyStore.apply via Keyspace.apply, which supplies the appropriate
+     * OpOrdering.
+     *
+     * commitLogSegmentPosition should only be null if this is a secondary index, in which case it is *expected* to be null
+     */
     long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup);
-//
-    int partitionCount();
-
-    List<? extends Callable<SSTableMultiWriter>> flushRunnables(LifecycleTransaction txn);
-
-
-    Throwable abortRunnables(List<? extends Callable<SSTableMultiWriter>> runnables, Throwable t);
-
+    Partition getPartition(DecoratedKey key);
     MemtableUnfilteredPartitionIterator makePartitionIterator(final ColumnFilter columnFilter, final DataRange dataRange);
 
-    Partition getPartition(DecoratedKey key);
+    List<? extends Callable<SSTableMultiWriter>> flushRunnables(LifecycleTransaction txn);
+    Throwable abortRunnables(List<? extends Callable<SSTableMultiWriter>> runnables, Throwable t);
 
-    long getMinTimestamp();
+    boolean isLive();
+    boolean isClean();
 
-    AllocationStats getCurrentAllocationStats();
+    /**
+     * @return true if this memtable is expired. Expiration time is determined by CF's memtable_flush_period_in_ms.
+     */
+    boolean isExpired();
 
     /**
      * For testing only. Give this memtable too big a size to make it always fail flushing.
      */
     @VisibleForTesting
     void makeUnflushable();
+
+    /*
+        Metrics
+     */
+    float getOwnershipRatio(MemtableAllocator.Region region);
+    long getOwns(MemtableAllocator.Region region);
+    float getUsedRatio(MemtableAllocator.Region region);
+    float getReclaimingRatio(MemtableAllocator.Region region);
+
+    long getMinTimestamp();
+    long getLiveDataSize();
+    long getOperations();
+    int partitionCount();
 
     public static class MemtableUnfilteredPartitionIterator<T extends Partition> extends AbstractUnfilteredPartitionIterator
     {
@@ -262,43 +198,6 @@ public interface Memtable extends Comparable<Memtable>
                 if (e.getValue().get())
                     builder.add(e.getKey());
             return builder.addAll(extra).build();
-        }
-    }
-//
-//    private static class StatsCollector
-//    {
-//        private final AtomicReference<EncodingStats> stats = new AtomicReference<>(EncodingStats.NO_STATS);
-//
-//        public void update(EncodingStats newStats)
-//        {
-//            while (true)
-//            {
-//                EncodingStats current = stats.get();
-//                EncodingStats updated = current.mergeWith(newStats);
-//                if (stats.compareAndSet(current, updated))
-//                    return;
-//            }
-//        }
-//
-//        public EncodingStats get()
-//        {
-//            return stats.get();
-//        }
-//    }
-
-    public static class AllocationStats
-    {
-        public final float onHeapUsedRatio;
-        public final float offHeapUsedRatio;
-        public final float onHeapReclaimingRatio;
-        public final float offHeapReclaimingRatio;
-
-        AllocationStats(float onHeapUsedRatio, float offHeapUsedRatio, float onHeapReclaimingRatio, float offHeapReclaimingRatio)
-        {
-            this.onHeapUsedRatio = onHeapUsedRatio;
-            this.offHeapUsedRatio = offHeapUsedRatio;
-            this.onHeapReclaimingRatio = onHeapReclaimingRatio;
-            this.offHeapReclaimingRatio = offHeapReclaimingRatio;
         }
     }
 }

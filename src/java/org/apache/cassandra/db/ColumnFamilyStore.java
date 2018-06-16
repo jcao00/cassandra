@@ -846,18 +846,18 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         float onHeapRatio = 0, offHeapRatio = 0;
         long onHeapTotal = 0, offHeapTotal = 0;
         Memtable memtable = getTracker().getView().getCurrentMemtable();
-        onHeapRatio +=  memtable.getAllocator().onHeap().ownershipRatio();
-        offHeapRatio += memtable.getAllocator().offHeap().ownershipRatio();
-        onHeapTotal += memtable.getAllocator().onHeap().owns();
-        offHeapTotal += memtable.getAllocator().offHeap().owns();
+        onHeapRatio +=  memtable.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
+        offHeapRatio += memtable.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
+        onHeapTotal += memtable.getOwns(MemtableAllocator.Region.ON_HEAP);
+        offHeapTotal += memtable.getOwns(MemtableAllocator.Region.OFF_HEAP);
 
         for (ColumnFamilyStore indexCfs : indexManager.getAllIndexColumnFamilyStores())
         {
-            MemtableAllocator allocator = indexCfs.getTracker().getView().getCurrentMemtable().getAllocator();
-            onHeapRatio += allocator.onHeap().ownershipRatio();
-            offHeapRatio += allocator.offHeap().ownershipRatio();
-            onHeapTotal += allocator.onHeap().owns();
-            offHeapTotal += allocator.offHeap().owns();
+            memtable = indexCfs.getTracker().getView().getCurrentMemtable();
+            onHeapRatio +=  memtable.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
+            offHeapRatio += memtable.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
+            onHeapTotal += memtable.getOwns(MemtableAllocator.Region.ON_HEAP);
+            offHeapTotal += memtable.getOwns(MemtableAllocator.Region.OFF_HEAP);
         }
 
         logger.debug("Enqueuing flush of {}: {}",
@@ -1221,14 +1221,14 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 // find the total ownership ratio for the memtable and all SecondaryIndexes owned by this CF,
                 // both on- and off-heap, and select the largest of the two ratios to weight this CF
                 float onHeap = 0f, offHeap = 0f;
-                onHeap += current.getAllocator().onHeap().ownershipRatio();
-                offHeap += current.getAllocator().offHeap().ownershipRatio();
+                onHeap += current.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
+                offHeap += current.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
 
                 for (ColumnFamilyStore indexCfs : cfs.indexManager.getAllIndexColumnFamilyStores())
                 {
-                    MemtableAllocator allocator = indexCfs.getTracker().getView().getCurrentMemtable().getAllocator();
-                    onHeap += allocator.onHeap().ownershipRatio();
-                    offHeap += allocator.offHeap().ownershipRatio();
+                    Memtable indexMemtable = indexCfs.getTracker().getView().getCurrentMemtable();
+                    onHeap += indexMemtable.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
+                    offHeap += indexMemtable.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
                 }
 
                 float ratio = Math.max(onHeap, offHeap);
@@ -1244,13 +1244,12 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
             if (largest != null)
             {
-                Memtable.AllocationStats allocationStats = largest.getCurrentAllocationStats();
-                float usedOnHeap = allocationStats.onHeapUsedRatio;
-                float usedOffHeap = allocationStats.offHeapUsedRatio;
-                float flushingOnHeap = allocationStats.onHeapReclaimingRatio;
-                float flushingOffHeap = allocationStats.offHeapReclaimingRatio;
-                float thisOnHeap = largest.getAllocator().onHeap().ownershipRatio();
-                float thisOffHeap = largest.getAllocator().offHeap().ownershipRatio();
+                float usedOnHeap = largest.getUsedRatio(MemtableAllocator.Region.ON_HEAP);
+                float usedOffHeap = largest.getUsedRatio(MemtableAllocator.Region.OFF_HEAP);
+                float flushingOnHeap = largest.getReclaimingRatio(MemtableAllocator.Region.ON_HEAP);
+                float flushingOffHeap = largest.getReclaimingRatio(MemtableAllocator.Region.OFF_HEAP);
+                float thisOnHeap = largest.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
+                float thisOffHeap = largest.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
                 logger.debug("Flushing largest {} to free up room. Used total: {}, live: {}, flushing: {}, this: {}",
                             largest.cfs(), ratio(usedOnHeap, usedOffHeap), ratio(liveOnHeap, liveOffHeap),
                             ratio(flushingOnHeap, flushingOffHeap), ratio(thisOnHeap, thisOffHeap));

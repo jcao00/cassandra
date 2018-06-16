@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.schema;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
@@ -55,12 +56,6 @@ public class MockMemtable implements Memtable
     }
 
     @Override
-    public MemtableAllocator getAllocator()
-    {
-        return null;
-    }
-
-    @Override
     public long getLiveDataSize()
     {
         return 0;
@@ -87,25 +82,25 @@ public class MockMemtable implements Memtable
     @Override
     public CommitLogPosition getCommitLogLowerBound()
     {
-        return null;
+        return CommitLogPosition.NONE;
     }
 
     @Override
     public CommitLogPosition getCommitLogUpperBound()
     {
-        return null;
+        return CommitLogPosition.NONE;
     }
 
     @Override
     public ClusteringComparator getInitialComparator()
     {
-        return null;
+        return initialComparator;
     }
 
     @Override
     public boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition)
     {
-        return false;
+        return true;
     }
 
     @Override
@@ -133,6 +128,36 @@ public class MockMemtable implements Memtable
     }
 
     @Override
+    public void adjustMemtableSize(MemtableAllocator.Region region, long additionalSpace, OpOrder.Group opGroup)
+    {
+
+    }
+
+    @Override
+    public float getOwnershipRatio(MemtableAllocator.Region region)
+    {
+        return 0;
+    }
+
+    @Override
+    public long getOwns(MemtableAllocator.Region region)
+    {
+        return 0;
+    }
+
+    @Override
+    public float getUsedRatio(MemtableAllocator.Region region)
+    {
+        return 0;
+    }
+
+    @Override
+    public float getReclaimingRatio(MemtableAllocator.Region region)
+    {
+        return 0;
+    }
+
+    @Override
     public long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup)
     {
         return 0;
@@ -147,7 +172,7 @@ public class MockMemtable implements Memtable
     @Override
     public List<? extends Callable<SSTableMultiWriter>> flushRunnables(LifecycleTransaction txn)
     {
-        return null;
+        return Collections.emptyList();
     }
 
     @Override
@@ -172,12 +197,6 @@ public class MockMemtable implements Memtable
     public long getMinTimestamp()
     {
         return 0;
-    }
-
-    @Override
-    public AllocationStats getCurrentAllocationStats()
-    {
-        return null;
     }
 
     @Override
