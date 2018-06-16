@@ -128,6 +128,9 @@ public final class TableAttributes extends PropertyDefinitions
         if (hasOption(Option.CDC))
             builder.cdc(getBoolean(Option.CDC.toString(), false));
 
+        if (hasOption(Option.MEMTABLE_FACTORY))
+            builder.memtableFactoryClass(getString(Option.MEMTABLE_FACTORY));
+
         return builder.build();
     }
 

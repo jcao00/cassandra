@@ -234,6 +234,9 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     private volatile boolean neverPurgeTombstones = false;
 
+    //TODO:JEB make this updatable
+    private MemtableFactory memtableFactory;
+
     public static void shutdownPostFlushExecutor() throws InterruptedException
     {
         postFlushExecutor.shutdown();
@@ -402,9 +405,10 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         logger.info("Initializing {}.{}", keyspace.getName(), name);
 
         // Create Memtable only on online
+        memtableFactory = FBUtilities.instanceOrConstruct(metadata.get().params.memtableFactoryClass, "memtable factory class");
         Memtable initialMemtable = null;
         if (DatabaseDescriptor.isDaemonInitialized())
-            initialMemtable = new Memtable(new AtomicReference<>(CommitLog.instance.getCurrentPosition()), this);
+            initialMemtable = memtableFactory.create(new AtomicReference<>(CommitLog.instance.getCurrentPosition()), this);
         data = new Tracker(initialMemtable, loadSSTables);
 
         // scan for sstables corresponding to this cf and load them
@@ -1009,7 +1013,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 // switch all memtables, regardless of their dirty status, setting the barrier
                 // so that we can reach a coordinated decision about cleanliness once they
                 // are no longer possible to be modified
-                Memtable newMemtable = new Memtable(commitLogUpperBound, cfs);
+                Memtable newMemtable = memtableFactory.create(commitLogUpperBound, cfs);
                 Memtable oldMemtable = cfs.data.switchMemtable(truncate, newMemtable);
                 oldMemtable.setDiscarding(writeBarrier, commitLogUpperBound);
                 memtables.add(oldMemtable);
@@ -1072,7 +1076,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             List<SSTableReader> sstables = new ArrayList<>();
             try (LifecycleTransaction txn = LifecycleTransaction.offline(OperationType.FLUSH))
             {
-                List<Memtable.FlushRunnable> flushRunnables = null;
+                List<? extends Callable<SSTableMultiWriter>> flushRunnables = null;
                 List<SSTableMultiWriter> flushResults = null;
 
                 try
@@ -1240,10 +1244,11 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
             if (largest != null)
             {
-                float usedOnHeap = Memtable.MEMORY_POOL.onHeap.usedRatio();
-                float usedOffHeap = Memtable.MEMORY_POOL.offHeap.usedRatio();
-                float flushingOnHeap = Memtable.MEMORY_POOL.onHeap.reclaimingRatio();
-                float flushingOffHeap = Memtable.MEMORY_POOL.offHeap.reclaimingRatio();
+                Memtable.AllocationStats allocationStats = largest.getCurrentAllocationStats();
+                float usedOnHeap = allocationStats.onHeapUsedRatio;
+                float usedOffHeap = allocationStats.offHeapUsedRatio;
+                float flushingOnHeap = allocationStats.onHeapReclaimingRatio;
+                float flushingOffHeap = allocationStats.offHeapReclaimingRatio;
                 float thisOnHeap = largest.getAllocator().onHeap().ownershipRatio();
                 float thisOffHeap = largest.getAllocator().offHeap().ownershipRatio();
                 logger.debug("Flushing largest {} to free up room. Used total: {}, live: {}, flushing: {}, this: {}",
@@ -2093,7 +2098,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             {
                 public Void call()
                 {
-                    cfs.data.reset(new Memtable(new AtomicReference<>(CommitLogPosition.NONE), cfs));
+                    cfs.data.reset(memtableFactory.create(new AtomicReference<>(CommitLogPosition.NONE), cfs));
                     return null;
                 }
             }, true, false);

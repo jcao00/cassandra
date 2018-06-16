@@ -25,10 +25,12 @@ import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableMap;
 
 import org.apache.cassandra.cql3.Attributes;
+import org.apache.cassandra.db.StandardMemtableFactory;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.service.reads.PercentileSpeculativeRetryPolicy;
 import org.apache.cassandra.service.reads.SpeculativeRetryPolicy;
 import org.apache.cassandra.utils.BloomCalculations;
+import org.apache.cassandra.utils.FBUtilities;
 
 import static java.lang.String.format;
 
@@ -51,7 +53,8 @@ public final class TableParams
         MIN_INDEX_INTERVAL,
         SPECULATIVE_RETRY,
         CRC_CHECK_CHANCE,
-        CDC;
+        CDC,
+        MEMTABLE_FACTORY;
 
         @Override
         public String toString()
@@ -74,13 +77,14 @@ public final class TableParams
     public final CompressionParams compression;
     public final ImmutableMap<String, ByteBuffer> extensions;
     public final boolean cdc;
+    public final String memtableFactoryClass;
 
     private TableParams(Builder builder)
     {
         comment = builder.comment;
         bloomFilterFpChance = builder.bloomFilterFpChance == null
-                            ? builder.compaction.defaultBloomFilterFbChance()
-                            : builder.bloomFilterFpChance;
+                              ? builder.compaction.defaultBloomFilterFbChance()
+                              : builder.bloomFilterFpChance;
         crcCheckChance = builder.crcCheckChance;
         gcGraceSeconds = builder.gcGraceSeconds;
         defaultTimeToLive = builder.defaultTimeToLive;
@@ -93,6 +97,7 @@ public final class TableParams
         compression = builder.compression;
         extensions = builder.extensions;
         cdc = builder.cdc;
+        memtableFactoryClass = builder.memtableFactoryClass;
     }
 
     public static Builder builder()
@@ -115,7 +120,8 @@ public final class TableParams
                             .minIndexInterval(params.minIndexInterval)
                             .speculativeRetry(params.speculativeRetry)
                             .extensions(params.extensions)
-                            .cdc(params.cdc);
+                            .cdc(params.cdc)
+                            .memtableFactoryClass(params.memtableFactoryClass);
     }
 
     public Builder unbuild()
@@ -167,6 +173,15 @@ public final class TableParams
 
         if (memtableFlushPeriodInMs < 0)
             fail("%s must be greater than or equal to 0 (got %s)", Option.MEMTABLE_FLUSH_PERIOD_IN_MS, memtableFlushPeriodInMs);
+
+        try
+        {
+            FBUtilities.instanceOrConstruct(memtableFactoryClass, "memtable factory class");
+        }
+        catch (Exception e)
+        {
+            fail("%s is not found or cannot be instantiated (%s)", Option.MEMTABLE_FACTORY, memtableFactoryClass);
+        }
     }
 
     private static void fail(String format, Object... args)
@@ -186,19 +201,20 @@ public final class TableParams
         TableParams p = (TableParams) o;
 
         return comment.equals(p.comment)
-            && bloomFilterFpChance == p.bloomFilterFpChance
-            && crcCheckChance == p.crcCheckChance
-            && gcGraceSeconds == p.gcGraceSeconds
-            && defaultTimeToLive == p.defaultTimeToLive
-            && memtableFlushPeriodInMs == p.memtableFlushPeriodInMs
-            && minIndexInterval == p.minIndexInterval
-            && maxIndexInterval == p.maxIndexInterval
-            && speculativeRetry.equals(p.speculativeRetry)
-            && caching.equals(p.caching)
-            && compaction.equals(p.compaction)
-            && compression.equals(p.compression)
-            && extensions.equals(p.extensions)
-            && cdc == p.cdc;
+               && bloomFilterFpChance == p.bloomFilterFpChance
+               && crcCheckChance == p.crcCheckChance
+               && gcGraceSeconds == p.gcGraceSeconds
+               && defaultTimeToLive == p.defaultTimeToLive
+               && memtableFlushPeriodInMs == p.memtableFlushPeriodInMs
+               && minIndexInterval == p.minIndexInterval
+               && maxIndexInterval == p.maxIndexInterval
+               && speculativeRetry.equals(p.speculativeRetry)
+               && caching.equals(p.caching)
+               && compaction.equals(p.compaction)
+               && compression.equals(p.compression)
+               && extensions.equals(p.extensions)
+               && cdc == p.cdc
+               && memtableFactoryClass.equals(p.memtableFactoryClass);
     }
 
     @Override
@@ -217,7 +233,8 @@ public final class TableParams
                                 compaction,
                                 compression,
                                 extensions,
-                                cdc);
+                                cdc,
+                                memtableFactoryClass);
     }
 
     @Override
@@ -238,6 +255,7 @@ public final class TableParams
                           .add(Option.COMPRESSION.toString(), compression)
                           .add(Option.EXTENSIONS.toString(), extensions)
                           .add(Option.CDC.toString(), cdc)
+                          .add(Option.MEMTABLE_FACTORY.toString(), memtableFactoryClass)
                           .toString();
     }
 
@@ -257,6 +275,7 @@ public final class TableParams
         private CompressionParams compression = CompressionParams.DEFAULT;
         private ImmutableMap<String, ByteBuffer> extensions = ImmutableMap.of();
         private boolean cdc;
+        private String memtableFactoryClass = StandardMemtableFactory.class.getName();
 
         public Builder()
         {
@@ -348,6 +367,12 @@ public final class TableParams
         public Builder extensions(Map<String, ByteBuffer> val)
         {
             extensions = ImmutableMap.copyOf(val);
+            return this;
+        }
+
+        public Builder memtableFactoryClass(String val)
+        {
+            memtableFactoryClass = val;
             return this;
         }
     }

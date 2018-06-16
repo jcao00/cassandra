@@ -17,48 +17,31 @@
  */
 package org.apache.cassandra.db;
 
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Throwables;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import org.apache.cassandra.schema.ColumnMetadata;
-import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.schema.SchemaConstants;
-import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.commitlog.CommitLogPosition;
-import org.apache.cassandra.db.commitlog.IntervalSet;
 import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
-import org.apache.cassandra.db.partitions.*;
-import org.apache.cassandra.db.rows.EncodingStats;
+import org.apache.cassandra.db.partitions.AbstractUnfilteredPartitionIterator;
+import org.apache.cassandra.db.partitions.Partition;
+import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
-import org.apache.cassandra.dht.*;
-import org.apache.cassandra.dht.Murmur3Partitioner.LongToken;
 import org.apache.cassandra.index.transactions.UpdateTransaction;
-import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
-import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
-import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.service.ActiveRepairService;
-import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.ObjectSizes;
+import org.apache.cassandra.schema.ColumnMetadata;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.concurrent.OpOrder;
-import org.apache.cassandra.utils.memory.HeapPool;
 import org.apache.cassandra.utils.memory.MemtableAllocator;
-import org.apache.cassandra.utils.memory.MemtablePool;
-import org.apache.cassandra.utils.memory.NativePool;
-import org.apache.cassandra.utils.memory.SlabPool;
 
 public abstract class Memtable implements Comparable<Memtable>
 {
@@ -83,42 +66,45 @@ public abstract class Memtable implements Comparable<Memtable>
 //        return this.approximateCommitLogLowerBound.compareTo(that.approximateCommitLogLowerBound);
 //    }
 //
-//    public static final class LastCommitLogPosition extends CommitLogPosition
-//    {
-//        public LastCommitLogPosition(CommitLogPosition copy)
-//        {
-//            super(copy.segmentId, copy.position);
-//        }
-//    }
+
+    // TODO:JEB this is really not related to memtable ... should be moved elsewhere.
+    // we only care about the type in StdMemtable#accepts()
+    // ata a minimum, the name is non-descriptive
+    public static final class LastCommitLogPosition extends CommitLogPosition
+    {
+        public LastCommitLogPosition(CommitLogPosition copy)
+        {
+            super(copy.segmentId, copy.position);
+        }
+    }
 //
 //    // We index the memtable by PartitionPosition only for the purpose of being able
 //    // to select key range using Token.KeyBound. However put() ensures that we
 //    // actually only store DecoratedKey.
 //    private final ConcurrentNavigableMap<PartitionPosition, AtomicBTreePartition> partitions = new ConcurrentSkipListMap<>();
-//    public final ColumnFamilyStore cfs;
-//    private final long creationNano = System.nanoTime();
+    public final ColumnFamilyStore cfs;
+    private final long creationNano = System.nanoTime();
 //
 //    // The smallest timestamp for all partitions stored in this memtable
 //    private long minTimestamp = Long.MAX_VALUE;
 //
-//    // Record the comparator of the CFS at the creation of the memtable. This
-//    // is only used when a user update the CF comparator, to know if the
-//    // memtable was created with the new or old comparator.
-//    public final ClusteringComparator initialComparator;
+    // Record the comparator of the CFS at the creation of the memtable. This
+    // is only used when a user update the CF comparator, to know if the
+    // memtable was created with the new or old comparator.
+    public final ClusteringComparator initialComparator;
 //
-//    private final ColumnsCollector columnsCollector;
+    final ColumnsCollector columnsCollector;
 //    private final StatsCollector statsCollector = new StatsCollector();
 //
-//    // only to be used by init(), to setup the very first memtable for the cfs
-//    public Memtable(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs)
-//    {
-//        this.cfs = cfs;
+    // only to be used by init(), to setup the very first memtable for the cfs
+    Memtable(ColumnFamilyStore cfs)
+    {
+        this.cfs = cfs;
 //        this.commitLogLowerBound = commitLogLowerBound;
-//        this.allocator = MEMORY_POOL.newAllocator();
-//        this.initialComparator = cfs.metadata().comparator;
-//        this.cfs.scheduleFlush();
-//        this.columnsCollector = new ColumnsCollector(cfs.metadata().regularAndStaticColumns());
-//    }
+        this.initialComparator = cfs.metadata().comparator;
+        this.cfs.scheduleFlush();
+        this.columnsCollector = new ColumnsCollector(cfs.metadata().regularAndStaticColumns());
+    }
 //
 //    // ONLY to be used for testing, to create a mock Memtable
 //    @VisibleForTesting
@@ -140,6 +126,10 @@ public abstract class Memtable implements Comparable<Memtable>
     public abstract void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound);
 
     abstract void  setDiscarded();
+
+    public abstract CommitLogPosition getCommitLogLowerBound();
+    public abstract CommitLogPosition getCommitLogUpperBound();
+
 //
 //    // decide if this memtable should take the write, or if it should go to the next memtable
     public abstract  boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition);
@@ -158,7 +148,7 @@ public abstract class Memtable implements Comparable<Memtable>
 
     public abstract boolean isClean();
 //
-//    public boolean mayContainDataBefore(CommitLogPosition position)
+    public abstract boolean mayContainDataBefore(CommitLogPosition position);
 //    {
 //        return approximateCommitLogLowerBound.compareTo(position) < 0;
 //    }
@@ -166,11 +156,7 @@ public abstract class Memtable implements Comparable<Memtable>
 //    /**
 //     * @return true if this memtable is expired. Expiration time is determined by CF's memtable_flush_period_in_ms.
 //     */
-//    public boolean isExpired()
-//    {
-//        int period = cfs.metadata().params.memtableFlushPeriodInMs;
-//        return period > 0 && (System.nanoTime() - creationNano >= TimeUnit.MILLISECONDS.toNanos(period));
-//    }
+    public abstract boolean isExpired();
 //
 //    /**
 //     * Should only be called by ColumnFamilyStore.apply via Keyspace.apply, which supplies the appropriate
@@ -182,16 +168,18 @@ public abstract class Memtable implements Comparable<Memtable>
 //
     public abstract int partitionCount();
 
-    public abstract List<Callable<SSTableMultiWriter>> flushRunnables(LifecycleTransaction txn);
+    public abstract List<? extends Callable<SSTableMultiWriter>> flushRunnables(LifecycleTransaction txn);
 
 
-    public abstract Throwable abortRunnables(List<Callable<SSTableMultiWriter>> runnables, Throwable t);
+    public abstract Throwable abortRunnables(List<? extends Callable<SSTableMultiWriter>> runnables, Throwable t);
 
-    public abstract UnfilteredPartitionIterator makePartitionIterator(final ColumnFilter columnFilter, final DataRange dataRange);
+    public abstract MemtableUnfilteredPartitionIterator makePartitionIterator(final ColumnFilter columnFilter, final DataRange dataRange);
 
     public abstract Partition getPartition(DecoratedKey key);
 
     public abstract long getMinTimestamp();
+
+    public abstract AllocationStats getCurrentAllocationStats();
 
     //    /**
 //     * For testing only. Give this memtable too big a size to make it always fail flushing.
@@ -225,6 +213,93 @@ public abstract class Memtable implements Comparable<Memtable>
 //    }
 //
 
+    public static class MemtableUnfilteredPartitionIterator extends AbstractUnfilteredPartitionIterator
+    {
+        private final ColumnFamilyStore cfs;
+        private final Iterator<Map.Entry<PartitionPosition, Partition>> iter;
+        private final int minLocalDeletionTime;
+        private final ColumnFilter columnFilter;
+        private final DataRange dataRange;
+
+        public MemtableUnfilteredPartitionIterator(ColumnFamilyStore cfs, Iterator<Map.Entry<PartitionPosition, Partition>> iter, int minLocalDeletionTime, ColumnFilter columnFilter, DataRange dataRange)
+        {
+            this.cfs = cfs;
+            this.iter = iter;
+            this.minLocalDeletionTime = minLocalDeletionTime;
+            this.columnFilter = columnFilter;
+            this.dataRange = dataRange;
+        }
+
+        public int getMinLocalDeletionTime()
+        {
+            return minLocalDeletionTime;
+        }
+
+        public TableMetadata metadata()
+        {
+            return cfs.metadata();
+        }
+
+        public boolean hasNext()
+        {
+            return iter.hasNext();
+        }
+
+        public UnfilteredRowIterator next()
+        {
+            Map.Entry<PartitionPosition, ? extends Partition> entry = iter.next();
+            // Actual stored key should be true DecoratedKey
+            assert entry.getKey() instanceof DecoratedKey;
+            DecoratedKey key = (DecoratedKey)entry.getKey();
+            ClusteringIndexFilter filter = dataRange.clusteringIndexFilter(key);
+
+            return filter.getUnfilteredRowIterator(columnFilter, entry.getValue());
+        }
+    }
+
+    static class ColumnsCollector
+    {
+        private final HashMap<ColumnMetadata, AtomicBoolean> predefined = new HashMap<>();
+        private final ConcurrentSkipListSet<ColumnMetadata> extra = new ConcurrentSkipListSet<>();
+        ColumnsCollector(RegularAndStaticColumns columns)
+        {
+            for (ColumnMetadata def : columns.statics)
+                predefined.put(def, new AtomicBoolean());
+            for (ColumnMetadata def : columns.regulars)
+                predefined.put(def, new AtomicBoolean());
+        }
+
+        public void update(RegularAndStaticColumns columns)
+        {
+            for (ColumnMetadata s : columns.statics)
+                update(s);
+            for (ColumnMetadata r : columns.regulars)
+                update(r);
+        }
+
+        private void update(ColumnMetadata definition)
+        {
+            AtomicBoolean present = predefined.get(definition);
+            if (present != null)
+            {
+                if (!present.get())
+                    present.set(true);
+            }
+            else
+            {
+                extra.add(definition);
+            }
+        }
+
+        public RegularAndStaticColumns get()
+        {
+            RegularAndStaticColumns.Builder builder = RegularAndStaticColumns.builder();
+            for (Map.Entry<ColumnMetadata, AtomicBoolean> e : predefined.entrySet())
+                if (e.getValue().get())
+                    builder.add(e.getKey());
+            return builder.addAll(extra).build();
+        }
+    }
 //
 //    private static class StatsCollector
 //    {
@@ -246,4 +321,20 @@ public abstract class Memtable implements Comparable<Memtable>
 //            return stats.get();
 //        }
 //    }
+
+    public static class AllocationStats
+    {
+        public final float onHeapUsedRatio;
+        public final float offHeapUsedRatio;
+        public final float onHeapReclaimingRatio;
+        public final float offHeapReclaimingRatio;
+
+        AllocationStats(float onHeapUsedRatio, float offHeapUsedRatio, float onHeapReclaimingRatio, float offHeapReclaimingRatio)
+        {
+            this.onHeapUsedRatio = onHeapUsedRatio;
+            this.offHeapUsedRatio = offHeapUsedRatio;
+            this.onHeapReclaimingRatio = onHeapReclaimingRatio;
+            this.offHeapReclaimingRatio = offHeapReclaimingRatio;
+        }
+    }
 }
