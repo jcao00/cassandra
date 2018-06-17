@@ -63,10 +63,6 @@ public interface Memtable extends Comparable<Memtable>
     CommitLogPosition getCommitLogUpperBound();
     boolean mayContainDataBefore(CommitLogPosition position);
 
-    @VisibleForTesting
-    void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound);
-    void  setDiscarded();
-
     // only called by SASI
     void adjustMemtableSize(MemtableAllocator.Region region, long additionalSpace, OpOrder.Group opGroup);
 
@@ -99,6 +95,10 @@ public interface Memtable extends Comparable<Memtable>
      */
     @VisibleForTesting
     void makeUnflushable();
+
+    @VisibleForTesting
+    void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound);
+    void setDiscarded();
 
     /*
         Metrics

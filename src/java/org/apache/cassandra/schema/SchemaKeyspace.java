@@ -136,6 +136,7 @@ public final class SchemaKeyspace
               + "read_repair_chance double," // no longer used, left for drivers' sake
               + "speculative_retry text,"
               + "cdc boolean,"
+              + "memtable_factory text,"
               + "PRIMARY KEY ((keyspace_name), table_name))");
 
     private static final TableMetadata Columns =
@@ -536,7 +537,8 @@ public final class SchemaKeyspace
                .add("caching", params.caching.asMap())
                .add("compaction", params.compaction.asMap())
                .add("compression", params.compression.asMap())
-               .add("extensions", params.extensions);
+               .add("extensions", params.extensions)
+               .add("memtable_factory", params.memtableFactoryClass);
 
         // Only add CDC-enabled flag to schema if it's enabled on the node. This is to work around RTE's post-8099 if a 3.8+
         // node sends table schema to a < 3.8 versioned node with an unknown column.
@@ -994,22 +996,26 @@ public final class SchemaKeyspace
 
     static TableParams createTableParamsFromRow(UntypedResultSet.Row row)
     {
-        return TableParams.builder()
-                          .bloomFilterFpChance(row.getDouble("bloom_filter_fp_chance"))
-                          .caching(CachingParams.fromMap(row.getFrozenTextMap("caching")))
-                          .comment(row.getString("comment"))
-                          .compaction(CompactionParams.fromMap(row.getFrozenTextMap("compaction")))
-                          .compression(CompressionParams.fromMap(row.getFrozenTextMap("compression")))
-                          .defaultTimeToLive(row.getInt("default_time_to_live"))
-                          .extensions(row.getFrozenMap("extensions", UTF8Type.instance, BytesType.instance))
-                          .gcGraceSeconds(row.getInt("gc_grace_seconds"))
-                          .maxIndexInterval(row.getInt("max_index_interval"))
-                          .memtableFlushPeriodInMs(row.getInt("memtable_flush_period_in_ms"))
-                          .minIndexInterval(row.getInt("min_index_interval"))
-                          .crcCheckChance(row.getDouble("crc_check_chance"))
-                          .speculativeRetry(SpeculativeRetryPolicy.fromString(row.getString("speculative_retry")))
-                          .cdc(row.has("cdc") && row.getBoolean("cdc"))
-                          .build();
+        TableParams.Builder builder = TableParams.builder()
+                                                 .bloomFilterFpChance(row.getDouble("bloom_filter_fp_chance"))
+                                                 .caching(CachingParams.fromMap(row.getFrozenTextMap("caching")))
+                                                 .comment(row.getString("comment"))
+                                                 .compaction(CompactionParams.fromMap(row.getFrozenTextMap("compaction")))
+                                                 .compression(CompressionParams.fromMap(row.getFrozenTextMap("compression")))
+                                                 .defaultTimeToLive(row.getInt("default_time_to_live"))
+                                                 .extensions(row.getFrozenMap("extensions", UTF8Type.instance, BytesType.instance))
+                                                 .gcGraceSeconds(row.getInt("gc_grace_seconds"))
+                                                 .maxIndexInterval(row.getInt("max_index_interval"))
+                                                 .memtableFlushPeriodInMs(row.getInt("memtable_flush_period_in_ms"))
+                                                 .minIndexInterval(row.getInt("min_index_interval"))
+                                                 .crcCheckChance(row.getDouble("crc_check_chance"))
+                                                 .speculativeRetry(SpeculativeRetryPolicy.fromString(row.getString("speculative_retry")))
+                                                 .cdc(row.has("cdc") && row.getBoolean("cdc"));
+
+        if (row.has("memtable_factory"))
+            builder.memtableFactoryClass(row.getString("memtable_factory"));
+
+        return builder.build();
     }
 
     private static List<ColumnMetadata> fetchColumns(String keyspace, String table, Types types)
