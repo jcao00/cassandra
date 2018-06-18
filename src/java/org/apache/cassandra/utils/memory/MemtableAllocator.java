@@ -27,7 +27,6 @@ import org.apache.cassandra.utils.concurrent.WaitQueue;
 
 public abstract class MemtableAllocator
 {
-
     private final SubAllocator onHeap;
     private final SubAllocator offHeap;
     volatile LifeCycle state = LifeCycle.LIVE;
