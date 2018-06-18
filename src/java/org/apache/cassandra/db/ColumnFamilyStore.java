@@ -227,8 +227,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     private volatile boolean neverPurgeTombstones = false;
 
-    //TODO:JEB make this updatable
-    private MemtableFactory memtableFactory;
+    private volatile MemtableFactory memtableFactory;
 
     public static void shutdownPostFlushExecutor() throws InterruptedException
     {
@@ -252,6 +251,13 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 cfs.crcCheckChance = new DefaultValue(metadata().params.crcCheckChance);
 
         compactionStrategyManager.maybeReload(metadata());
+
+        if (!memtableFactory.getClass().getSimpleName().equals(metadata().params.memtableFactoryClass))
+        {
+            // this should not fail to create an instance as we've already checked tha validity of the class
+            // during the schema table table checks.
+            memtableFactory = MemtableFactory.createInstance(metadata().params.memtableFactoryClass);
+        }
 
         scheduleFlush();
 
@@ -398,7 +404,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         logger.info("Initializing {}.{}", keyspace.getName(), name);
 
         // Create Memtable only on online
-        memtableFactory = FBUtilities.instanceOrConstruct(metadata.get().params.memtableFactoryClass, "memtable factory class");
+        memtableFactory = MemtableFactory.createInstance(metadata.get().params.memtableFactoryClass);
         Memtable initialMemtable = null;
         if (DatabaseDescriptor.isDaemonInitialized())
             initialMemtable = memtableFactory.create(new AtomicReference<>(CommitLog.instance.getCurrentPosition()), this);

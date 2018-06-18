@@ -25,6 +25,7 @@ import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableMap;
 
 import org.apache.cassandra.cql3.Attributes;
+import org.apache.cassandra.db.MemtableFactory;
 import org.apache.cassandra.db.StandardMemtableFactory;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.service.reads.PercentileSpeculativeRetryPolicy;
@@ -174,14 +175,7 @@ public final class TableParams
         if (memtableFlushPeriodInMs < 0)
             fail("%s must be greater than or equal to 0 (got %s)", Option.MEMTABLE_FLUSH_PERIOD_IN_MS, memtableFlushPeriodInMs);
 
-        try
-        {
-            FBUtilities.instanceOrConstruct(memtableFactoryClass, "memtable factory class");
-        }
-        catch (Exception e)
-        {
-            fail("%s is not found or cannot be instantiated (%s)", Option.MEMTABLE_FACTORY, memtableFactoryClass);
-        }
+        MemtableFactory.createInstance(memtableFactoryClass);
     }
 
     private static void fail(String format, Object... args)

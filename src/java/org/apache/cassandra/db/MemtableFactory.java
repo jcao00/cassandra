@@ -21,8 +21,28 @@ package org.apache.cassandra.db;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.cassandra.db.commitlog.CommitLogPosition;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.schema.TableParams;
+import org.apache.cassandra.utils.FBUtilities;
 
 public interface MemtableFactory
 {
     Memtable create(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs);
+
+    public static MemtableFactory createInstance(String className)
+    {
+        if (className == null || className.isEmpty())
+            throw new ConfigurationException("Need a valid memtable factory name; was null or empty");
+
+        className = className.contains(".") ? className : "org.apache.cassandra.db." + className;
+
+        try
+        {
+            return FBUtilities.instanceOrConstruct(className, "memtable factory class");
+        }
+        catch (Exception e)
+        {
+            throw new ConfigurationException(String.format("%s is not found or cannot be instantiated (%s)", TableParams.Option.MEMTABLE_FACTORY, className));
+        }
+    }
 }
