@@ -59,7 +59,6 @@ import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.OpOrder;
-import org.apache.cassandra.utils.memory.MemtableAllocator;
 
 public class SASIIndex implements Index, INotificationConsumer
 {
@@ -282,7 +281,7 @@ public class SASIIndex implements Index, INotificationConsumer
 
             public void adjustMemtableSize(long additionalSpace, OpOrder.Group opGroup)
             {
-                baseCfs.getTracker().getView().getCurrentMemtable().adjustMemtableSize(MemtableAllocator.Region.ON_HEAP, additionalSpace, opGroup);
+                baseCfs.getTracker().getView().getCurrentMemtable().adjustMemtableSize(Memtable.Region.ON_HEAP, additionalSpace, opGroup);
             }
         };
     }

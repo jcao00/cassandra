@@ -36,7 +36,6 @@ import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.index.transactions.UpdateTransaction;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.utils.concurrent.OpOrder;
-import org.apache.cassandra.utils.memory.MemtableAllocator;
 
 public class MockMemtable implements Memtable
 {
@@ -128,31 +127,31 @@ public class MockMemtable implements Memtable
     }
 
     @Override
-    public void adjustMemtableSize(MemtableAllocator.Region region, long additionalSpace, OpOrder.Group opGroup)
+    public void adjustMemtableSize(Region region, long additionalSpace, OpOrder.Group opGroup)
     {
 
     }
 
     @Override
-    public float getOwnershipRatio(MemtableAllocator.Region region)
-    {
-        return 0;
-    }
-
-    @Override
-    public long getOwns(MemtableAllocator.Region region)
+    public float getOwnershipRatio(Region region)
     {
         return 0;
     }
 
     @Override
-    public float getUsedRatio(MemtableAllocator.Region region)
+    public long getOwns(Region region)
     {
         return 0;
     }
 
     @Override
-    public float getReclaimingRatio(MemtableAllocator.Region region)
+    public float getUsedRatio(Region region)
+    {
+        return 0;
+    }
+
+    @Override
+    public float getReclaimingRatio(Region region)
     {
         return 0;
     }

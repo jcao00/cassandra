@@ -535,38 +535,38 @@ public class StandardMemtable implements Memtable
         }
     }
 
-    public void adjustMemtableSize(MemtableAllocator.Region region, long additionalSpace, OpOrder.Group opGroup)
+    public void adjustMemtableSize(Region region, long additionalSpace, OpOrder.Group opGroup)
     {
-        if (region != MemtableAllocator.Region.ON_HEAP)
+        if (region != Memtable.Region.ON_HEAP)
             throw new IllegalArgumentException();
 
         allocator.onHeap().allocate(additionalSpace, opGroup);
     }
 
-    public float getOwnershipRatio(MemtableAllocator.Region region)
+    public float getOwnershipRatio(Region region)
     {
-        return region == MemtableAllocator.Region.ON_HEAP
+        return region == Memtable.Region.ON_HEAP
                ? allocator.onHeap().ownershipRatio()
                : allocator.offHeap().ownershipRatio();
     }
 
-    public long getOwns(MemtableAllocator.Region region)
+    public long getOwns(Region region)
     {
-        return region == MemtableAllocator.Region.ON_HEAP
+        return region == Memtable.Region.ON_HEAP
                ? allocator.onHeap().owns()
                : allocator.offHeap().owns();
     }
 
-    public float getUsedRatio(MemtableAllocator.Region region)
+    public float getUsedRatio(Region region)
     {
-        return region == MemtableAllocator.Region.ON_HEAP
+        return region == Memtable.Region.ON_HEAP
                ? MEMORY_POOL.onHeap.usedRatio()
                : MEMORY_POOL.offHeap.usedRatio();
     }
 
-    public float getReclaimingRatio(MemtableAllocator.Region region)
+    public float getReclaimingRatio(Region region)
     {
-        return region == MemtableAllocator.Region.ON_HEAP
+        return region == Memtable.Region.ON_HEAP
                ? MEMORY_POOL.onHeap.reclaimingRatio()
                : MEMORY_POOL.offHeap.reclaimingRatio();
     }

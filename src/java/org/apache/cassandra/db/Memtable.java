@@ -41,10 +41,11 @@ import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.concurrent.OpOrder;
-import org.apache.cassandra.utils.memory.MemtableAllocator;
 
 public interface Memtable extends Comparable<Memtable>
 {
+    enum Region { ON_HEAP, OFF_HEAP }
+
     // TODO:JEB this is really not related to memtable ... should be moved elsewhere.
     // we only care about the type in StdMemtable#accepts()
     // ata a minimum, the name is non-descriptive
@@ -64,7 +65,7 @@ public interface Memtable extends Comparable<Memtable>
     boolean mayContainDataBefore(CommitLogPosition position);
 
     // only called by SASI
-    void adjustMemtableSize(MemtableAllocator.Region region, long additionalSpace, OpOrder.Group opGroup);
+    void adjustMemtableSize(Region region, long additionalSpace, OpOrder.Group opGroup);
 
     //    // decide if this memtable should take the write, or if it should go to the next memtable
     boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition);
@@ -103,10 +104,10 @@ public interface Memtable extends Comparable<Memtable>
     /*
         Metrics
      */
-    float getOwnershipRatio(MemtableAllocator.Region region);
-    long getOwns(MemtableAllocator.Region region);
-    float getUsedRatio(MemtableAllocator.Region region);
-    float getReclaimingRatio(MemtableAllocator.Region region);
+    float getOwnershipRatio(Region region);
+    long getOwns(Region region);
+    float getUsedRatio(Region region);
+    float getReclaimingRatio(Region region);
 
     long getMinTimestamp();
     long getLiveDataSize();

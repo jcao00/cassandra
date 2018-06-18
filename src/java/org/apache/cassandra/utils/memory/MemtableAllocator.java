@@ -27,7 +27,6 @@ import org.apache.cassandra.utils.concurrent.WaitQueue;
 
 public abstract class MemtableAllocator
 {
-    public enum Region { ON_HEAP, OFF_HEAP }
 
     private final SubAllocator onHeap;
     private final SubAllocator offHeap;

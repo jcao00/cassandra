@@ -30,7 +30,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
-import javax.annotation.Nullable;
 import javax.management.*;
 import javax.management.openmbean.*;
 
@@ -65,24 +64,19 @@ import org.apache.cassandra.exceptions.StartupException;
 import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.index.internal.CassandraIndex;
 import org.apache.cassandra.index.transactions.UpdateTransaction;
-import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.sstable.Component;
-import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.sstable.Descriptor;
-import org.apache.cassandra.io.sstable.KeyIterator;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.format.*;
 import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.metrics.TableMetrics.Sampler;
 import org.apache.cassandra.repair.TableRepairManager;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.CompactionParams.TombstoneOption;
-import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.streaming.TableStreamManager;
@@ -90,7 +84,6 @@ import org.apache.cassandra.utils.*;
 import org.apache.cassandra.utils.TopKSampler.SamplerResult;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 import org.apache.cassandra.utils.concurrent.Refs;
-import org.apache.cassandra.utils.memory.MemtableAllocator;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 
@@ -846,18 +839,18 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         float onHeapRatio = 0, offHeapRatio = 0;
         long onHeapTotal = 0, offHeapTotal = 0;
         Memtable memtable = getTracker().getView().getCurrentMemtable();
-        onHeapRatio +=  memtable.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
-        offHeapRatio += memtable.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
-        onHeapTotal += memtable.getOwns(MemtableAllocator.Region.ON_HEAP);
-        offHeapTotal += memtable.getOwns(MemtableAllocator.Region.OFF_HEAP);
+        onHeapRatio +=  memtable.getOwnershipRatio(Memtable.Region.ON_HEAP);
+        offHeapRatio += memtable.getOwnershipRatio(Memtable.Region.OFF_HEAP);
+        onHeapTotal += memtable.getOwns(Memtable.Region.ON_HEAP);
+        offHeapTotal += memtable.getOwns(Memtable.Region.OFF_HEAP);
 
         for (ColumnFamilyStore indexCfs : indexManager.getAllIndexColumnFamilyStores())
         {
             memtable = indexCfs.getTracker().getView().getCurrentMemtable();
-            onHeapRatio +=  memtable.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
-            offHeapRatio += memtable.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
-            onHeapTotal += memtable.getOwns(MemtableAllocator.Region.ON_HEAP);
-            offHeapTotal += memtable.getOwns(MemtableAllocator.Region.OFF_HEAP);
+            onHeapRatio +=  memtable.getOwnershipRatio(Memtable.Region.ON_HEAP);
+            offHeapRatio += memtable.getOwnershipRatio(Memtable.Region.OFF_HEAP);
+            onHeapTotal += memtable.getOwns(Memtable.Region.ON_HEAP);
+            offHeapTotal += memtable.getOwns(Memtable.Region.OFF_HEAP);
         }
 
         logger.debug("Enqueuing flush of {}: {}",
@@ -1221,14 +1214,14 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 // find the total ownership ratio for the memtable and all SecondaryIndexes owned by this CF,
                 // both on- and off-heap, and select the largest of the two ratios to weight this CF
                 float onHeap = 0f, offHeap = 0f;
-                onHeap += current.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
-                offHeap += current.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
+                onHeap += current.getOwnershipRatio(Memtable.Region.ON_HEAP);
+                offHeap += current.getOwnershipRatio(Memtable.Region.OFF_HEAP);
 
                 for (ColumnFamilyStore indexCfs : cfs.indexManager.getAllIndexColumnFamilyStores())
                 {
                     Memtable indexMemtable = indexCfs.getTracker().getView().getCurrentMemtable();
-                    onHeap += indexMemtable.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
-                    offHeap += indexMemtable.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
+                    onHeap += indexMemtable.getOwnershipRatio(Memtable.Region.ON_HEAP);
+                    offHeap += indexMemtable.getOwnershipRatio(Memtable.Region.OFF_HEAP);
                 }
 
                 float ratio = Math.max(onHeap, offHeap);
@@ -1244,12 +1237,12 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
             if (largest != null)
             {
-                float usedOnHeap = largest.getUsedRatio(MemtableAllocator.Region.ON_HEAP);
-                float usedOffHeap = largest.getUsedRatio(MemtableAllocator.Region.OFF_HEAP);
-                float flushingOnHeap = largest.getReclaimingRatio(MemtableAllocator.Region.ON_HEAP);
-                float flushingOffHeap = largest.getReclaimingRatio(MemtableAllocator.Region.OFF_HEAP);
-                float thisOnHeap = largest.getOwnershipRatio(MemtableAllocator.Region.ON_HEAP);
-                float thisOffHeap = largest.getOwnershipRatio(MemtableAllocator.Region.OFF_HEAP);
+                float usedOnHeap = largest.getUsedRatio(Memtable.Region.ON_HEAP);
+                float usedOffHeap = largest.getUsedRatio(Memtable.Region.OFF_HEAP);
+                float flushingOnHeap = largest.getReclaimingRatio(Memtable.Region.ON_HEAP);
+                float flushingOffHeap = largest.getReclaimingRatio(Memtable.Region.OFF_HEAP);
+                float thisOnHeap = largest.getOwnershipRatio(Memtable.Region.ON_HEAP);
+                float thisOffHeap = largest.getOwnershipRatio(Memtable.Region.OFF_HEAP);
                 logger.debug("Flushing largest {} to free up room. Used total: {}, live: {}, flushing: {}, this: {}",
                             largest.cfs(), ratio(usedOnHeap, usedOffHeap), ratio(liveOnHeap, liveOffHeap),
                             ratio(flushingOnHeap, flushingOffHeap), ratio(thisOnHeap, thisOffHeap));

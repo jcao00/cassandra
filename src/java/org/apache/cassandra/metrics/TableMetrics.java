@@ -42,7 +42,6 @@ import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.TopKSampler;
-import org.apache.cassandra.utils.memory.MemtableAllocator;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 
@@ -360,14 +359,14 @@ public class TableMetrics
         {
             public Long getValue()
             {
-                return cfs.getTracker().getView().getCurrentMemtable().getOwns(MemtableAllocator.Region.ON_HEAP);
+                return cfs.getTracker().getView().getCurrentMemtable().getOwns(Memtable.Region.ON_HEAP);
             }
         });
         memtableOffHeapSize = createTableGauge("MemtableOffHeapSize", new Gauge<Long>()
         {
             public Long getValue()
             {
-                return cfs.getTracker().getView().getCurrentMemtable().getOwns(MemtableAllocator.Region.OFF_HEAP);
+                return cfs.getTracker().getView().getCurrentMemtable().getOwns(Memtable.Region.OFF_HEAP);
             }
         });
         memtableLiveDataSize = createTableGauge("MemtableLiveDataSize", new Gauge<Long>()
@@ -383,7 +382,7 @@ public class TableMetrics
             {
                 long size = 0;
                 for (ColumnFamilyStore cfs2 : cfs.concatWithIndexes())
-                    size += cfs2.getTracker().getView().getCurrentMemtable().getOwns(MemtableAllocator.Region.ON_HEAP);
+                    size += cfs2.getTracker().getView().getCurrentMemtable().getOwns(Memtable.Region.ON_HEAP);
                 return size;
             }
         });
@@ -393,7 +392,7 @@ public class TableMetrics
             {
                 long size = 0;
                 for (ColumnFamilyStore cfs2 : cfs.concatWithIndexes())
-                    size += cfs2.getTracker().getView().getCurrentMemtable().getOwns(MemtableAllocator.Region.OFF_HEAP);
+                    size += cfs2.getTracker().getView().getCurrentMemtable().getOwns(Memtable.Region.OFF_HEAP);
                 return size;
             }
         });
