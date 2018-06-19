@@ -51,7 +51,6 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
         ('speculative_retry', None),
         ('memtable_flush_period_in_ms', None),
         ('cdc', None),
-        ('memtable_factory', None)
     )
 
     columnfamily_layout_map_options = (
@@ -63,6 +62,8 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
             ('sstable_compression', 'chunk_length_kb', 'crc_check_chance')),
         ('caching', None,
             ('rows_per_partition', 'keys')),
+        ('memtable_factory', None,
+            ('class')),
     )
 
     obsolete_cf_options = ()
@@ -510,7 +511,7 @@ def cf_prop_val_completer(ctxt, cass):
     if this_opt in ('cdc'):
         return [Hint('<true|false>')]
     if this_opt in ('memtable_factory'):
-        return [Hint('StandardMemtableFactory')]
+        return ["{'class': "]
     return [Hint('<option_value>')]
 
 
@@ -545,6 +546,8 @@ def cf_prop_val_mapkey_completer(ctxt, cass):
             opts = opts.union(set(CqlRuleSet.time_window_compaction_strategy_options))
 
         return map(escape_value, opts)
+    if optname == 'memtable_factory':
+        return map(escape_value, set(subopts).difference(keysseen))
     return ()
 
 
@@ -564,6 +567,9 @@ def cf_prop_val_mapval_completer(ctxt, cass):
             return ["'ALL'", "'NONE'", Hint('#rows_per_partition')]
         elif key == 'keys':
             return ["'ALL'", "'NONE'"]
+    elif opt == 'memtable_factory':
+        if key == 'class':
+            return ["'StandardMemtableFactory'"]
     return ()
 
 

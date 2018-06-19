@@ -277,6 +277,7 @@ public class TableCQLHelperTest extends CQLTester
         "\tAND compaction = { 'class': 'org.apache.cassandra.db.compaction.LeveledCompactionStrategy', 'sstable_size_in_mb': '1' }\n" +
         "\tAND compression = { 'chunk_length_in_kb': '64', 'min_compress_ratio': '2.0', 'class': 'org.apache.cassandra.io.compress.LZ4Compressor' }\n" +
         "\tAND cdc = false\n" +
+        "\tAND memtable_factory = { 'class': 'org.apache.cassandra.db.StandardMemtableFactory' }\n" +
         "\tAND extensions = { 'ext1': 0x76616c31 };"
         ));
     }
