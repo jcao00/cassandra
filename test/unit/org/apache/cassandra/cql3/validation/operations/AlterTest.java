@@ -17,15 +17,22 @@
  */
 package org.apache.cassandra.cql3.validation.operations;
 
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.junit.Assert;
 import org.junit.Test;
 
-import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
+import org.apache.cassandra.db.Memtable;
+import org.apache.cassandra.db.MemtableFactory;
+import org.apache.cassandra.db.StandardMemtable;
+import org.apache.cassandra.db.commitlog.CommitLogPosition;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
+import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.SchemaKeyspace;
 
 import static java.lang.String.format;
@@ -497,5 +504,38 @@ public class AlterTest extends CQLTester
         execute("ALTER TABLE %s DROP x");
 
         assertEmpty(execute("SELECT * FROM %s"));
+    }
+
+    @Test
+    public void testAlterTableWithMemtableFactory() throws Throwable
+    {
+        createTable("CREATE TABLE %s(k int PRIMARY KEY, x int, y int)");
+        MemtableFactory original = getCurrentColumnFamilyStore().getMemtableFactory();
+        String newFactory = TestMemtableFactory.class.getName();
+        Assert.assertNotEquals("we really shouldn't default cassandra to the use mock memtable", original, newFactory);
+
+        execute("ALTER TABLE %s WITH memtable_factory = {'class': '" + newFactory + "', 'unused': 1};");
+
+        assertRows(execute(format("SELECT memtable_factory FROM %s.%s WHERE keyspace_name = ? and table_name = ?;",
+                                  SchemaConstants.SCHEMA_KEYSPACE_NAME,
+                                  SchemaKeyspace.TABLES),
+                           KEYSPACE,
+                           currentTable()),
+                   row(map("class", newFactory, "unused", "1")));
+        Assert.assertEquals(newFactory, getCurrentColumnFamilyStore().getMemtableFactory().getClass().getName());
+    }
+
+    public static class TestMemtableFactory implements MemtableFactory
+    {
+        public TestMemtableFactory(Map<String, String> options)
+        {
+
+        }
+
+        @Override
+        public Memtable createMemtable(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs)
+        {
+            return new StandardMemtable(commitLogLowerBound, cfs);
+        }
     }
 }

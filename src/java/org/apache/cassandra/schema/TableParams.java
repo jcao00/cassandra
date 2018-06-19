@@ -31,7 +31,6 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.service.reads.PercentileSpeculativeRetryPolicy;
 import org.apache.cassandra.service.reads.SpeculativeRetryPolicy;
 import org.apache.cassandra.utils.BloomCalculations;
-import org.apache.cassandra.utils.FBUtilities;
 
 import static java.lang.String.format;
 
@@ -78,7 +77,7 @@ public final class TableParams
     public final CompressionParams compression;
     public final ImmutableMap<String, ByteBuffer> extensions;
     public final boolean cdc;
-    public final String memtableFactoryClass;
+    public final MemtableFactoryParams memtableFactory;
 
     private TableParams(Builder builder)
     {
@@ -98,7 +97,7 @@ public final class TableParams
         compression = builder.compression;
         extensions = builder.extensions;
         cdc = builder.cdc;
-        memtableFactoryClass = builder.memtableFactoryClass;
+        memtableFactory = builder.memtableFactory;
     }
 
     public static Builder builder()
@@ -122,7 +121,7 @@ public final class TableParams
                             .speculativeRetry(params.speculativeRetry)
                             .extensions(params.extensions)
                             .cdc(params.cdc)
-                            .memtableFactoryClass(params.memtableFactoryClass);
+                            .memtableFactoryClass(params.memtableFactory);
     }
 
     public Builder unbuild()
@@ -134,6 +133,7 @@ public final class TableParams
     {
         compaction.validate();
         compression.validate();
+        memtableFactory.validate();
 
         double minBloomFilterFpChanceValue = BloomCalculations.minSupportedBloomFilterFpChance();
         if (bloomFilterFpChance <=  minBloomFilterFpChanceValue || bloomFilterFpChance > 1)
@@ -174,8 +174,6 @@ public final class TableParams
 
         if (memtableFlushPeriodInMs < 0)
             fail("%s must be greater than or equal to 0 (got %s)", Option.MEMTABLE_FLUSH_PERIOD_IN_MS, memtableFlushPeriodInMs);
-
-        MemtableFactory.createInstance(memtableFactoryClass);
     }
 
     private static void fail(String format, Object... args)
@@ -208,7 +206,7 @@ public final class TableParams
                && compression.equals(p.compression)
                && extensions.equals(p.extensions)
                && cdc == p.cdc
-               && memtableFactoryClass.equals(p.memtableFactoryClass);
+               && memtableFactory.equals(p.memtableFactory);
     }
 
     @Override
@@ -228,7 +226,7 @@ public final class TableParams
                                 compression,
                                 extensions,
                                 cdc,
-                                memtableFactoryClass);
+                                memtableFactory);
     }
 
     @Override
@@ -249,7 +247,7 @@ public final class TableParams
                           .add(Option.COMPRESSION.toString(), compression)
                           .add(Option.EXTENSIONS.toString(), extensions)
                           .add(Option.CDC.toString(), cdc)
-                          .add(Option.MEMTABLE_FACTORY.toString(), memtableFactoryClass)
+                          .add(Option.MEMTABLE_FACTORY.toString(), memtableFactory)
                           .toString();
     }
 
@@ -269,7 +267,7 @@ public final class TableParams
         private CompressionParams compression = CompressionParams.DEFAULT;
         private ImmutableMap<String, ByteBuffer> extensions = ImmutableMap.of();
         private boolean cdc;
-        private String memtableFactoryClass = StandardMemtableFactory.class.getName();
+        private MemtableFactoryParams memtableFactory = MemtableFactoryParams.DEFAULT;
 
         public Builder()
         {
@@ -364,9 +362,9 @@ public final class TableParams
             return this;
         }
 
-        public Builder memtableFactoryClass(String val)
+        public Builder memtableFactoryClass(MemtableFactoryParams val)
         {
-            memtableFactoryClass = val;
+            memtableFactory = val;
             return this;
         }
     }

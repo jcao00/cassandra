@@ -315,6 +315,7 @@ public class TableCQLHelper
         builder.append("\n\tAND compaction = ").append(toCQL(tableParams.compaction.asMap()));
         builder.append("\n\tAND compression = ").append(toCQL(tableParams.compression.asMap()));
         builder.append("\n\tAND cdc = ").append(tableParams.cdc);
+        builder.append("\n\tAND memtable_factory = ").append(tableParams.memtableFactory.asMap());
 
         builder.append("\n\tAND extensions = { ");
         for (Map.Entry<String, ByteBuffer> entry : tableParams.extensions.entrySet())

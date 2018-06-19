@@ -252,16 +252,16 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
         compactionStrategyManager.maybeReload(metadata());
 
-        Class<? extends MemtableFactory> klass = FBUtilities.classForName(metadata().params.memtableFactoryClass, "memtable factory class");
+        Class<? extends MemtableFactory> klass = metadata().params.memtableFactory.getFactoryClass();
         if (!memtableFactory.getClass().equals(klass))
         {
             // this should not fail to create an instance as we've already checked tha validity of the class
             // during the schema table table checks.
             logger.info("switching memtable_factory from {} to {} for keyspace/table {}/{}",
                         memtableFactory.getClass().getName(),
-                        metadata().params.memtableFactoryClass,
+                        klass.getName(),
                         keyspace.getName(), name);
-            memtableFactory = MemtableFactory.createInstance(metadata().params.memtableFactoryClass);
+            memtableFactory = metadata.get().params.memtableFactory.createInstance();
         }
 
         scheduleFlush();
@@ -409,10 +409,10 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         logger.info("Initializing {}.{}", keyspace.getName(), name);
 
         // Create Memtable only on online
-        memtableFactory = MemtableFactory.createInstance(metadata.get().params.memtableFactoryClass);
+        memtableFactory = metadata.get().params.memtableFactory.createInstance();
         Memtable initialMemtable = null;
         if (DatabaseDescriptor.isDaemonInitialized())
-            initialMemtable = memtableFactory.create(new AtomicReference<>(CommitLog.instance.getCurrentPosition()), this);
+            initialMemtable = memtableFactory.createMemtable(new AtomicReference<>(CommitLog.instance.getCurrentPosition()), this);
         data = new Tracker(initialMemtable, loadSSTables);
 
         // scan for sstables corresponding to this cf and load them
@@ -1017,7 +1017,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 // switch all memtables, regardless of their dirty status, setting the barrier
                 // so that we can reach a coordinated decision about cleanliness once they
                 // are no longer possible to be modified
-                Memtable newMemtable = memtableFactory.create(commitLogUpperBound, cfs);
+                Memtable newMemtable = memtableFactory.createMemtable(commitLogUpperBound, cfs);
                 Memtable oldMemtable = cfs.data.switchMemtable(truncate, newMemtable);
                 oldMemtable.setDiscarding(writeBarrier, commitLogUpperBound);
                 memtables.add(oldMemtable);
@@ -2101,7 +2101,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             {
                 public Void call()
                 {
-                    cfs.data.reset(memtableFactory.create(new AtomicReference<>(CommitLogPosition.NONE), cfs));
+                    cfs.data.reset(memtableFactory.createMemtable(new AtomicReference<>(CommitLogPosition.NONE), cfs));
                     return null;
                 }
             }, true, false);
@@ -2636,5 +2636,11 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     public boolean getNeverPurgeTombstones()
     {
         return neverPurgeTombstones;
+    }
+
+    @VisibleForTesting
+    public MemtableFactory getMemtableFactory()
+    {
+        return memtableFactory;
     }
 }

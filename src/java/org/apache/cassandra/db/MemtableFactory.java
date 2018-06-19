@@ -21,28 +21,21 @@ package org.apache.cassandra.db;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.cassandra.db.commitlog.CommitLogPosition;
-import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.schema.TableParams;
-import org.apache.cassandra.utils.FBUtilities;
 
+/**
+ * Factory interface for instantiating new {@link Memtable}s. All implementors must have a constructor that accepts
+ * a map for custom options, like this:
+ * <pre>
+ * {@code
+ * class MyMemtableFactory implements MemtableFactory
+ * {
+ *     public MyMemtableFactory(Map<String, String> options)
+ *     { ... }
+ * }
+ * }
+ * </pre>
+ */
 public interface MemtableFactory
 {
-    Memtable create(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs);
-
-    public static MemtableFactory createInstance(String className)
-    {
-        if (className == null || className.isEmpty())
-            throw new ConfigurationException("Need a valid memtable factory name; was null or empty");
-
-        className = className.contains(".") ? className : "org.apache.cassandra.db." + className;
-
-        try
-        {
-            return FBUtilities.instanceOrConstruct(className, "memtable factory class");
-        }
-        catch (Exception e)
-        {
-            throw new ConfigurationException(String.format("%s is not found or cannot be instantiated (%s)", TableParams.Option.MEMTABLE_FACTORY, className));
-        }
-    }
+    Memtable createMemtable(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs);
 }

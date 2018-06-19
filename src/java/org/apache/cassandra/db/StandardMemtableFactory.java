@@ -18,14 +18,20 @@
 
 package org.apache.cassandra.db;
 
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.cassandra.db.commitlog.CommitLogPosition;
 
 public class StandardMemtableFactory implements MemtableFactory
 {
+    public StandardMemtableFactory(Map<String, String> options)
+    {
+        // options param is currently unused
+    }
+
     @Override
-    public Memtable create(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs)
+    public Memtable createMemtable(AtomicReference<CommitLogPosition> commitLogLowerBound, ColumnFamilyStore cfs)
     {
         return new StandardMemtable(commitLogLowerBound, cfs);
     }

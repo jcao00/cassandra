@@ -136,7 +136,7 @@ public final class SchemaKeyspace
               + "read_repair_chance double," // no longer used, left for drivers' sake
               + "speculative_retry text,"
               + "cdc boolean,"
-              + "memtable_factory text,"
+              + "memtable_factory frozen<map<text, text>>,"
               + "PRIMARY KEY ((keyspace_name), table_name))");
 
     private static final TableMetadata Columns =
@@ -202,7 +202,7 @@ public final class SchemaKeyspace
               + "read_repair_chance double," // no longer used, left for drivers' sake
               + "speculative_retry text,"
               + "cdc boolean,"
-              + "memtable_factory text,"
+              + "memtable_factory frozen<map<text, text>>,"
               + "PRIMARY KEY ((keyspace_name), view_name))");
 
     private static final TableMetadata Indexes =
@@ -539,7 +539,7 @@ public final class SchemaKeyspace
                .add("compaction", params.compaction.asMap())
                .add("compression", params.compression.asMap())
                .add("extensions", params.extensions)
-               .add("memtable_factory", params.memtableFactoryClass);
+               .add("memtable_factory", params.memtableFactory.asMap());
 
         // Only add CDC-enabled flag to schema if it's enabled on the node. This is to work around RTE's post-8099 if a 3.8+
         // node sends table schema to a < 3.8 versioned node with an unknown column.
@@ -1014,7 +1014,7 @@ public final class SchemaKeyspace
                                                  .cdc(row.has("cdc") && row.getBoolean("cdc"));
 
         if (row.has("memtable_factory"))
-            builder.memtableFactoryClass(row.getString("memtable_factory"));
+            builder.memtableFactoryClass(MemtableFactoryParams.fromMap(row.getFrozenTextMap("memtable_factory")));
 
         return builder.build();
     }
