@@ -252,10 +252,15 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
         compactionStrategyManager.maybeReload(metadata());
 
-        if (!memtableFactory.getClass().getSimpleName().equals(metadata().params.memtableFactoryClass))
+        Class<? extends MemtableFactory> klass = FBUtilities.classForName(metadata().params.memtableFactoryClass, "memtable factory class");
+        if (!memtableFactory.getClass().equals(klass))
         {
             // this should not fail to create an instance as we've already checked tha validity of the class
             // during the schema table table checks.
+            logger.info("switching memtable_factory from {} to {} for keyspace/table {}/{}",
+                        memtableFactory.getClass().getName(),
+                        metadata().params.memtableFactoryClass,
+                        keyspace.getName(), name);
             memtableFactory = MemtableFactory.createInstance(metadata().params.memtableFactoryClass);
         }
 
