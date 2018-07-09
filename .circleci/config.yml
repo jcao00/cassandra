@@ -396,7 +396,7 @@ jobs:
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             echo "***Collected DTests (upgrade-tests)***"
-            ./run_dtests.py --dtest-print-tests-only --dtest-print-tests-output=/tmp/all_dtest_upgrade_tests
+            pytest --collect-only --cassandra-dir=/opt/dev/cassandra --execute-upgrade-tests --force-resource-intensive-tests
             set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_upgrade_tests > /tmp/split_all_dtest_upgrade_tests.txt
             cat /tmp/split_all_dtest_upgrade_tests.txt | tr '\n' ' ' > /tmp/split_all_dtest_upgrade_tests_final.txt
             cat /tmp/split_all_dtest_upgrade_tests_final.txt
