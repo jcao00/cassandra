@@ -20,6 +20,7 @@ package org.apache.cassandra.net.async;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -31,6 +32,7 @@ import java.util.function.BiConsumer;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.net.InetAddresses;
+import com.google.common.primitives.Ints;
 import com.google.common.primitives.Shorts;
 import org.junit.After;
 import org.junit.Assert;
@@ -43,13 +45,19 @@ import org.junit.runners.Parameterized.Parameters;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import org.apache.cassandra.UpdateBuilder;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.Mutation;
+import org.apache.cassandra.db.marshal.AsciiType;
+import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.exceptions.RequestFailureReason;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.ParameterType;
+import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.NanoTimeToCurrentTimeMillis;
 import org.apache.cassandra.utils.UUIDGen;
 
@@ -198,6 +206,30 @@ public class MessageInHandlerTest
         handler.decode(null, buf, out);
         Assert.assertNotNull(wrapper.messageIn);
         Assert.assertTrue(out.isEmpty());
+    }
+
+    @Test
+    public void decode_CatchUnknownTableException() throws IOException
+    {
+        // build up metatdata for a non-existent table, then make a mutation for it
+        TableMetadata metadata = TableMetadata.builder("ks", "tbl")
+                                              .addPartitionKeyColumn("k", AsciiType.instance)
+                                              .addRegularColumn("mycol", AsciiType.instance)
+                                              .build();
+        UpdateBuilder builder = UpdateBuilder.create(metadata, ByteBufferUtil.bytes("a_nice_key"))
+                                             .newRow()
+                                             .add("mycol", ByteBufferUtil.bytes("value"));
+        Mutation mutation = new Mutation(builder.build());
+
+        MessageOut msgOut = new MessageOut<>(addr, MessagingService.Verb.MUTATION, mutation, Mutation.serializer, ImmutableList.of(), SMALL_MESSAGE);
+        serialize(msgOut);
+
+        // now, pass the serialized mutation to the channel
+        BaseMessageInHandler handler = getHandler(addr, messagingVersion, null);
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+        Assert.assertTrue(channel.isOpen());
+        channel.writeInbound(buf);
+        Assert.assertTrue(channel.isOpen());
     }
 
     @Test

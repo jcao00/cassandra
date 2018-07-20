@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
-import org.apache.cassandra.db.monitoring.ApproximateTime;
+import org.apache.cassandra.exceptions.UnknownTableException;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.MessageIn;
@@ -104,7 +104,7 @@ public class MessageInHandler extends BaseMessageInHandler
                         long length = VIntCoding.readUnsignedVInt(in);
                         if (length < 0)
                             return;
-                        messageHeader.parameterLength = (int) length;
+                        messageHeader.parameterLength = Ints.checkedCast(length);
                         messageHeader.parameters = messageHeader.parameterLength == 0 ? Collections.emptyMap() : new EnumMap<>(ParameterType.class);
                         state = State.READ_PARAMETERS_DATA;
                         // fall-through
@@ -129,12 +129,21 @@ public class MessageInHandler extends BaseMessageInHandler
                             return;
 
                         // TODO consider deserializing the message not on the event loop
-                        MessageIn<Object> messageIn = MessageIn.read(inputPlus, messagingVersion,
-                                                                     messageHeader.messageId, messageHeader.constructionTime, messageHeader.from,
-                                                                     messageHeader.payloadSize, messageHeader.verb, messageHeader.parameters);
+                        int startIndex = in.readerIndex();
+                        try
+                        {
+                            MessageIn<Object> messageIn = MessageIn.read(inputPlus, messagingVersion,
+                                                                         messageHeader.messageId, messageHeader.constructionTime, messageHeader.from,
+                                                                         messageHeader.payloadSize, messageHeader.verb, messageHeader.parameters);
 
-                        if (messageIn != null)
-                            messageConsumer.accept(messageIn, messageHeader.messageId);
+                            if (messageIn != null)
+                                messageConsumer.accept(messageIn, messageHeader.messageId);
+                        }
+                        catch (UnknownTableException ute)
+                        {
+                            logger.warn("Received message for unknown table id ({}); ignoring", ute.id, ute);
+                            in.readerIndex(startIndex + messageHeader.payloadSize);
+                        }
 
                         state = State.READ_FIRST_CHUNK;
                         messageHeader = null;
@@ -158,12 +167,24 @@ public class MessageInHandler extends BaseMessageInHandler
         {
             String key = DataInputStream.readUTF(inputPlus);
             ParameterType parameterType = ParameterType.byName.get(key);
-            long valueLength =  VIntCoding.readUnsignedVInt(in);
-            byte[] value = new byte[Ints.checkedCast(valueLength)];
-            in.readBytes(value);
-            try (DataInputBuffer buffer = new DataInputBuffer(value))
+            long valueLengthLong =  VIntCoding.readUnsignedVInt(in);
+            int valueLength = Ints.checkedCast(valueLengthLong);
+
+            // parameterType will be null if it is unknown (it came from a future version). we won't be able to deserialize the value
+            // nor insert a null key into an EnumMap, but as long as we read (or skip) the bytes from the stream, we leave things
+            // in a safe state.
+            if (parameterType != null)
             {
-                parameters.put(parameterType, parameterType.serializer.deserialize(buffer, messagingVersion));
+                byte[] value = new byte[valueLength];
+                in.readBytes(value);
+                try (DataInputBuffer buffer = new DataInputBuffer(value))
+                {
+                    parameters.put(parameterType, parameterType.serializer.deserialize(buffer, messagingVersion));
+                }
+            }
+            else
+            {
+                in.skipBytes(valueLength);
             }
         }
     }

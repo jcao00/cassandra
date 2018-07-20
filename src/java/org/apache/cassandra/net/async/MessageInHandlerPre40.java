@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
+import org.apache.cassandra.exceptions.UnknownTableException;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.CompactEndpointSerializationHelper;
@@ -43,9 +44,9 @@ public class MessageInHandlerPre40 extends BaseMessageInHandler
 {
     public static final Logger logger = LoggerFactory.getLogger(MessageInHandlerPre40.class);
 
-    static final int PARAMETERS_SIZE_LENGTH = Integer.BYTES;
-    static final int PARAMETERS_VALUE_SIZE_LENGTH = Integer.BYTES;
-    static final int PAYLOAD_SIZE_LENGTH = Integer.BYTES;
+    private static final int PARAMETERS_SIZE_LENGTH = Integer.BYTES;
+    private static final int PARAMETERS_VALUE_SIZE_LENGTH = Integer.BYTES;
+    private static final int PAYLOAD_SIZE_LENGTH = Integer.BYTES;
 
     private State state;
     private MessageHeader messageHeader;
@@ -129,12 +130,21 @@ public class MessageInHandlerPre40 extends BaseMessageInHandler
                             return;
 
                         // TODO consider deserailizing the messge not on the event loop
-                        MessageIn<Object> messageIn = MessageIn.read(inputPlus, messagingVersion,
-                                                                     messageHeader.messageId, messageHeader.constructionTime, messageHeader.from,
-                                                                     messageHeader.payloadSize, messageHeader.verb, messageHeader.parameters);
+                        int startIndex = in.readerIndex();
+                        try
+                        {
+                            MessageIn<Object> messageIn = MessageIn.read(inputPlus, messagingVersion,
+                                                                         messageHeader.messageId, messageHeader.constructionTime, messageHeader.from,
+                                                                         messageHeader.payloadSize, messageHeader.verb, messageHeader.parameters);
 
-                        if (messageIn != null)
-                            messageConsumer.accept(messageIn, messageHeader.messageId);
+                            if (messageIn != null)
+                                messageConsumer.accept(messageIn, messageHeader.messageId);
+                        }
+                        catch (UnknownTableException ute)
+                        {
+                            logger.warn("Received message for unknown table id ({}); ignoring", ute.id, ute);
+                            in.readerIndex(startIndex + messageHeader.payloadSize);
+                        }
 
                         state = State.READ_FIRST_CHUNK;
                         messageHeader = null;
@@ -163,11 +173,23 @@ public class MessageInHandlerPre40 extends BaseMessageInHandler
 
             String key = DataInputStream.readUTF(inputPlus);
             ParameterType parameterType = ParameterType.byName.get(key);
-            byte[] value = new byte[in.readInt()];
-            in.readBytes(value);
-            try (DataInputBuffer buffer = new DataInputBuffer(value))
+            int valueLength = in.readInt();
+
+            // parameterType will be null if it is unknown (it came from a future version). we won't be able to deserialize the value
+            // nor insert a null key into an EnumMap, but as long as we read (or skip) the bytes from the stream, we leave things
+            // in a safe state.
+            if (parameterType != null)
             {
-                parameters.put(parameterType, parameterType.serializer.deserialize(buffer, messagingVersion));
+                byte[] value = new byte[valueLength];
+                in.readBytes(value);
+                try (DataInputBuffer buffer = new DataInputBuffer(value))
+                {
+                    parameters.put(parameterType, parameterType.serializer.deserialize(buffer, messagingVersion));
+                }
+            }
+            else
+            {
+                in.skipBytes(valueLength);
             }
         }
 

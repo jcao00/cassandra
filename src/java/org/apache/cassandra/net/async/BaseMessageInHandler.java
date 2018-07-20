@@ -104,8 +104,6 @@ public abstract class BaseMessageInHandler extends ByteToMessageDecoder
     {
         if (cause instanceof EOFException)
             logger.trace("eof reading from socket; closing", cause);
-        else if (cause instanceof UnknownTableException)
-            logger.warn("Got message from unknown table while reading from socket; closing", cause);
         else if (cause instanceof IOException)
             logger.trace("IOException reading from socket; closing", cause);
         else
